@@ -1,0 +1,28 @@
+# Allowlist .gitignore for the constellation orchestrator repo (~/GitHub/).
+# Strategy: ignore everything at the repo root, then re-include only the
+# orchestrator paths, then drop junk that lives INSIDE the included subtree.
+
+# 1. Ignore every entry at the repo root.
+/*
+
+# 2. Re-include the orchestrator paths (and this file).
+!/.claude/
+!/CLAUDE.md
+!/QUANTOS.md
+!/README.md
+!/.gitignore
+
+# 3. Drop junk that lives inside the re-included .claude/ subtree.
+#    These match at any depth under an already-included directory.
+**/__pycache__/
+*.pyc
+*.pyo
+**/.DS_Store
+/.claude/scheduled_tasks.lock
+
+# 4. Belt-and-braces: caches that could appear inside .claude/ later.
+**/.venv/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.playwright-mcp/

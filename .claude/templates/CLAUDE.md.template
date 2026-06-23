@@ -1,0 +1,68 @@
+# CLAUDE.md — <REPO_NAME>
+
+> Template. Replace placeholders, then trim everything you don't need.
+
+## Mission
+
+(one paragraph — what this repo *is*. Inherit tone from the constellation
+kernel at `~/GitHub/.claude/CLAUDE.md`.)
+
+## Perimeter
+
+- **Perimeter:** `<adjacent | quantos-core | quantos-info | quantos-alloc | quantos-prod | quantos-ui>`
+- **Tier:** `<0 | 1 | 1.5 | 2 | 2.5 | 3 | UI | n/a>`
+- **Vault home:** `<path under ~/OmarOS/05_Projects/ or "none">`
+
+## Reading order
+
+Read in this order before any non-trivial work in this repo:
+
+1. `~/CLAUDE.md` — user contract.
+2. `~/GitHub/.claude/CLAUDE.md` — constellation kernel.
+3. (vault, if applicable) `<vault-home>/Vision/`
+4. This file.
+
+## Stack
+
+- **Stack profile:** `<python-uv-strict | python-light | typescript-vite | vanilla-web | mixed>`
+- **Package manager:** `<uv | pip | npm>`
+- **Tests:** `<pytest | playwright | …>`
+- **Tier contract:** `.importlinter` (QuantOS only)
+- **Pre-commit:** `<gate file>`
+
+## Peers (read-only)
+
+The master peer list lives at
+`~/GitHub/.claude/registry/repos.yaml`. A snapshot is kept here under
+`.claude/registry/peers.yaml.snapshot` (auto-refreshed by
+`peer_sync.py`). The lab's own `peers.yaml` (if any) overrides the
+snapshot.
+
+## Git policy
+
+Inherits from `~/CLAUDE.md` and `~/GitHub/.claude/policies/cross_repo_commits.md`.
+
+- Plain English commits. Present tense. No AI attribution.
+- One commit per logical change.
+- Never `--no-verify`. Never `--force` to main.
+
+## Cross-repo work
+
+When work in this repo is part of a multi-repo refactor:
+
+1. Use the same branch name across affected repos.
+2. Open one PR per repo with the cross-reference block.
+3. Stop on the first failing pre-commit gate.
+
+## Risk
+
+- **Adjacent / Tier ≤ 2:** routine local work is low-risk.
+- **Tier 3 (touches money):** every change is medium-to-high risk.
+  Verify with `tier-check` and `multi-repo-status` before opening a PR.
+
+## Authoritative references
+
+- Constellation kernel: `~/GitHub/.claude/CLAUDE.md`
+- Constellation map: `~/GitHub/QUANTOS.md`
+- Vault governance: `~/OmarOS/05_Projects/QuantOS/AGENTS.md` (QuantOS) or
+  the relevant project home under `~/OmarOS/05_Projects/<project>/`.
