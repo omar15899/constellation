@@ -20,11 +20,18 @@ means the claim is unsupported** — say so.
 To scan files automatically for unsupported claims:
 
 ```bash
-python3 ~/GitHub/.claude/hooks/evidence_audit.py <path-or-dir>        # advisory
-python3 ~/GitHub/.claude/hooks/evidence_audit.py --strict <path>      # exit 1 if unsupported
+python3 ~/GitHub/.claude/hooks/evidence_audit.py <path-or-dir>            # advisory
+python3 ~/GitHub/.claude/hooks/evidence_audit.py --strict <path>          # exit 1 if unsupported
+python3 ~/GitHub/.claude/hooks/evidence_audit.py --strict --ledger <path> # also cross-check vs the Bash run ledger
 ```
 
 The audit flags a metric/completion claim only when no artifact reference sits
 within a few lines of it (false positives kept low). A flagged line is not
 necessarily wrong — it means the evidence is not adjacent and must be added or
 linked.
+
+`--ledger` reads the newest Bash run ledger (`~/GitHub/.claude/run/<session>.jsonl`,
+written by `bash_ledger.py`), prints a `commands · test runs · failures` summary,
+and flags any "tests pass / all green" claim made while the ledger shows **zero**
+test invocations. This is the bridge from "what the model wrote" to "what actually
+ran". Pass an explicit ledger path after `--ledger` to pin one.
