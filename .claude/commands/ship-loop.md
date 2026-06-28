@@ -15,15 +15,21 @@ Before finalising or committing, run the gate in order:
 4. Run the relevant **focused** tests (not the whole suite unless asked).
 5. Run the secret scan:
    `bash ~/GitHub/.claude/hooks/secret_scan.sh` (or rely on the staged-diff path).
-6. Run the evidence audit:
-   `python3 ~/GitHub/.claude/hooks/evidence_audit.py --strict <report paths>`.
+6. Run the evidence audit (with the run-ledger cross-check):
+   `python3 ~/GitHub/.claude/hooks/evidence_audit.py --strict --ledger <report paths>`.
+   The `--ledger` flag verifies that "tests pass" claims correspond to real test
+   invocations in this session's Bash ledger, and prints a command/test/failure
+   summary.
 7. Run the refutation audit (`/refute`).
 8. Confirm the expected artifacts exist on disk.
 9. Confirm reports / logs are updated.
 10. Confirm no `.env` or secret-like file is staged.
 11. **Commit only if explicitly requested** by the user. Natural commit
     message, no AI attribution, no `Co-authored-by` (per `~/CLAUDE.md`). One
-    commit per repo (constellation git policy).
+    commit per repo (constellation git policy). Use `/commit-constellation`
+    (→ [`scripts/constellation_commit.py`](../scripts/constellation_commit.py))
+    to land granular, per-repo, traceable commits with provenance trailers and
+    auto-push — it enforces atomicity, secret-abort, and no-force structurally.
 
 **Final answer (required):**
 
