@@ -1,0 +1,86 @@
+---
+name: record-verdict
+description: Record a research lever's verdict into registry/levers.yaml + research_ledger.md as a single validated transaction, via scripts/record_lever_verdict.py. Dry-run first (prints the diff), then --apply. The user DECIDES the verdict (through /gate-check's judgement); this command only RECORDS it — never silently overwriting an existing verdict, refusing to write a research_strict CONFIRMED that lacks the four-bar metrics.
+---
+
+# /record-verdict --lever <id> --verdict <V> ...
+
+The deterministic writer behind a lever verdict. Where [`/gate-check`](gate-check.md)
+*judges* a result against [`contracts/promotion_gate.md`](../contracts/promotion_gate.md),
+this command *persists* that judgement: it updates the lever row in
+[`registry/levers.yaml`](../registry/levers.yaml) (comment-preserving line edits),
+mirrors the readable row in [`research_ledger.md`](../research_ledger.md), and bumps
+`last_updated` — atomically, validated before and after. Backed by
+[`scripts/record_lever_verdict.py`](../scripts/record_lever_verdict.py).
+
+**You decide the verdict; the CLI records it.** This command does not lower the
+bar, re-run the gate, or invent metrics. It writes what the judgement already
+concluded, or refuses.
+
+## Procedure
+
+1. **Dry-run first** (the default — writes nothing, prints the unified diff for
+   both files):
+
+   ```bash
+   python3 ~/GitHub/.claude/scripts/record_lever_verdict.py \
+     --lever <id> --verdict <OPEN|CONFIRMED|CAPPED|NO_IMPROVEMENT|REFUTED|HOLD> \
+     --run-class <deployable|broad-floor|diagnostic|production> \
+     --artifact <path/to/promotion_*.json|pnl.csv> \
+     --summary "<one honest sentence>" \
+     --mode <casual|implementation|research_strict>
+   ```
+
+2. **Read the diff.** Confirm it touches only the intended lever block plus
+   `last_updated`, and that the mirrored `research_ledger.md` row reads true. If a
+   verdict is *changing*, the tool folds `old->new (date)` into the `note` —
+   verify that history line is correct (it never silently overwrites).
+
+3. **For a `research_strict` `CONFIRMED`, attach the four bars.** The tool
+   **refuses** to record a strict CONFIRMED without all of them:
+
+   ```bash
+   ... --mode research_strict --verdict CONFIRMED \
+       --sharpe <ann> --dsr <DSR> --pbo <family PBO> \
+       --ci-low <bootstrap CI lower> --p-bh <BH-FDR adjusted p>
+   ```
+
+   These five flags are the entire metric set — there is no `--m` flag; the family
+   size is part of the gate report, not this writer. Omit the bars only for
+   non-strict modes or non-CONFIRMED verdicts.
+
+4. **Apply** once the diff is clean:
+
+   ```bash
+   ... --apply
+   ```
+
+   The tool re-validates the *proposed* `levers.yaml` before replacing the real
+   file; if the result would not pass [`validate_levers.py`](../scripts/validate_levers.py)
+   it aborts and writes nothing.
+
+## What it refuses (hard, exit 2)
+
+- The registry already fails `validate_levers` before the write.
+- `--mode research_strict` + `--verdict CONFIRMED` with any of the four bars
+  missing (`--sharpe --dsr --pbo --ci-low --p-bh`).
+- The `--artifact` does not exist on disk (a verdict without a backing artifact is
+  unsupported). Pass `--external` only when the evidence genuinely lives off-disk
+  (a memory slug, an external report) — then prefer `--memory <slug>`.
+- The proposed post-write `levers.yaml` would fail validation.
+
+## Useful flags
+
+`--rerun <true|false>` (closed verdicts → `false`) · `--rerun-guard "<what would
+reopen it>"` · `--memory <slug>` · `--metric "<free-text>"` (else built from the
+four bars) · `--external` · `--hypothesis`/`--strategy`/`--repo` (only needed when
+the lever is *new* and being added) · `--levers-path`/`--ledger-path` (tests).
+
+## Relationship to /gate-check
+
+`/gate-check` is the judgement (family `m`, the four bars, PBO, run-class, the
+verdict vocabulary); `/record-verdict` is its step-6 writer. Invoke this directly
+when the verdict is already settled and you only need to land it; go through
+`/gate-check` when the result still has to be *adjudicated* first. Either way this
+script is the **only sanctioned path** for a lever verdict to enter persistent
+state — never hand-edit `levers.yaml`.

@@ -36,14 +36,30 @@ verdict so no future session re-derives or re-runs it.
 5. **Tag the run class** — deployable / broad-floor / diagnostic / production.
    Never conflate the deployable headline with the survivorship-honest broad floor.
 
-6. **Record it.** Append or update the lever in
+6. **Record it** with the deterministic writer — do **not** hand-edit the YAML.
+   Run [`scripts/record_lever_verdict.py`](../scripts/record_lever_verdict.py)
+   ([`/record-verdict`](record-verdict.md)) dry-run first, review the diff, then
+   `--apply`:
+
+   ```bash
+   python3 ~/GitHub/.claude/scripts/record_lever_verdict.py \
+     --lever <id> --verdict <V> --run-class <class> \
+     --artifact <promotion_*.json> --summary "<one sentence>" --mode research_strict \
+     --sharpe <s> --dsr <d> --pbo <p> --ci-low <c> --p-bh <q>      # dry-run
+   #   ...re-run with --apply once the diff is clean
+   ```
+
+   It appends or updates the lever in
    [`registry/levers.yaml`](../registry/levers.yaml) (the structured source of
-   truth) and mirror the readable row in
-   [`research_ledger.md`](../research_ledger.md). Set `rerun: false` for a closed
-   verdict (REFUTED / CONFIRMED / final NO_IMPROVEMENT); `rerun: true` only if a
-   specific new data source or method would genuinely reopen it. Bump
-   `last_updated`. Never silently overwrite an existing verdict — if it changes,
-   say why in the `note`.
+   truth), mirrors the readable row in
+   [`research_ledger.md`](../research_ledger.md), and bumps `last_updated`. Pass
+   `--rerun false` for a closed verdict (REFUTED / CONFIRMED / final
+   NO_IMPROVEMENT); `--rerun true` only if a specific new data source or method
+   would genuinely reopen it (then `--rerun-guard "<what>"`). It never silently
+   overwrites an existing verdict — a verdict change is folded into the `note` as
+   `old->new (date)`. The four bars (`--sharpe --dsr --pbo --ci-low --p-bh`) are
+   **required** for a `research_strict` CONFIRMED, and the writer refuses without
+   them.
 
 7. **Refute** (`/refute`) and attach evidence (`/evidence`). A verdict without a
    backing artifact (`promotion_*.json`, `pnl.csv`) is unsupported.
