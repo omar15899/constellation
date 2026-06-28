@@ -152,6 +152,21 @@ levers:
     rerun: false
     note: "Track 3. The decorrelation ceiling holds even with ML capacity. ML adds nothing beyond v1.0's GBM."
 
+  - id: regime-risk-allocation
+    hypothesis: "v1.0 + equity-momentum + trend under a regime overlay and risk-based allocation (inverse-vol/ERC/vol-target) beats the deployable v1.0 book."
+    strategy: t212-deployable
+    repo: ResearchLab
+    verdict: NO_IMPROVEMENT
+    run_class: deployable
+    metric: "corrected-alignment: corr(v1,momentum)=+0.73 (momentum beta +1.13, NOT market-neutral); ERC book Sharpe 1.05 < v1.0 1.26; de-risks (beta 1.14->0.45, maxDD -32%->-18%) but is DOMINATED by holding less v1.0 (v1.0 scaled to 11% vol keeps Sharpe 1.26, maxDD -14.8%); regime overlay = drawdown-only, ~0 Sharpe"
+    gate: "promotion_gate — books CONFIRMED vs zero but none beats v1.0; acceptance bar 0/4"
+    evidence: "research_algorithms/learning_to_rank_cross_sectional/reports/regime_allocation_master.md"
+    memory: regime-risk-allocation-study
+    date: 2026-06-28
+    rerun: false
+    rerun_guard: "regime.?overlay,risk.?alloc,inverse.?vol,erc,vol.?target,sleeve.?combin"
+    note: "Committed 69e2f8b. The promising first cut (Sharpe 1.4-1.6, momentum corr -0.11/beta -0.16) was a 1-DAY RETURN-ALIGNMENT ARTIFACT: v1.0 and momentum are both forward-labelled by the same LTR engine and need the same .shift(1); only v1 was shifted. Lead-lag proof: corr(mom_raw[d],SPY[d+1])=+0.76 vs -0.10 at d+0. BUG ALSO AFFECTS scripts/deployable_portfolio.py (unshifted momentum vs same-day core/trend) and possibly the multisleeve-hrp 1.45 result — both flagged for re-audit. DO NOT re-run sleeve-combination/regime/risk-allocation as a Sharpe play."
+
   # --- REFUTED (dead levers — DO NOT re-run) ------------------------------
   - id: gdelt-news-tone
     hypothesis: "GDELT GKG news tone/volume adds cross-sectional edge to the LTR ranker."
