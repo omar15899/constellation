@@ -1,0 +1,245 @@
+# registry/repo_commit_policy.yaml — machine-readable commit policy per repo.
+#
+# Consumed by scripts/research_committer.py (stdlib hand-parser, no PyYAML — same
+# convention as hooks/_levers.py). This is the control layer that makes commits
+# safe, granular, and auditable across the constellation's independent git
+# surfaces. The repo tier/perimeter taxonomy still lives in registry/repos.yaml;
+# this file governs ONLY commit/push behaviour and is keyed by the same repo ids.
+#
+# Fields per repo (a missing field inherits from `default`):
+#   path                     — repo path (the committer resolves it to its git toplevel)
+#   expected_branch          — push is refused unless HEAD == this (override: --allow-branch-mismatch)
+#   auto_push                — may push when --push is passed AND branch matches
+#   allow_artifacts          — true | false | selective (selective = only allowlisted suffixes)
+#   allow_reports            — may commit files under reports/ outputs/
+#   default_run_class        — control-plane | diagnostic | research | deployable | production
+#   require_evidence_audit   — run evidence_audit on any reports touched (hard if it fails)
+#   require_promotion_gate   — a report claiming promotion needs a gate artifact on disk
+#   dry_run_only             — never apply, even with --apply (vendored/ungoverned repos)
+#   include                  — pathspec prefixes the committer may stage (empty = whole tree)
+#   exclude                  — pathspec prefixes never staged
+#   checks                   — ordered check ids run before each commit (see committer CHECKS)
+
+schema_version: 1
+last_updated: 2026-06-28
+
+# Conservative fallback for any repo NOT listed below. Never pushes, never
+# applies without an explicit per-run override, runs only the secret scan.
+default:
+  expected_branch: main
+  auto_push: false
+  allow_artifacts: false
+  allow_reports: false
+  default_run_class: diagnostic
+  require_evidence_audit: false
+  require_promotion_gate: false
+  dry_run_only: false
+  conservative: true
+  checks:
+    - secret_scan
+
+repos:
+  # ---- Control plane -------------------------------------------------------
+  constellation:
+    path: ~/GitHub/.claude
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: false
+    allow_reports: false
+    default_run_class: control-plane
+    include:
+      - .claude/
+      - CLAUDE.md
+      - QUANTOS.md
+      - README.md
+      - .gitignore
+    exclude:
+      - .claude/run/
+    checks:
+      - settings_json
+      - py_compile_hooks
+      - secret_scan
+      - no_workflow_todos
+
+  # ---- QuantOS Tier 0 substrate -------------------------------------------
+  Shared:
+    path: ~/GitHub/Shared
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: false
+    allow_reports: false
+    default_run_class: production
+    checks: [py_compile_changed, secret_scan]
+
+  # ---- QuantOS engines (Tier 1 / 1.5) -------------------------------------
+  BacktestLab:
+    path: ~/GitHub/BacktestLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    require_evidence_audit: true
+    checks: [py_compile_changed, secret_scan, evidence_audit_if_reports_changed]
+  MonteCarloLab:
+    path: ~/GitHub/MonteCarloLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    require_evidence_audit: true
+    checks: [py_compile_changed, secret_scan, evidence_audit_if_reports_changed]
+  Sweeplab:
+    path: ~/GitHub/Sweeplab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    require_evidence_audit: true
+    checks: [py_compile_changed, secret_scan, evidence_audit_if_reports_changed]
+  PricingLab:
+    path: ~/GitHub/PricingLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    require_evidence_audit: true
+    checks: [py_compile_changed, secret_scan, evidence_audit_if_reports_changed]
+  MarketDataLab:
+    path: ~/GitHub/MarketDataLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    checks: [py_compile_changed, secret_scan]
+
+  # ---- QuantOS info / research (Tier 2) -----------------------------------
+  NewsLab:
+    path: ~/GitHub/NewsLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    require_evidence_audit: true
+    checks: [py_compile_changed, secret_scan, evidence_audit_if_reports_changed]
+  ResearchLab:
+    path: ~/GitHub/ResearchLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    require_evidence_audit: true
+    require_promotion_gate: true
+    checks:
+      - py_compile_changed
+      - secret_scan
+      - evidence_audit_if_reports_changed
+      - promotion_gate_if_metrics_changed
+  IntelligenceLab:
+    path: ~/GitHub/IntelligenceLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    checks: [py_compile_changed, secret_scan]
+
+  # ---- QuantOS allocation (Tier 2.5) --------------------------------------
+  PortfolioLab:
+    path: ~/GitHub/PortfolioLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: selective
+    allow_reports: true
+    default_run_class: research
+    require_evidence_audit: true
+    require_promotion_gate: true
+    checks:
+      - py_compile_changed
+      - secret_scan
+      - evidence_audit_if_reports_changed
+      - promotion_gate_if_metrics_changed
+
+  # ---- QuantOS production (Tier 3) ----------------------------------------
+  RiskLab:
+    path: ~/GitHub/RiskLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: false
+    allow_reports: true
+    default_run_class: production
+    require_evidence_audit: true
+    require_promotion_gate: true
+    checks: [py_compile_changed, secret_scan, evidence_audit_if_reports_changed]
+  ExecutionLab:
+    path: ~/GitHub/ExecutionLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: false
+    allow_reports: true
+    default_run_class: production
+    require_evidence_audit: true
+    checks: [py_compile_changed, secret_scan, evidence_audit_if_reports_changed]
+
+  # ---- QuantOS orchestration (Tier 4) -------------------------------------
+  StrategyOrchestrationLab:
+    path: ~/GitHub/StrategyOrchestrationLab
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: false
+    allow_reports: true
+    default_run_class: production
+    checks: [py_compile_changed, secret_scan]
+
+  # ---- QuantOS UI ----------------------------------------------------------
+  tradinginterface:
+    path: ~/GitHub/tradinginterface
+    expected_branch: main
+    auto_push: true
+    allow_artifacts: false
+    allow_reports: false
+    default_run_class: deployable
+    checks: [secret_scan]
+
+  # ---- Adjacent (NOT QuantOS-governed) — conservative ----------------------
+  Scilux:
+    path: ~/GitHub/Scilux
+    expected_branch: main
+    auto_push: false
+    allow_artifacts: false
+    default_run_class: diagnostic
+    conservative: true
+    checks: [secret_scan]
+  MMARV1:
+    path: ~/GitHub/MMARV1
+    expected_branch: main
+    auto_push: false
+    allow_artifacts: false
+    default_run_class: diagnostic
+    conservative: true
+    checks: [secret_scan]
+  KarimSpecificCase:
+    path: ~/GitHub/KarimSpecificCase
+    expected_branch: main
+    auto_push: false
+    allow_artifacts: false
+    default_run_class: diagnostic
+    conservative: true
+    checks: [secret_scan]
+
+  # ---- External vendored — never apply, dry-run only -----------------------
+  ruflo:
+    path: ~/GitHub/ruflo
+    expected_branch: main
+    auto_push: false
+    dry_run_only: true
+    allow_artifacts: false
+    default_run_class: diagnostic
+    conservative: true
+    checks: [secret_scan]
