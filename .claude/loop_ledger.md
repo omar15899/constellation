@@ -161,3 +161,53 @@ refinements with a BALANCED enforcement posture.
 - `/gate-check` writing to levers.yaml is prompt-discipline, not deterministic —
   the registry is only as current as the discipline of recording verdicts.
 - Nothing committed yet (awaiting approval).
+
+---
+
+## 2026-06-28 — Git-as-research-ledger layer (policy-driven committer)
+
+### User request
+Add a robust "Git as historical research ledger" layer: granular per-repo/per-scope
+commits, verbose traceable messages, controlled auto-push; each repo with its own
+`.git` committed independently without mixing unrelated changes; `git log`
+reconstructs what/why/evidence/checks/artifacts. Not a "commit all" — safe,
+auditable, deterministic. Verify adversarially before committing.
+
+### Definition of verified success
+- `docs/git_as_research_ledger.md`, `registry/repo_commit_policy.yaml`,
+  `scripts/research_committer.py`, `commands/commit-research.md`,
+  `hooks/commit_guard.py`, doc integration; all adversarial repros pass; granular
+  commits with parseable trailers; pushed to constellation/main only if checks pass.
+
+### Loops run
+| loop | action | evidence | refutation considered | outcome |
+|---|---|---|---|---|
+| 1 | inspect state + discover 19 git repos | branches/dirty/pre-staged table | stale assumptions | 6 sub-repos pre-staged, 3 on feature branches → only constellation is this task's surface |
+| 2 | build policy + committer + command + validator + docs | files created; YAML parser + scope grouping verified | parser double-nests lists; -uall collapse | fixed; first suite 19/19 |
+| 3 | 4-agent adversarial workflow (wb7nk2kaj) | 8 HIGH + 6 MED/LOW real findings | secret bypass via binary/flush-list/typo/glob; real-index residue | all fixed; second suite 16/16 |
+| 4 | apply granular commits + record + push | hashes below; both suites 35/35 | generic subjects | reset, redid with human subjects |
+
+### Final evidence table
+| claim | artifact/source | check performed | result | residual caveat |
+|---|---|---|---|---|
+| committer enforces all hard rules | `scratchpad/verify_committer.sh` | 19 repros | 19/19 PASS | — |
+| adversarial findings fixed | `scratchpad/verify_fixes2.sh` | 16 repros (flush-list, byte-secret, literal pathspec, fail-closed checks, name-collision, real-index residue, commit_guard fail-closed) | 16/16 PASS | — |
+| granular per-scope commits, human subjects, trailers | `git log d41f684..e0ab8aa` | 5 commits, each one scope | PASS | — |
+| dry-run safe on real repos | dry-run vs ~/GitHub (agent end_to_end PASS) | no mutation; pre-staged sub-repos ABORT | PASS | — |
+
+### Commits (this task — `git log --grep 'Task: research-git-ledger'`)
+- `d41f684` add per-repo commit policy for the git-as-ledger layer (registry)
+- `7cef3b6` add the policy-driven research committer (scripts)
+- `054b8ae` add the commit_guard validator and document it (hooks)
+- `d6dce69` add the /commit-research command and index the git-ledger commands (commands)
+- `e0ab8aa` document Git as the research ledger (docs)
+- (this ledger update — docs scope — committed last, then pushed to constellation/main)
+
+### Remaining caveats
+- The stdlib YAML parser covers the policy file's subset (maps, block + flow lists,
+  quoted-value comment stripping, tab→space); it is not a general YAML implementation.
+- `secret_scan` is a pattern/entropy-free scan over staged blob bytes (no generic
+  entropy detector — QuantOS SHA roots would false-positive); novel secret formats
+  not in the token regex would pass.
+- Sub-repos with pre-existing pre-staged dirt were intentionally NOT committed (not
+  this task); the committer correctly ABORTS them until `--include-prestaged`.
