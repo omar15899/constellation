@@ -1,0 +1,244 @@
+# registry/levers.yaml — machine-readable registry of research hypotheses ("levers").
+#
+# Purpose: make Omar's accumulated research methodology persistent. The single
+# most expensive recurring failure mode in this constellation is RE-RUNNING A
+# DEAD LEVER — a data source, feature family, or sleeve that was already tested
+# and refuted in a prior session (GDELT, EDGAR, events, the track-4 zoo were all
+# closed as negatives). This registry is the source of truth that:
+#   - the SessionStart loader (.claude/hooks/research_session_loader.py) reads to
+#     brief each new session on open hypotheses + dead levers;
+#   - /gate-check writes to when a verdict is reached;
+#   - dead-lever guards consult before an expensive re-run.
+#
+# Human-readable mirror: research_ledger.md. Promotion bar: contracts/promotion_gate.md.
+#
+# A "lever" is one falsifiable research hypothesis: "adding X improves metric Y
+# of strategy Z under gate G". It is NOT a code task and NOT a per-session loop
+# (those live in loop_ledger.md).
+#
+# Fields per lever:
+#   id          — kebab-case unique slug
+#   hypothesis  — the falsifiable claim, one sentence
+#   strategy    — parent strategy / book the lever feeds
+#   repo        — owning repo under ~/GitHub/
+#   verdict     — see vocabulary below
+#   run_class   — deployable | broad-floor | diagnostic | production  (which run the headline belongs to)
+#   metric      — headline result with units, tagged by run_class
+#   gate        — which promotion gate was applied + pass fraction (or n/a)
+#   evidence    — artifact / report path that backs the verdict (relative to repo, or "memory:<slug>")
+#   memory      — auto-memory slug with the long-form record (or null)
+#   date        — YYYY-MM-DD the verdict was reached
+#   rerun       — false = DO NOT re-run; true = open to re-run with new data/method
+#   note        — free text: why, residual caveat, what would reopen it
+#
+# Verdict vocabulary (canonical — also in contracts/promotion_gate.md):
+#   OPEN            — hypothesis stated, not yet tested to a verdict
+#   CONFIRMED       — passes the promotion gate; a real, deployable-or-floor edge
+#   CAPPED          — real but bounded effect (e.g. de-risks but does not raise Sharpe)
+#   NO_IMPROVEMENT  — adds nothing beyond the incumbent baseline
+#   REFUTED         — fails the gate / negative result / overfit (PBO high)
+#   HOLD            — inconclusive or blocked on data; parked, not closed
+#
+# Schema version. Bump when fields change.
+schema_version: 1
+generated_by: gate-check
+last_updated: 2026-06-23
+
+# ---------------------------------------------------------------------------
+# Strategies / books these levers feed (for grouping in the SessionStart brief).
+# ---------------------------------------------------------------------------
+strategies:
+  - id: ltr-cross-sectional
+    repo: ResearchLab
+    role: learning-to-rank long/short equity research algo
+    memory: ltr-cross-sectional-strategy
+  - id: t212-deployable
+    repo: ResearchLab
+    role: Trading212-deployable long-only LTR build (v1.0, frozen/promoted)
+    memory: t212-deployable-improvement
+  - id: ltr-multisleeve-book
+    repo: ResearchLab
+    role: HRP book over the two uncorrelated real edges
+    memory: ltr-multisleeve-book
+
+# ---------------------------------------------------------------------------
+# Levers. Append via /gate-check; never silently overwrite a verdict.
+# ---------------------------------------------------------------------------
+levers:
+  # --- CONFIRMED edges -----------------------------------------------------
+  - id: broad-linear-ridge-h63
+    hypothesis: "A broad-universe cross-sectional edge is recoverable with a LINEAR ridge ranker at horizon H63."
+    strategy: ltr-cross-sectional
+    repo: ResearchLab
+    verdict: CONFIRMED
+    run_class: broad-floor
+    metric: "gate-CONFIRMED 4/7 at H63 ridge; the GBM overfits this edge away"
+    gate: "promotion_gate 4/7 pass"
+    evidence: "memory:ltr-broad-linear-edge"
+    memory: ltr-broad-linear-edge
+    date: 2026-06-20
+    rerun: false
+    note: "Qualifies the earlier 'broad alpha is zero regardless of model' claim — it is zero for the GBM, not for ridge. Linear capacity matters at the broad floor."
+
+  - id: multisleeve-hrp-book
+    hypothesis: "An HRP book over the two uncorrelated real edges beats either edge alone."
+    strategy: ltr-multisleeve-book
+    repo: ResearchLab
+    verdict: CONFIRMED
+    run_class: production
+    metric: "net Sharpe 1.45 OOS (edges corr -0.07); first result past ~1.1"
+    gate: "promotion_gate pass"
+    evidence: "memory:ltr-multisleeve-book"
+    memory: ltr-multisleeve-book
+    date: 2026-06-21
+    rerun: false
+    note: "Diversification, not new alpha. Tops out ~1.1/signal, ~1.45/book. Sharpe 2.0 needs a NON-equity-price driver — none found yet."
+
+  - id: t212-score-weighting
+    hypothesis: "Score-weighting (cap 15) raises the deployable T212 build's Sharpe."
+    strategy: t212-deployable
+    repo: ResearchLab
+    verdict: CONFIRMED
+    run_class: deployable
+    metric: "Sharpe 1.30 gate-CONFIRMED; maxDD -31% -> -15/-23% with vol-target/regime overlays (drawdown-only)"
+    gate: "promotion_gate pass"
+    evidence: "memory:t212-deployable-improvement"
+    memory: t212-deployable-improvement
+    date: 2026-06-21
+    rerun: false
+    note: "v1.0 FROZEN & PROMOTED. Score-weighting is the ONLY real Sharpe lever; vol-target/regime are drawdown engineering; adaptive-k rejected. Next step is paper trading, not more research."
+
+  # --- CAPPED (real but bounded) ------------------------------------------
+  - id: multi-asset-diversifiers
+    hypothesis: "Bonds/gold/commodities/trend + earnings PIT diversify the T212 book and raise returns."
+    strategy: t212-deployable
+    repo: ResearchLab
+    verdict: CAPPED
+    run_class: diagnostic
+    metric: "decorrelation real (corr 0.23-0.51) but buys risk-reduction only, not more money; earnings PIT does NOT decorrelate (~0.82)"
+    gate: "promotion_gate — Sharpe gain not significant"
+    evidence: "memory:multi-asset-diversification-track2"
+    memory: multi-asset-diversification-track2
+    date: 2026-06-21
+    rerun: false
+    note: "Track 2. 'Mas dinero' would need impractical leverage. Result is a risk-reduction menu, not an alpha lever. Committed e0a9c00."
+
+  # --- NO_IMPROVEMENT ------------------------------------------------------
+  - id: long-only-equity-sleeves
+    hypothesis: "Long-only equity sleeves can diversify the T212 v1.0 book."
+    strategy: t212-deployable
+    repo: ResearchLab
+    verdict: NO_IMPROVEMENT
+    run_class: diagnostic
+    metric: "all sleeves corr >= 0.57 (shared market beta); only low-vol passes; combining de-risks but does not raise Sharpe"
+    gate: "promotion_gate — no Sharpe gain"
+    evidence: "memory:long-only-sleeve-track1"
+    memory: long-only-sleeve-track1
+    date: 2026-06-21
+    rerun: false
+    note: "Track 1. Long-only equity cannot escape shared market beta. Committed dc6d04d."
+
+  - id: ml-sleeve-zoo
+    hypothesis: "ML-driven sleeves (8 variants) add edge beyond v1.0's GBM."
+    strategy: t212-deployable
+    repo: ResearchLab
+    verdict: NO_IMPROVEMENT
+    run_class: diagnostic
+    metric: "8 ML sleeves, NO_IMPROVEMENT; every long-only equity sleeve floors corr->v1 at 0.74-0.85; macro-ML loses to the SMA rule; multi-asset ML loses to track-2 rules"
+    gate: "promotion_gate — no gain over GBM"
+    evidence: "memory:ltr-ml-sleeve-zoo-track3"
+    memory: ltr-ml-sleeve-zoo-track3
+    date: 2026-06-21
+    rerun: false
+    note: "Track 3. The decorrelation ceiling holds even with ML capacity. ML adds nothing beyond v1.0's GBM."
+
+  # --- REFUTED (dead levers — DO NOT re-run) ------------------------------
+  - id: gdelt-news-tone
+    hypothesis: "GDELT GKG news tone/volume adds cross-sectional edge to the LTR ranker."
+    strategy: ltr-cross-sectional
+    repo: ResearchLab
+    verdict: REFUTED
+    run_class: diagnostic
+    metric: "BigQuery ingest works; tone/volume features add NO cross-sectional IC; negative result"
+    gate: "promotion_gate — refuted"
+    evidence: "memory:gdelt-data-lever"
+    memory: gdelt-data-lever
+    date: 2026-06-15
+    rerun: false
+    rerun_guard: "gdelt,gkg,news.?tone"
+    note: "FIRST data lever. gcloud project newslab-gdelt-omar911. Do not re-ingest tone features expecting cross-sectional alpha."
+
+  - id: edgar-fundamentals
+    hypothesis: "SEC EDGAR point-in-time fundamentals/earnings add edge to the LTR ranker."
+    strategy: ltr-cross-sectional
+    repo: ResearchLab
+    verdict: REFUTED
+    run_class: diagnostic
+    metric: "IC-positive but Sharpe-negative; gate-refuted under BOTH linear AND LightGBM -> data ceiling, not model capacity"
+    gate: "promotion_gate — refuted (both rankers)"
+    evidence: "memory:edgar-fundamentals-lever"
+    memory: edgar-fundamentals-lever
+    date: 2026-06-18
+    rerun: false
+    rerun_guard: "edgar,fundamentals"
+    note: "SECOND data lever. EODHD fundamentals are 403; EDGAR PIT pipeline built. Lever closed: it's a data ceiling, more model capacity won't help."
+
+  - id: gdelt-cameo-events
+    hypothesis: "GDELT CAMEO Goldstein-scored events (not tone) add cross-sectional edge."
+    strategy: ltr-cross-sectional
+    repo: ResearchLab
+    verdict: REFUTED
+    run_class: broad-floor
+    metric: "IC-flat; one marginal broad-H21 Sharpe cell that is OVERFIT (PBO 0.93); gate-refuted"
+    gate: "promotion_gate — refuted, PBO 0.93"
+    evidence: "memory:events-data-lever"
+    memory: events-data-lever
+    date: 2026-06-19
+    rerun: false
+    rerun_guard: "cameo,goldstein"
+    note: "THIRD and last accessible data lever. $0 BigQuery free-tier scan. The broad ceiling holds against all three external data levers (tone, fundamentals, events)."
+
+  # --- HOLD (parked / blocked) --------------------------------------------
+  - id: t212-universe-zoo
+    hypothesis: "A broader T212 universe sweep finds a sleeve that robustly beats v1.0 defensive B."
+    strategy: t212-deployable
+    repo: ResearchLab
+    verdict: HOLD
+    run_class: diagnostic
+    metric: "NEGATIVE/HOLD_FOR_PAPER; nothing robustly beats v1.0 defB; high-Sharpe cells are cash artifacts; broad pool data-broken; only real-asset sleeve decorrelates (corr 0.34) but thin (dSharpe P=0.87)"
+    gate: "promotion_gate — not significant"
+    evidence: "memory:track4-t212-universe-discovery"
+    memory: track4-t212-universe-discovery
+    date: 2026-06-21
+    rerun: false
+    rerun_guard: "universe.?zoo,t212.?zoo,research_search"
+    note: "Track 4. DONE+committed f8d4753, re-audited 2026-06-21 (203018f -> DECISION_HOLDS). Paper blend is defB 85/real-asset 15. T212 master unretrievable (no creds). DO NOT re-run the zoo."
+
+  # --- OPEN (validity items — the real next steps) ------------------------
+  - id: headline-audit
+    hypothesis: "The deployable headline survives an audit of the unaudited news headlines (currently a 9x divergence)."
+    strategy: ltr-cross-sectional
+    repo: ResearchLab
+    verdict: OPEN
+    run_class: deployable
+    metric: "unaudited; 9x divergence between headline sources flagged, not resolved"
+    gate: "n/a — validity, not alpha"
+    evidence: "memory:ltr-next-steps-validity"
+    memory: ltr-next-steps-validity
+    date: 2026-06-21
+    rerun: true
+    note: "Alpha search is CLOSED. The open work is VALIDITY, not alpha. This is a validity blocker on the headline-driven results."
+
+  - id: short-leg-cost
+    hypothesis: "The long/short edge survives once the short leg is charged a realistic borrow cost (currently free)."
+    strategy: ltr-cross-sectional
+    repo: ResearchLab
+    verdict: OPEN
+    run_class: deployable
+    metric: "short leg currently modelled as free; cost not yet applied"
+    gate: "n/a — validity, not alpha"
+    evidence: "memory:ltr-next-steps-validity"
+    memory: ltr-next-steps-validity
+    date: 2026-06-21
+    rerun: true
+    note: "Validity blocker. A free short leg flatters every long/short Sharpe in the book."

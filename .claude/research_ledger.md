@@ -1,0 +1,79 @@
+# Research Ledger
+
+Human-readable mirror of [`registry/levers.yaml`](registry/levers.yaml) — the
+persistent record of **which research hypotheses ("levers") have been tested and
+what the verdict was**, so no session ever re-runs a dead lever.
+
+This is distinct from [`loop_ledger.md`](loop_ledger.md): the loop ledger records
+*how a session executed* (Plan→Execute→Verify per task); this ledger records
+*what we learned about the research question* (one row per falsifiable
+hypothesis, surviving across sessions).
+
+The bar a lever must clear to be CONFIRMED is
+[`contracts/promotion_gate.md`](contracts/promotion_gate.md). Record verdicts with
+`/gate-check`, which writes the structured row into `levers.yaml`. This file is
+the readable view.
+
+## Verdict vocabulary
+
+| verdict          | meaning                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
+| `OPEN`           | hypothesis stated, not yet tested to a verdict                          |
+| `CONFIRMED`      | passes the promotion gate — a real, deployable-or-floor edge            |
+| `CAPPED`         | real but bounded (e.g. de-risks but does not raise Sharpe)              |
+| `NO_IMPROVEMENT` | adds nothing beyond the incumbent baseline                              |
+| `REFUTED`        | fails the gate / negative / overfit (high PBO) — **do not re-run**      |
+| `HOLD`           | inconclusive or blocked on data; parked, not closed                     |
+
+## Run-class discipline (always tag the headline)
+
+- **deployable** — what is tradable now (current-universe headline).
+- **broad-floor** — survivorship-honest unbiased lower bound.
+- **diagnostic** — exploratory, not a claim.
+- **production** — the committed result.
+
+Never filter a historical broad universe by *current* tradability unless the
+number is explicitly labelled survivorship-biased.
+
+## Current state (mirror of `levers.yaml`, 2026-06-23)
+
+**The alpha search is CLOSED. The open work is VALIDITY, not alpha.**
+
+### CONFIRMED
+- `broad-linear-ridge-h63` — broad edge IS recoverable with a LINEAR ridge at H63 (gate 4/7); the GBM overfits it. *broad-floor.*
+- `multisleeve-hrp-book` — HRP book over the two uncorrelated edges (corr −0.07) → net Sharpe **1.45** OOS. First result past ~1.1; diversification, not new alpha. *production.*
+- `t212-score-weighting` — score-weighting (cap 15) → Sharpe **1.30**; the only real Sharpe lever. v1.0 FROZEN. *deployable.*
+
+### CAPPED / NO_IMPROVEMENT
+- `multi-asset-diversifiers` (Track 2) — CAPPED: decorrelation real (0.23–0.51) but risk-reduction only.
+- `long-only-equity-sleeves` (Track 1) — NO_IMPROVEMENT: shared market beta (corr ≥0.57).
+- `ml-sleeve-zoo` (Track 3) — NO_IMPROVEMENT: ML adds nothing beyond the v1.0 GBM.
+
+### REFUTED — dead levers, DO NOT re-run
+- `gdelt-news-tone` — tone/volume: no cross-sectional IC.
+- `edgar-fundamentals` — IC+ but Sharpe−, gate-refuted under linear AND LightGBM → data ceiling.
+- `gdelt-cameo-events` — one overfit broad-H21 cell (PBO 0.93). Third and last external data lever; the broad ceiling holds against all three.
+- `t212-universe-zoo` (Track 4) — HOLD/NEGATIVE; high-Sharpe cells are cash artifacts. DO NOT re-run the zoo.
+
+### OPEN — the real next steps (validity)
+- `headline-audit` — unaudited headlines, 9× divergence between sources.
+- `short-leg-cost` — the short leg is currently modelled as free.
+
+---
+
+## Template — copy when recording a new lever
+
+```
+### <id> — <verdict>
+- **Hypothesis:** <one falsifiable sentence: "adding X improves metric Y of strategy Z">
+- **Strategy / repo:** <strategy-id> / <repo>
+- **Run class:** deployable | broad-floor | diagnostic | production
+- **Result:** <headline metric, units, tagged by run class>
+- **Gate:** <which gate, pass fraction, PBO/DSR/reality-check if applicable>
+- **Evidence:** <artifact/report path, or memory:slug>
+- **Verdict + why:** <CONFIRMED/REFUTED/...> because <reason>
+- **Re-run?** <false = closed | true = open; what new data/method would reopen it>
+```
+
+Then mirror the same fields as a structured row in `registry/levers.yaml`
+(prefer `/gate-check`, which does both).

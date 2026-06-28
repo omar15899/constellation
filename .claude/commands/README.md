@@ -14,6 +14,29 @@ details live in the skill / agent it wraps.
 | `/constellation`   | `constellation-brief` skill        | One-page state snapshot.                               |
 | `/tier-check`      | `tier-discipline` skill            | Audit the import graph against the tier hierarchy.     |
 
+## Verification + research workflow commands
+
+Prompt-discipline commands implementing the expert-directed loop (the user owns
+planning, Claude owns execution; verified success needs hard evidence). Unlike
+the hooks, these are not deterministically enforced — they instruct Claude.
+
+| Command               | Purpose                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `/verify-loop`        | Bounded Plan→Execute→Verify→Refute→Repair loop with an evidence table.                |
+| `/intent-check`       | Reconstruct explicit vs inferred request; mark planning vs execution decisions.      |
+| `/refute`             | Adversarial self-review — try to falsify the current solution.                       |
+| `/evidence`           | Audit every numeric/completion claim against a backing artifact.                     |
+| `/quant-loop`         | Validity-first quant loop (lookahead, survivorship, alpha-vs-beta, run-class).       |
+| `/gate-check`         | Run a result through the promotion gate; record the verdict in `registry/levers.yaml`.|
+| `/ship-loop`          | Final verified-success gate before committing.                                       |
+| `/debug-metric`       | Trace a suspicious/NaN/empty metric from code → data → artifact.                      |
+| `/review-claude-system` | Meta-review: does the workflow itself still hold?                                  |
+
+Backing artifacts: [`contracts/`](../contracts/) (expert-agent, task, promotion
+gate), [`registry/levers.yaml`](../registry/levers.yaml) +
+[`research_ledger.md`](../research_ledger.md) (lever verdicts),
+[`loop_ledger.md`](../loop_ledger.md) (per-session execution record).
+
 ## How these are exposed to a Claude session
 
 Two patterns:

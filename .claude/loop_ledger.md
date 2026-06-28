@@ -109,3 +109,55 @@ by Anthropic's "Agentic coding and persistent returns to expertise" report.
   `LOOP_GUARD_STRICT=1` — it depends on prose and must not brick every Stop.
 - The commands are prompt-discipline: they instruct Claude, they are not
   deterministically enforced. Only the hooks are deterministic.
+
+---
+
+## 2026-06-23 — Research-grade workflow upgrade (lever registry + gate + provenance + loader)
+
+### User request
+Keep refining the `.claude` AI structure (hooks etc.) so it genuinely serves
+*research*, not just code safety. After diagnosis the user chose ALL FOUR
+refinements with a BALANCED enforcement posture.
+
+### Definition of verified success
+- A lever registry seeded from the real research history, machine-readable
+  without PyYAML; a promotion-gate contract + `/gate-check` recording verdicts;
+  a metric-provenance hook; a SessionStart research-loader + dead-lever guard;
+  all wired in settings.json and validated; nothing claimed without evidence.
+
+### User-owned planning decisions
+- Which refinements to build (all four); the enforcement posture (balanced:
+  hooks block only hard signals, methodology advisory); the promotion bar itself.
+
+### Claude-owned execution decisions
+- Stdlib hand-parse of levers.yaml (`_levers.py`) to honour the no-PyYAML
+  convention; `rerun_guard` as an opt-in per-lever field so the dead-lever guard
+  is precise; metric_provenance scoped to filesystem existence (no overlap with
+  evidence_audit's prose audit); SessionStart via `additionalContext` JSON.
+
+### Loops run
+| loop | action | evidence | refutation considered | outcome |
+|---|---|---|---|---|
+| 1 | reconstruct prior session + inspect on-disk system | reads of contracts/commands/hooks/settings; git clean | wrong target / stale memory | confirmed: all prior files committed |
+| 2 | build levers.yaml + research_ledger.md + _levers.py | `_levers.py` → 12 levers, 3 strategies, verdicts correct | yaml unparyable w/o PyYAML | hand-parser passes |
+| 3 | promotion_gate contract + /gate-check | files created; bar matches ltr-promotion-gate memory | bar relaxed silently | contract forbids lowering m |
+| 4 | metric_provenance.py | 8/8 test cases (existing/missing/glob/seed/strict/disable) | false positives on examples | scoped out .claude/ + globs |
+| 5 | session loader + dead_lever_guard + settings | loader JSON valid; guard advisory/strict/no-FP; settings 4 events | guard bricks legit re-run | advisory by default, strict opt-in |
+
+### Final evidence table
+| claim | artifact/source | check performed | result | residual caveat |
+|---|---|---|---|---|
+| levers.yaml parses w/o PyYAML | `hooks/_levers.py` run | 12 levers, verdict histogram | PASS | hand-parser covers only this file's shape |
+| metric_provenance blocks dangling artifact refs | test_provenance.sh | 8 cases incl. strict/disable/glob | all PASS | only hard data-suffix/results-named paths |
+| dead_lever_guard surfaces dead-lever re-runs | test_session.sh | advisory/strict/2×no-FP | all PASS | matches only levers with `rerun_guard` |
+| SessionStart loader emits valid additionalContext | test_session.sh | json.load + content | PASS (2262 chars) | brief grows with the registry |
+| settings.json wires SessionStart/Pre/Post/Stop | settings.json | json.load + structure | 4 events PASS | fires only for sessions rooted at ~/GitHub |
+| all new python compiles | py_compile | 4 hooks | PASS | — |
+
+### Remaining caveats
+- Verdicts in levers.yaml are seeded from auto-memory (point-in-time); the
+  ResearchLab paths in the promotion-gate contract should be verified live before
+  asserting.
+- `/gate-check` writing to levers.yaml is prompt-discipline, not deterministic —
+  the registry is only as current as the discipline of recording verdicts.
+- Nothing committed yet (awaiting approval).
