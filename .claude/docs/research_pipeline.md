@@ -50,11 +50,13 @@ registry/levers.yaml  +  research_ledger.md   ── the verdict is recorded; th
 /ship-loop ── final gate, in order: git status · diff · syntax · focused tests · secret scan ·
    │          evidence_audit --strict --ledger · /refute audit · artifacts exist · reports updated
    ▼
-/commit-constellation ── scripts/constellation_commit.py ── ONE atomic commit per dirty repo,
-   │   tier-ordered (Tier 0 → … → UI → adjacent → control plane), with provenance trailers:
-   │     Changed-files · Repo · Branch · Lever · Task · Session
+/commit-research ── scripts/research_committer.py ── policy-driven, ONE commit per repo per
+   │   SCOPE (hooks/commands/registry/scripts/docs/reports/…), per-repo checks before each commit,
+   │   pre-staged protection, verbose message (Context/Changes/Evidence/Risk/Rollback + trailers:
+   │     Task · Scope · Run-Class · Checks · Artifacts · Lever · Session). Governed by
+   │   registry/repo_commit_policy.yaml. (/commit-constellation = lighter tier-ordered variant.)
    ▼
-auto-push (never --force, never --no-verify; per-repo pre-commit hooks stay authoritative)
+policy-gated push (only if auto_push AND HEAD==expected_branch; never --force/--no-verify)
    │
    ▼
 git history = the durable research ledger
@@ -74,7 +76,7 @@ Stop ── loop_guard.py ── block completion on staged secrets / workflow-d
 | Artifact provenance | `metric_provenance.py` | **Hard** for dangling-artifact references; seedless-RNG is advisory (`METRIC_PROVENANCE_STRICT=1`). |
 | Secrets | `secret_scan.sh` (Pre+Post) + `loop_guard.py` staged-diff | **Hard** by default. |
 | Syntax | `changed_python_syntax.sh` | **Hard** (py_compile only — not a test). |
-| Commit discipline | `constellation_commit.py` | **Hard:** atomic per repo, tier-ordered, secret-abort, no `--force`, no `--no-verify`. |
+| Commit discipline | `research_committer.py` (+ `constellation_commit.py`) | **Hard:** one repo + one scope per commit, pathspec-only staging, per-repo checks gate the commit, pre-staged protection, secret-abort, branch-gated push, no `--force`/`--no-verify`. Policy: `registry/repo_commit_policy.yaml`. Doctrine: [`git_as_research_ledger.md`](git_as_research_ledger.md). |
 | The loop bodies | `/intent-check`, `/quant-loop`, `/verify-loop`, `/refute`, `/ship-loop` | **Advisory** — markdown SOP. The Stop guard backs them; completion-claim blocking is opt-in (`LOOP_GUARD_STRICT=1`). |
 
 The loops are prompts, not state machines: their rigor is backed — not replaced —
@@ -115,9 +117,13 @@ git log --grep 'Task: short-leg-cost'                 # one task across repos
 
 The lever registry holds the *verdict*; the commit trailers hold the *trail of
 edits* that produced it. Together they make the research history queryable from
-both ends.
+both ends. The full doctrine — the four ledgers, the commit message contract,
+scope grouping, the auto-push rules, and the hard/advisory boundary — is
+[`git_as_research_ledger.md`](git_as_research_ledger.md).
 
 ## See also
+
+- [`git_as_research_ledger.md`](git_as_research_ledger.md) — the Git-as-ledger doctrine + committer.
 
 - [`../contracts/expert_agent_contract.md`](../contracts/expert_agent_contract.md) — planning vs execution.
 - [`../contracts/task_contract.md`](../contracts/task_contract.md) — per-task checklist.
