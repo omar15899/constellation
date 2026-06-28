@@ -26,6 +26,7 @@ heuristics are advisory unless an opt-in env flag is set.
 | `research_session_loader.py`  | SessionStart         | Inject a research brief (OPEN next steps, CONFIRMED edges, DO-NOT-RE-RUN levers) from `registry/levers.yaml`. |
 | `loop_guard.py`               | Stop                 | Block completion on staged secrets / workflow-dir TODO markers; completion-language heuristic opt-in via `LOOP_GUARD_STRICT=1`. |
 | `evidence_audit.py`           | manual / `/evidence` | Flag metric/completion claims with no nearby artifact reference. With `--ledger` also cross-checks "tests pass" claims against the Bash run ledger and prints a command/test/failure summary. |
+| `commit_guard.py`             | manual / pre-commit  | Standalone commit/push validator: HARD-blocks staged secrets/.env/keys, wrong-branch push, messages missing required trailers, and reports claiming promotion with no gate artifact; advisory on broad claims / seedless RNG (`COMMIT_GUARD_STRICT=1`). NOT wired to auto-commit — the committer (`/commit-research`) is the explicit command. |
 | `_levers.py`                  | library              | Dependency-free reader for `registry/levers.yaml` (no PyYAML; stdlib hand-parse).            |
 
 Env switches to disable individually: `*_DISABLE=1` (`METRIC_PROVENANCE_DISABLE`,
