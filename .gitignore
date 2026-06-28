@@ -26,3 +26,8 @@
 **/.pytest_cache/
 **/.ruff_cache/
 **/.playwright-mcp/
+
+# 5. Per-session Bash run ledgers (command + exit-code evidence consumed by
+#    evidence_audit). Ephemeral — never committed. The DURABLE research ledger
+#    is the commit-trailer history, not these files.
+/.claude/run/
