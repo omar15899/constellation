@@ -41,7 +41,7 @@ number is explicitly labelled survivorship-biased.
 
 ### CONFIRMED
 - `broad-linear-ridge-h63` — broad edge IS recoverable with a LINEAR ridge at H63 (gate 4/7); the GBM overfits it. *broad-floor.*
-- `multisleeve-hrp-book` — HRP book over the two uncorrelated edges (corr −0.07) → net Sharpe **1.45** OOS. First result past ~1.1; diversification, not new alpha. *production.*
+- `multisleeve-hrp-book` — HRP book over the two uncorrelated edges (corr −0.07) → net Sharpe **1.45** OOS. First result past ~1.1; diversification, not new alpha. **Alignment re-audit 2026-06-28: SURVIVES** (all sleeves share one forward-label basis, no relative misalignment; native 1.446 == same-day 1.449). Caveats: does NOT statistically beat deployed v1.0 (bootstrap CI straddles 0) and curatedgbm overlaps v1.0 +0.42 — CONFIRMED is "real vs zero", not "beats the live book". *production.*
 - `t212-score-weighting` — score-weighting (cap 15) → Sharpe **1.30**; the only real Sharpe lever. v1.0 FROZEN. *deployable.*
 
 ### CAPPED / NO_IMPROVEMENT

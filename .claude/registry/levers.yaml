@@ -86,13 +86,13 @@ levers:
     repo: ResearchLab
     verdict: CONFIRMED
     run_class: production
-    metric: "net Sharpe 1.45 OOS (edges corr -0.07); first result past ~1.1"
-    gate: "promotion_gate pass"
-    evidence: "memory:ltr-multisleeve-book"
+    metric: "net Sharpe 1.45 OOS (edges corr -0.07); first result past ~1.1. RE-AUDITED 2026-06-28 for the alignment bug -> SURVIVES (native 1.446 == same-day 1.449)"
+    gate: "promotion_gate pass; alignment re-audit pass (reports/alignment_forensic/hrp_recompute.md)"
+    evidence: "memory:ltr-multisleeve-book; ResearchLab reports/alignment_forensic_master.md"
     memory: ltr-multisleeve-book
     date: 2026-06-21
     rerun: false
-    note: "Diversification, not new alpha. Tops out ~1.1/signal, ~1.45/book. Sharpe 2.0 needs a NON-equity-price driver — none found yet."
+    note: "Diversification, not new alpha. Tops out ~1.1/signal, ~1.45/book. ALIGNMENT RE-AUDIT (2026-06-28): the regime_allocation 1-day bug does NOT touch this book — sleeve_lab reads all three sleeves through ONE uniform forward-label path (no per-sleeve shift), so there is no relative misalignment; the -0.07 corr is genuine across lags (unlike v1<->momentum which flipped -0.11->+0.73). CONFIRMED stands. CAVEATS surfaced by the re-audit: (1) the book does NOT statistically beat the deployed v1.0 (paired bootstrap P=0.69, 90% CI straddles 0) -- CONFIRMED is 'real vs zero', not 'beats v1.0'; (2) its curatedgbm leg overlaps v1.0 at corr +0.42, so it is not a clean diversifier OVER v1.0. Sharpe 2.0 needs a NON-equity-price driver — none found yet."
 
   - id: t212-score-weighting
     hypothesis: "Score-weighting (cap 15) raises the deployable T212 build's Sharpe."
