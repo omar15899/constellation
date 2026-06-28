@@ -37,6 +37,22 @@ gate), [`registry/levers.yaml`](../registry/levers.yaml) +
 [`research_ledger.md`](../research_ledger.md) (lever verdicts),
 [`loop_ledger.md`](../loop_ledger.md) (per-session execution record).
 
+## Git-as-ledger commands (commit + push)
+
+These make the commit history part of the research ledger — granular, auditable,
+policy-gated. The committers are deterministic scripts; the commands drive them.
+
+| Command                | Backing script                                  | Purpose                                                                 |
+| ---------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `/commit-research`     | `scripts/research_committer.py`                 | Policy-driven, scope-granular commits per repo with verbose traceable messages, per-repo checks, pre-staged protection, and policy-gated push. Dry-run first. |
+| `/commit-constellation`| `scripts/constellation_commit.py`               | Lighter tier-ordered per-repo committer with provenance trailers (quick control-plane commits). |
+
+Governed by [`registry/repo_commit_policy.yaml`](../registry/repo_commit_policy.yaml);
+doctrine in [`docs/git_as_research_ledger.md`](../docs/git_as_research_ledger.md).
+The standalone validator [`hooks/commit_guard.py`](../hooks/commit_guard.py) audits
+a repo's staged state / message / push intent (advisory + hard signals; not wired
+to auto-commit).
+
 ## How these are exposed to a Claude session
 
 Two patterns:
