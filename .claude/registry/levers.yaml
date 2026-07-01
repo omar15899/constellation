@@ -234,15 +234,15 @@ levers:
     hypothesis: "The deployable headline survives an audit of the unaudited news headlines (currently a 9x divergence)."
     strategy: ltr-cross-sectional
     repo: ResearchLab
-    verdict: OPEN
+    verdict: CONFIRMED
     run_class: deployable
-    metric: "unaudited; 9x divergence between headline sources flagged, not resolved"
+    metric: "engines agree: +113.5% both, maxDD -11.3/-11.7; per-tick kernel Sharpe 0.708 vs vectorised 0.884; audit_root c56600ad"
     gate: "n/a — validity, not alpha"
-    evidence: "memory:ltr-next-steps-validity"
+    evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/outputs/audit_both_20260701/metrics.json"
     memory: ltr-next-steps-validity
-    date: 2026-06-21
-    rerun: true
-    note: "Alpha search is CLOSED. The open work is VALIDITY, not alpha. This is a validity blocker on the headline-driven results."
+    date: 2026-07-01
+    rerun: false
+    note: "verdict OPEN->CONFIRMED (2026-07-01): Validity closed favourable: audited causal kernel corroborates the deployable economics. Fresh engine=both on the FIXED kernel (BacktestLab a46c3fb): total return +113.55% vectorised == +113.50% audited, maxDD -11.3% vs -11.7%; the 9-11x Sharpe divergence was BacktestLab per-event annualisation (fixed; per-tick 0.708 vs 0.884, same order, residual delta catalogued in the unification plan)."
 
   - id: short-leg-cost
     hypothesis: "The long/short edge survives once the short leg is charged a realistic borrow cost (currently free)."
