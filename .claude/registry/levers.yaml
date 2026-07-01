@@ -42,7 +42,7 @@
 # Schema version. Bump when fields change.
 schema_version: 1
 generated_by: gate-check
-last_updated: 2026-06-23
+last_updated: 2026-07-01
 
 # ---------------------------------------------------------------------------
 # Strategies / books these levers feed (for grouping in the SessionStart brief).
@@ -248,12 +248,12 @@ levers:
     hypothesis: "The long/short edge survives once the short leg is charged a realistic borrow cost (currently free)."
     strategy: ltr-cross-sectional
     repo: ResearchLab
-    verdict: OPEN
+    verdict: CONFIRMED
     run_class: deployable
-    metric: "short leg currently modelled as free; cost not yet applied"
+    metric: "HRP book Sharpe 1.293 under harsh borrow, boot-CI [+0.63,+2.01]; curated 1.022 harsh; broad N50 0.847 harsh"
     gate: "n/a — validity, not alpha"
-    evidence: "memory:ltr-next-steps-validity"
+    evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/evaluation_2026-07-01.md"
     memory: ltr-next-steps-validity
-    date: 2026-06-21
-    rerun: true
-    note: "Validity blocker. A free short leg flatters every long/short Sharpe in the book."
+    date: 2026-07-01
+    rerun: false
+    note: "verdict OPEN->CONFIRMED (2026-07-01): Validity closed favourable: L/S edges survive realistic borrow. Broad 4/4 CONFIRMED under mod+harsh (2026-06-19); curated GBM 1.088->1.055(mod)->1.022(harsh), drag 25-50bps/yr; HRP book recombined 1.401->1.347->1.293 with boot-CI low +0.63 (2026-07-01)."
