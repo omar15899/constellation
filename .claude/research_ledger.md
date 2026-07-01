@@ -40,9 +40,9 @@ number is explicitly labelled survivorship-biased.
 **The alpha search is CLOSED. The open work is VALIDITY, not alpha.**
 
 ### CONFIRMED
-- `broad-linear-ridge-h63` — broad edge IS recoverable with a LINEAR ridge at H63 (gate 4/7); the GBM overfits it. *broad-floor.*
-- `multisleeve-hrp-book` — HRP book over the two uncorrelated edges (corr −0.07) → net Sharpe **1.45** OOS. First result past ~1.1; diversification, not new alpha. **Alignment re-audit 2026-06-28: SURVIVES** (all sleeves share one forward-label basis, no relative misalignment; native 1.446 == same-day 1.449). Caveats: does NOT statistically beat deployed v1.0 (bootstrap CI straddles 0) and curatedgbm overlaps v1.0 +0.42 — CONFIRMED is "real vs zero", not "beats the live book". *production.*
-- `t212-score-weighting` — score-weighting (cap 15) → Sharpe **1.30**; the only real Sharpe lever. v1.0 FROZEN. *deployable.*
+- `broad-linear-ridge-h63` — ENGINE LABEL 2026-07-01: vectorised-engine evidence only pending a BacktestLab reconciliation PASS (single-backtester decision). Verdict unchanged: broad edge IS recoverable with a LINEAR ridge at H63 (gate 4/7 CONFIRMED, survives mod+harsh borrow 4/4); the GBM overfits it.. *broad-floor.*
+- `multisleeve-hrp-book` — ENGINE LABEL 2026-07-01: vectorised-engine evidence only pending a BacktestLab reconciliation PASS (single-backtester decision; kernel reproduction = unification-plan Stage 3). Verdict unchanged: HRP book over the two uncorrelated edges (corr -0.07) -> net Sharpe 1.45 OOS; alignment re-audit 2026-06-28 SURVIVES (native 1.446 == same-day 1.449); borrow-robust 2026-07-01 (1.293 harsh, boot-CI low +0.63). Caveats stand: does NOT statistically beat deployed v1.0 (bootstrap CI straddles 0); curatedgbm overlaps v1.0 +0.42 — CONFIRMED is real-vs-zero, not beats-the-live-book.. *production.*
+- `t212-score-weighting` — ENGINE LABEL 2026-07-01: vectorised-engine evidence only pending a BacktestLab reconciliation PASS; the audited kernel corroborated the curated economics same-day (audit_both_20260701: +113.5% both engines, maxDD -11.3/-11.7). Verdict unchanged: score-weighting (cap 15) -> Sharpe 1.30; the only real Sharpe lever. v1.0 FROZEN.. *deployable.*
 
 ### CAPPED / NO_IMPROVEMENT
 - `multi-asset-diversifiers` (Track 2) — CAPPED: decorrelation real (0.23–0.51) but risk-reduction only.
