@@ -56,7 +56,7 @@ number is explicitly labelled survivorship-biased.
 - `t212-universe-zoo` (Track 4) — HOLD/NEGATIVE; high-Sharpe cells are cash artifacts. DO NOT re-run the zoo.
 
 ### OPEN — the real next steps (validity)
-- `headline-audit` — unaudited headlines, 9× divergence between sources.
+- `headline-audit` — Validity closed favourable: audited causal kernel corroborates the deployable economics. Fresh engine=both on the FIXED kernel (BacktestLab a46c3fb): total return +113.55% vectorised == +113.50% audited, maxDD -11.3% vs -11.7%; the 9-11x Sharpe divergence was BacktestLab per-event annualisation (fixed; per-tick 0.708 vs 0.884, same order, residual delta catalogued in the unification plan).. *deployable.*
 - `short-leg-cost` — Validity closed favourable: L/S edges survive realistic borrow. Broad 4/4 CONFIRMED under mod+harsh (2026-06-19); curated GBM 1.088->1.055(mod)->1.022(harsh), drag 25-50bps/yr; HRP book recombined 1.401->1.347->1.293 with boot-CI low +0.63 (2026-07-01).. *deployable.*
 
 ---
