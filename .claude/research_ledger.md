@@ -57,7 +57,7 @@ number is explicitly labelled survivorship-biased.
 
 ### OPEN — the real next steps (validity)
 - `headline-audit` — unaudited headlines, 9× divergence between sources.
-- `short-leg-cost` — the short leg is currently modelled as free.
+- `short-leg-cost` — Validity closed favourable: L/S edges survive realistic borrow. Broad 4/4 CONFIRMED under mod+harsh (2026-06-19); curated GBM 1.088->1.055(mod)->1.022(harsh), drag 25-50bps/yr; HRP book recombined 1.401->1.347->1.293 with boot-CI low +0.63 (2026-07-01).. *deployable.*
 
 ---
 
