@@ -36,6 +36,59 @@ _LEVERS = _HUB / "registry" / "levers.yaml"
 _LEDGER = _HUB / "research_ledger.md"
 _REPO_ROOT = Path.home() / "GitHub"
 _FOUR_BARS = ("sharpe", "dsr", "pbo", "ci_low", "p_bh")
+# run classes whose CONFIRMED additionally requires BacktestLab engine
+# provenance (contracts/promotion_gate.md, "Engine provenance", 2026-07-01)
+_PROVENANCE_RUN_CLASSES = {"deployable", "production"}
+
+
+def _resolve_artifact(artifact: str, repo: str | None) -> Path | None:
+    """Resolve the evidence artifact the same way the existence gate does."""
+    cand = Path(artifact)
+    if cand.is_absolute():
+        return cand if cand.exists() else None
+    roots = [Path.cwd(), _REPO_ROOT]
+    if repo:
+        roots.insert(0, _REPO_ROOT / repo)
+    for r in roots:
+        if (r / artifact).exists():
+            return r / artifact
+    return None
+
+
+def _has_backtestlab_provenance(artifact_path: Path | None) -> bool:
+    """True iff the artifact carries audited-engine evidence.
+
+    Accepted forms: a JSON whose `backtestlab` block has a non-null
+    `audit_root`; a JSON that IS an audited metrics dict (top-level
+    `audit_root`); a reconciliation artifact with `status`/`reconciliation.status`
+    == PASS; or a sibling metrics.json in the artifact's directory satisfying
+    the first two forms.
+    """
+    import json
+
+    def _check(p: Path) -> bool:
+        if not p.exists() or p.suffix.lower() != ".json":
+            return False
+        try:
+            data = json.loads(p.read_text())
+        except Exception:
+            return False
+        if not isinstance(data, dict):
+            return False
+        bt = data.get("backtestlab")
+        if isinstance(bt, dict) and bt.get("audit_root"):
+            return True
+        if data.get("audit_root"):
+            return True
+        status = data.get("status") or (data.get("reconciliation") or {}).get("status")
+        return status == "PASS"
+
+    if artifact_path is None:
+        return False
+    if _check(artifact_path):
+        return True
+    sibling = artifact_path.parent / "metrics.json"
+    return sibling != artifact_path and _check(sibling)
 
 
 def _yaml_str(value: str) -> str:
@@ -244,6 +297,20 @@ def main() -> int:
         if missing:
             print(f"REFUSED: research_strict CONFIRMED requires the four-bar metrics; missing: {missing}")
             return 2
+    if args.verdict == "CONFIRMED" and (args.run_class or "") in _PROVENANCE_RUN_CLASSES:
+        resolved = _resolve_artifact(args.artifact, args.repo) if args.artifact else None
+        if not _has_backtestlab_provenance(resolved):
+            msg = (
+                "CONFIRMED at run_class deployable/production requires BacktestLab "
+                "engine provenance (contracts/promotion_gate.md): point --artifact at "
+                "a metrics.json whose 'backtestlab' block has a non-null audit_root, "
+                "or at a reconciliation PASS artifact. Vectorised-only evidence caps "
+                "at HOLD."
+            )
+            if args.mode == "research_strict":
+                print(f"REFUSED: {msg}")
+                return 2
+            print(f"WARNING: {msg} (recording anyway in {args.mode} mode)")
     if args.artifact and not args.external:
         cand = Path(args.artifact)
         roots = [Path.cwd(), _REPO_ROOT]
