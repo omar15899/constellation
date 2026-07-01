@@ -33,6 +33,26 @@ Supporting diagnostics that qualify or kill a verdict:
 - **Robust objective J** = Sharpe − penalties(turnover, maxDD, factor-exposure,
   instability). Selection is on J, not raw Sharpe.
 
+## Engine provenance (required since 2026-07-01)
+
+The statistical bars are necessary but not sufficient. A **CONFIRMED** at
+`run_class: deployable` or `production` additionally requires **engine
+evidence** from the canonical audited backtester (BacktestLab):
+
+- the cell's `metrics.json` carries a `backtestlab` block with a non-null
+  `audit_root` (the audited causal kernel replayed this config), **or**
+- a BacktestLab **reconciliation PASS** artifact exists for the same
+  experiment (predefined tolerances; ResearchLab
+  `docs/architecture/2026-07-01_single_backtester_unification_plan.md`).
+
+Vectorised-engine-only evidence caps the verdict at **HOLD** — ResearchLab
+enforces this inside the gate (`LTR_GATE_AUDIT=warn|enforce`; outputs stamped
+`engine_class: diagnostic` are categorically unaudited), and
+`record_lever_verdict.py` refuses to record such a CONFIRMED in strict mode.
+The vectorised engine remains legitimate for diagnostics, exploration and
+candidate generation only. Legacy CONFIRMED rows keep their verdicts but carry
+the "vectorised-engine evidence only" label in their notes until reconciled.
+
 ## The multiple-testing denominator m (non-negotiable)
 
 **The family you tried IS the denominator.** Pass *every* cell swept through the
