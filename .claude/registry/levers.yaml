@@ -30,6 +30,15 @@
 #   date        — YYYY-MM-DD the verdict was reached
 #   rerun       — false = DO NOT re-run; true = open to re-run with new data/method
 #   note        — free text: why, residual caveat, what would reopen it
+#   engine      — backtestlab | vectorized | vectorized-legacy | n/a
+#                 (single-backtester enforcement 2026-07-02: a CONFIRMED at
+#                 deployable/production REQUIRES engine: backtestlab with a
+#                 64-hex audit_root or a reconciliation pointer; vectorized-legacy
+#                 grandfathers pre-2026-07-02 rows only — promotion-frozen
+#                 pending a BacktestLab reconciliation PASS)
+#   audit_root  — 64-hex BLAKE3 audit-DAG root when engine: backtestlab
+#   reconciliation — path to a BacktestLab reconciliation PASS artifact (alternative
+#                 to audit_root for legacy-vectorised results)
 #
 # Verdict vocabulary (canonical — also in contracts/promotion_gate.md):
 #   OPEN            — hypothesis stated, not yet tested to a verdict
@@ -86,6 +95,7 @@ levers:
     repo: ResearchLab
     verdict: CONFIRMED
     run_class: production
+    engine: vectorized-legacy
     metric: "net Sharpe 1.45 OOS (edges corr -0.07); first result past ~1.1. RE-AUDITED 2026-06-28 for the alignment bug -> SURVIVES (native 1.446 == same-day 1.449)"
     gate: "promotion_gate pass; alignment re-audit pass (reports/alignment_forensic/hrp_recompute.md)"
     evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/evaluation_2026-07-01.md"
@@ -100,6 +110,7 @@ levers:
     repo: ResearchLab
     verdict: CONFIRMED
     run_class: deployable
+    engine: vectorized-legacy
     metric: "Sharpe 1.30 gate-CONFIRMED; maxDD -31% -> -15/-23% with vol-target/regime overlays (drawdown-only)"
     gate: "promotion_gate pass"
     evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/evaluation_2026-07-01.md"
@@ -236,6 +247,8 @@ levers:
     repo: ResearchLab
     verdict: CONFIRMED
     run_class: deployable
+    engine: backtestlab
+    audit_root: c56600ada16172e376a97f54ce86de5fd24a9d40f54e9c8b10d1c08aa57f946a
     metric: "engines agree: +113.5% both, maxDD -11.3/-11.7; per-tick kernel Sharpe 0.708 vs vectorised 0.884; audit_root c56600ad"
     gate: "n/a — validity, not alpha"
     evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/outputs/audit_both_20260701/metrics.json"
@@ -250,6 +263,7 @@ levers:
     repo: ResearchLab
     verdict: CONFIRMED
     run_class: deployable
+    engine: vectorized-legacy
     metric: "HRP book Sharpe 1.293 under harsh borrow, boot-CI [+0.63,+2.01]; curated 1.022 harsh; broad N50 0.847 harsh"
     gate: "n/a — validity, not alpha"
     evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/evaluation_2026-07-01.md"

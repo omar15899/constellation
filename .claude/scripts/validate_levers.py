@@ -34,6 +34,16 @@ import _levers  # noqa: E402
 VERDICTS = {"OPEN", "CONFIRMED", "CAPPED", "NO_IMPROVEMENT", "REFUTED", "HOLD"}
 RUN_CLASSES = {"diagnostic", "broad-floor", "deployable", "production", "research", "control-plane"}
 CLOSED = {"REFUTED", "CONFIRMED", "NO_IMPROVEMENT"}
+# engine vocabulary (single-backtester enforcement, 2026-07-02):
+#   backtestlab       — audited causal-kernel evidence (audit_root / reconciliation)
+#   vectorized        — diagnostic engine; legal only below deployable/production CONFIRMED
+#   vectorized-legacy — pre-enforcement CONFIRMED rows, promotion-frozen pending
+#                       reconciliation; only grandfathered for date <= 2026-07-01
+#   n/a               — non-PnL levers (data plumbing, controls)
+ENGINES = {"backtestlab", "vectorized", "vectorized-legacy", "n/a"}
+_PROVENANCE_RUN_CLASSES = {"deployable", "production"}
+_LEGACY_CUTOFF = "2026-07-01"
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -84,6 +94,39 @@ def validate(path: Path | None = None) -> dict:
         strat = lev.get("strategy")
         if strat and strategies and strat not in strategies:
             warnings.append(f"{tag}: strategy {strat!r} is not a declared strategy id")
+
+        # Engine provenance (single-backtester enforcement, 2026-07-02).
+        # A CONFIRMED at deployable/production must carry structured engine
+        # evidence: backtestlab (with a 64-hex audit_root or a reconciliation
+        # pointer), or the frozen pre-enforcement grandfather class.
+        engine = lev.get("engine", "")
+        if engine and engine not in ENGINES:
+            errors.append(f"{tag}: unknown engine {engine!r} (allowed: {sorted(ENGINES)})")
+        if verdict == "CONFIRMED" and rc in _PROVENANCE_RUN_CLASSES:
+            if not engine:
+                errors.append(
+                    f"{tag}: CONFIRMED {rc} requires an 'engine' field "
+                    "(backtestlab | vectorized-legacy)"
+                )
+            elif engine == "backtestlab":
+                root = lev.get("audit_root", "")
+                if not (_HEX64.match(root or "") or lev.get("reconciliation")):
+                    errors.append(
+                        f"{tag}: engine backtestlab requires a 64-hex audit_root "
+                        "or a reconciliation artifact pointer"
+                    )
+            elif engine == "vectorized-legacy":
+                if not date or date > _LEGACY_CUTOFF:
+                    errors.append(
+                        f"{tag}: vectorized-legacy is only grandfathered for verdicts "
+                        f"dated <= {_LEGACY_CUTOFF}; a new CONFIRMED {rc} needs "
+                        "engine: backtestlab evidence"
+                    )
+            else:
+                errors.append(
+                    f"{tag}: engine {engine!r} cannot back a CONFIRMED {rc} "
+                    "(vectorised evidence caps at HOLD; see contracts/promotion_gate.md)"
+                )
 
     histogram: dict[str, int] = {}
     for lev in levers:

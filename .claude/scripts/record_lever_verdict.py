@@ -81,7 +81,13 @@ def _has_backtestlab_provenance(artifact_path: Path | None) -> bool:
         if data.get("audit_root"):
             return True
         status = data.get("status") or (data.get("reconciliation") or {}).get("status")
-        return status == "PASS"
+        if status == "PASS":
+            # A reconciliation artifact must self-identify as BacktestLab
+            # evidence — a bare {"status": "PASS"} is not provenance.
+            return data.get("engine") == "BacktestLab" or bool(
+                (data.get("reconciliation") or {}).get("audit_root")
+            )
+        return False
 
     if artifact_path is None:
         return False
@@ -300,17 +306,18 @@ def main() -> int:
     if args.verdict == "CONFIRMED" and (args.run_class or "") in _PROVENANCE_RUN_CLASSES:
         resolved = _resolve_artifact(args.artifact, args.repo) if args.artifact else None
         if not _has_backtestlab_provenance(resolved):
-            msg = (
-                "CONFIRMED at run_class deployable/production requires BacktestLab "
-                "engine provenance (contracts/promotion_gate.md): point --artifact at "
-                "a metrics.json whose 'backtestlab' block has a non-null audit_root, "
-                "or at a reconciliation PASS artifact. Vectorised-only evidence caps "
-                "at HOLD."
+            # Refused in EVERY mode since 2026-07-02 (single-backtester
+            # enforcement): a serious result without BacktestLab provenance
+            # or a reconciliation PASS must be impossible to record, not
+            # merely warned about. Vectorised-only evidence caps at HOLD.
+            print(
+                "REFUSED: CONFIRMED at run_class deployable/production requires "
+                "BacktestLab engine provenance (contracts/promotion_gate.md): point "
+                "--artifact at a metrics.json whose 'backtestlab' block has a "
+                "non-null audit_root, or at a BacktestLab reconciliation PASS "
+                "artifact. Vectorised-only evidence caps at HOLD."
             )
-            if args.mode == "research_strict":
-                print(f"REFUSED: {msg}")
-                return 2
-            print(f"WARNING: {msg} (recording anyway in {args.mode} mode)")
+            return 2
     if args.artifact and not args.external:
         cand = Path(args.artifact)
         roots = [Path.cwd(), _REPO_ROOT]

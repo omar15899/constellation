@@ -45,13 +45,27 @@ evidence** from the canonical audited backtester (BacktestLab):
   experiment (predefined tolerances; ResearchLab
   `docs/architecture/2026-07-01_single_backtester_unification_plan.md`).
 
-Vectorised-engine-only evidence caps the verdict at **HOLD** — ResearchLab
-enforces this inside the gate (`LTR_GATE_AUDIT=warn|enforce`; outputs stamped
-`engine_class: diagnostic` are categorically unaudited), and
-`record_lever_verdict.py` refuses to record such a CONFIRMED in strict mode.
+Vectorised-engine-only evidence caps the verdict at **HOLD**. Enforcement is
+layered and fail-closed (hardened 2026-07-02):
+
+- **ResearchLab gate** — `LTR_GATE_AUDIT` defaults to `enforce`; outputs
+  stamped `engine_class: diagnostic` are categorically unaudited.
+- **Registry writer** — `record_lever_verdict.py` refuses such a CONFIRMED in
+  **every** mode (not just strict). A reconciliation artifact must
+  self-identify as BacktestLab (`engine: "BacktestLab"` or an audit root);
+  a bare `{"status": "PASS"}` is not provenance.
+- **Registry schema** — levers carry a structured `engine:` field
+  (`backtestlab | vectorized | vectorized-legacy | n/a`).
+  `validate_levers.py` hard-fails any CONFIRMED deployable/production row
+  without `engine: backtestlab` (+ 64-hex `audit_root` or `reconciliation`
+  pointer). `vectorized-legacy` grandfathers only rows dated ≤ 2026-07-01:
+  historical facts stay recorded, promotion-frozen pending reconciliation —
+  a NEW row cannot claim it.
+- **Tests** — `.claude/tests/test_promotion_enforcement.py` proves each
+  refusal path (run it before trusting an edit to any of the above).
+
 The vectorised engine remains legitimate for diagnostics, exploration and
-candidate generation only. Legacy CONFIRMED rows keep their verdicts but carry
-the "vectorised-engine evidence only" label in their notes until reconciled.
+candidate generation only.
 
 ## The multiple-testing denominator m (non-negotiable)
 
