@@ -275,3 +275,17 @@ levers:
     date: 2026-07-01
     rerun: false
     note: "verdict OPEN->CONFIRMED (2026-07-01): Validity closed favourable: L/S edges survive realistic borrow. Broad 4/4 CONFIRMED under mod+harsh (2026-06-19); curated GBM 1.088->1.055(mod)->1.022(harsh), drag 25-50bps/yr; HRP book recombined 1.401->1.347->1.293 with boot-CI low +0.63 (2026-07-01)."
+
+  - id: t212-broad-sleeve-factory
+    hypothesis: "The broad T212 universe (17k instruments, 7 ex-ante sleeves) contains long-only cross-sectional selection or ETF-trend edge beyond same-sleeve equal-weight"
+    strategy: t212-deployable
+    repo: ResearchLab
+    verdict: REFUTED
+    run_class: diagnostic
+    metric: "0/26 cells pass the gate at m=26 (best p_bh 0.075, best DSR 0.78, family PBO-CSCV 0.79); survivorship-honest re-cut collapses ridge H63 from +0.70 to -0.50 (alpha_t -2.59 vs EW); ~0.7-1.2 Sharpe of survivorship inflation quantified"
+    evidence: "research_algorithms/t212_broad_sleeve_factory/results/gate_results.json"
+    memory: t212-broad-sleeve-factory
+    date: 2026-07-02
+    rerun: false
+    rerun_guard: "broad.?sleeve.?factory,t212bsf"
+    note: "v2 broad sleeve factory built and gate-refuted wholesale; conditional numbers are survivorship-flattered beta (best cell = beta 1.61 + GME/BBBY concentration); GBM-overfits-broad prior replicated out-of-corpus; explorer kernel-reconciled (corr 0.9993, audit_root 73219a94) after the kernel caught a gap-return bug; sector-neutral family DATA_BLOCKED (sector coverage 17.5%), v1 portability DATA_BLOCKED (no persisted booster, no OHLC)"

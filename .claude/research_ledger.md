@@ -77,3 +77,4 @@ number is explicitly labelled survivorship-biased.
 
 Then mirror the same fields as a structured row in `registry/levers.yaml`
 (prefer `/gate-check`, which does both).
+- `t212-broad-sleeve-factory` — v2 broad sleeve factory built and gate-refuted wholesale; conditional numbers are survivorship-flattered beta (best cell = beta 1.61 + GME/BBBY concentration); GBM-overfits-broad prior replicated out-of-corpus; explorer kernel-reconciled (corr 0.9993, audit_root 73219a94) after the kernel caught a gap-return bug; sector-neutral family DATA_BLOCKED (sector coverage 17.5%), v1 portability DATA_BLOCKED (no persisted booster, no OHLC). *diagnostic.*
