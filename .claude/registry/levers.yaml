@@ -51,7 +51,7 @@
 # Schema version. Bump when fields change.
 schema_version: 1
 generated_by: gate-check
-last_updated: 2026-07-01
+last_updated: 2026-07-02
 
 # ---------------------------------------------------------------------------
 # Strategies / books these levers feed (for grouping in the SessionStart brief).
@@ -112,14 +112,16 @@ levers:
     repo: ResearchLab
     verdict: CONFIRMED
     run_class: deployable
-    engine: vectorized-legacy
-    metric: "Sharpe 1.30 gate-CONFIRMED; maxDD -31% -> -15/-23% with vol-target/regime overlays (drawdown-only)"
-    gate: "promotion_gate pass"
-    evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/evaluation_2026-07-01.md"
+    engine: backtestlab
+    audit_root: 2a405b5be6acf2445238d31f3230e2515fc349ac2ddd3a33d26f4d6d53a3d777
+    reconciliation: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/t212_longonly_kernel_reconciliation_2026-07-02.json"
+    metric: "Sharpe 1.359 kernel-confirmed (was 1.30 headline on the earlier window); alpha vs SPY +14.8%/yr (beta 1.11, IR 1.38); vs EW-universe +11.3%/yr"
+    gate: "promotion_gate pass; kernel-PnL gate CONFIRMED 2026-07-02 (DSR 0.99997, BH-FDR 0.0008 at m=24, boot-CI low +0.70); BacktestLab reconciliation PASS 2026-07-02; production-mode deployability battery PASS"
+    evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/t212_longonly_kernel_audit.md"
     memory: t212-deployable-improvement
-    date: 2026-07-01
+    date: 2026-07-02
     rerun: false
-    note: "ENGINE LABEL 2026-07-01: vectorised-engine evidence only pending a BacktestLab reconciliation PASS; the audited kernel corroborated the curated economics same-day (audit_both_20260701: +113.5% both engines, maxDD -11.3/-11.7). Verdict unchanged: score-weighting (cap 15) -> Sharpe 1.30; the only real Sharpe lever. v1.0 FROZEN."
+    note: "KERNEL RECONCILIATION 2026-07-02: long-only v1 (top-20 score-weighted cap15, H63 quarterly) reproduced through the BacktestLab audited kernel via dense-schedule manifest run - reconciliation PASS (coverage 1.0, daily corr 0.9993, dSharpe 0.0014: 1.3591 kernel vs 1.3605 vectorised, dmaxDD 0.11pp, audit_root 2a405b5b...). Production-mode run PASS incl. full T212 deployability battery + target book (audit_root 47fbeb42...). Gate re-run ON KERNEL PnL: CONFIRMED (DSR 0.99997, BH-FDR p 0.0008 at m=24, boot-CI [0.70, 2.06]). Kernel-confirmed ladder: top10 1.43 > top20 1.36 > top30 1.32 > top50 1.27 > EW 1.00 > bottom20 0.70 (monotone in score; the long-only top-leg edge is real, no short leg ever involved; bottom leg alpha vs SPY -1.5%/yr). Stress all PASS (tx x2 1.31, x5 1.15, +1bar 1.36, drop-5-days 1.19) + droptop5 1.05 (root 9d0aacde...). Caveats stand: curated-universe-conditional (broad floor Sharpe 0.27 p=0.45), beta ~1.1 long-only book, semiconductor concentration (MU 24% of profit), cap drifts to 26.7% intra-quarter. Full audit: reports/t212_longonly_kernel_audit.md. Prior vectorised-only label superseded."
 
   # --- CAPPED (real but bounded) ------------------------------------------
   - id: multi-asset-diversifiers
