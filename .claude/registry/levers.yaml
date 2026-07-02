@@ -95,14 +95,16 @@ levers:
     repo: ResearchLab
     verdict: CONFIRMED
     run_class: production
-    engine: vectorized-legacy
+    engine: backtestlab
+    audit_root: c21f29648fa571f101f3abac088884931114f30a955fb499b48fb29979316af6
+    reconciliation: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/hrp_kernel_reconciliation_2026-07-02.json"
     metric: "net Sharpe 1.45 OOS (edges corr -0.07); first result past ~1.1. RE-AUDITED 2026-06-28 for the alignment bug -> SURVIVES (native 1.446 == same-day 1.449)"
-    gate: "promotion_gate pass; alignment re-audit pass (reports/alignment_forensic/hrp_recompute.md)"
+    gate: "promotion_gate pass; alignment re-audit pass (reports/alignment_forensic/hrp_recompute.md); BacktestLab reconciliation PASS 2026-07-02"
     evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/evaluation_2026-07-01.md"
     memory: ltr-multisleeve-book
     date: 2026-07-01
     rerun: false
-    note: "ENGINE LABEL 2026-07-01: vectorised-engine evidence only pending a BacktestLab reconciliation PASS (single-backtester decision; kernel reproduction = unification-plan Stage 3). Verdict unchanged: HRP book over the two uncorrelated edges (corr -0.07) -> net Sharpe 1.45 OOS; alignment re-audit 2026-06-28 SURVIVES (native 1.446 == same-day 1.449); borrow-robust 2026-07-01 (1.293 harsh, boot-CI low +0.63). Caveats stand: does NOT statistically beat deployed v1.0 (bootstrap CI straddles 0); curatedgbm overlaps v1.0 +0.42 — CONFIRMED is real-vs-zero, not beats-the-live-book."
+    note: "KERNEL RE-VALIDATION 2026-07-02 (unification-plan Stage 3, plan section-6 annotation): BacktestLab audited causal kernel reproduced the frozen book via stream-book manifest run (scripts/stage3_hrp_kernel_repro.py) -> reconciliation PASS at sharpe_tol 0.05: dSharpe=0.0007 (1.4524 recorded vs 1.4517 kernel), daily corr 0.9999972, max daily diff 1.43bp, dmaxDD 0.02pp, 1882/1883 bars, audit_root c21f2964..., allow_negative_cash declared (bps-level sequential-rebalance margin dust, plan section 5). Prior label (vectorised-evidence-only 2026-07-01) superseded. Verdict unchanged: HRP book over the two uncorrelated edges (corr -0.07) -> net Sharpe 1.45 OOS; borrow-robust (1.293 harsh, boot-CI low +0.63). Caveats stand: does NOT statistically beat deployed v1.0 (bootstrap CI straddles 0); curatedgbm overlaps v1.0 +0.42 — CONFIRMED is real-vs-zero, not beats-the-live-book."
 
   - id: t212-score-weighting
     hypothesis: "Score-weighting (cap 15) raises the deployable T212 build's Sharpe."
