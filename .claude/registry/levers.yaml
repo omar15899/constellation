@@ -51,7 +51,7 @@
 # Schema version. Bump when fields change.
 schema_version: 1
 generated_by: gate-check
-last_updated: 2026-07-02
+last_updated: 2026-07-03
 
 # ---------------------------------------------------------------------------
 # Strategies / books these levers feed (for grouping in the SessionStart brief).
@@ -122,6 +122,22 @@ levers:
     date: 2026-07-02
     rerun: false
     note: "KERNEL RECONCILIATION 2026-07-02: long-only v1 (top-20 score-weighted cap15, H63 quarterly) reproduced through the BacktestLab audited kernel via dense-schedule manifest run - reconciliation PASS (coverage 1.0, daily corr 0.9993, dSharpe 0.0014: 1.3591 kernel vs 1.3605 vectorised, dmaxDD 0.11pp, audit_root 2a405b5b...). Production-mode run PASS incl. full T212 deployability battery + target book (audit_root 47fbeb42...). Gate re-run ON KERNEL PnL: CONFIRMED (DSR 0.99997, BH-FDR p 0.0008 at m=24, boot-CI [0.70, 2.06]). Kernel-confirmed ladder: top10 1.43 > top20 1.36 > top30 1.32 > top50 1.27 > EW 1.00 > bottom20 0.70 (monotone in score; the long-only top-leg edge is real, no short leg ever involved; bottom leg alpha vs SPY -1.5%/yr). Stress all PASS (tx x2 1.31, x5 1.15, +1bar 1.36, drop-5-days 1.19) + droptop5 1.05 (root 9d0aacde...). Caveats stand: curated-universe-conditional (broad floor Sharpe 0.27 p=0.45), beta ~1.1 long-only book, semiconductor concentration (MU 24% of profit), cap drifts to 26.7% intra-quarter. Full audit: reports/t212_longonly_kernel_audit.md. Prior vectorised-only label superseded."
+
+  - id: t212-turnover-buffering
+    hypothesis: "Turnover buffering cuts the frozen v1 deployable's cost drag >=30% while preserving >=85% of net Sharpe (operational hardening, no alpha change)."
+    strategy: t212-deployable
+    repo: ResearchLab
+    verdict: CONFIRMED
+    run_class: deployable
+    engine: backtestlab
+    audit_root: b397f7fb4162bb597bcb4a128e92d87bfefb091f9231a6c7b3f5a664121881ed
+    metric: "rankbuf_40 (enter top-20 / hold to rank 40): turnover & cost drag -33%, Sharpe 1.344 kernel-confirmed (98.9% of v1 1.359), CAGR +32.5%, maxDD 34.7% (+3.0pp), TE 4.9%, SPY alpha +13.1%/yr (IR 1.49 > v1 1.38); rankbuf_50 -43%/97.3%; tcap_25 -82%/92.6% (82-name book caveat)"
+    gate: "four-bar gate ON KERNEL PnL at n_trials=37 (24 original + 13 this family): DSR 0.9998, BH-FDR p 0.00022, boot-CI [0.63, 2.10], Sharpe 1.344; family PBO-CSCV 0.898 reported = clone-rank-instability, not alpha overfit (selection was by pre-registered composite criterion, cost cut is deterministic; see study report); production-mode deployability battery PASS (root 591db0b5...)"
+    evidence: "/Users/omarkhalil/GitHub/ResearchLab/research_algorithms/learning_to_rank_cross_sectional/reports/t212_turnover_buffering_metrics.json"
+    memory: t212-deployable-improvement
+    date: 2026-07-03
+    rerun: false
+    note: "TURNOVER-BUFFERING STUDY 2026-07-03 (m=13 pre-registered, all cells audited BacktestLab runs, control reproduced frozen v1 to the 26th significant digit, root 838b4b3d...). Sticky rank-buffered membership is the lever: hold book names at drifted weight until score-rank exits top K; K=40 recommended (-33% turnover/cost drag, 99% Sharpe keep, IR vs SPY improves 1.38->1.49, book <=31 names, +3.1pp COVID maxDD, slower 2022 recovery disclosed). Frontier: rankbuf_50 -43%/97.3%; tcap_25 -82%/92.6% but book bloats to ~82 names (needs dust-sweep). Bands 25-100bps + vol-scaled bands DEAD BY CONSTRUCTION (v1 reshuffles ~4%/name/quarter, ~150% NAV churn/quarter); cost-aware swap filter barely binds (~1.6 swaps/quarter cancelled); faster re-trading (monthly/6w re-pin to stale targets) REFUTED - strictly dominated, retrade_31d dSharpe CI95 [-0.07,-0.01] excludes 0; semiannual passes criterion but alpha-inefficient (dominated by tcap_25). At 2x costs rankbuf_40 already matches v1. NOT DEPLOYED: v1 stays the production baseline; switching is a separate target-book cutover decision. Full report: reports/t212_turnover_buffering_study.md."
 
   # --- CAPPED (real but bounded) ------------------------------------------
   - id: multi-asset-diversifiers
