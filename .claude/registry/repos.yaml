@@ -29,7 +29,7 @@ perimeters:
   quantos-prod:          [RiskLab, ExecutionLab]
   quantos-ui:            [tradinginterface]
   quantos-orchestration: [StrategyOrchestrationLab]
-  adjacent:              [Scilux, MMARV1, KarimSpecificCase]
+  adjacent:              [Scilux, MMARV1, KarimSpecificCase, brainteasers-asincronas]
   external:              [ruflo]
   future:                []
 
@@ -220,6 +220,17 @@ repos:
     vault_link: null
     claude_dir: .claude
     notes: HTML/CSS/JS + Playwright. Not part of QuantOS tier graph.
+
+  - name: brainteasers-asincronas
+    path: /Users/omarkhalil/GitHub/brainteasers-asincronas
+    perimeter: adjacent
+    tier: null
+    role: async-lecture production system (Beamer/Hespérides + teleprompter) for the Brainteasers Quant master course
+    stack: mixed   # LaTeX + Python hooks + shell
+    status: active
+    vault_link: 05_Projects/Brainteasers_Quant
+    claude_dir: null
+    notes: Symlinked as ~/OmarOS/05_Projects/Brainteasers_Quant/asincronas. Remote github.com/omar15899/brainteasers-asincronas (private). Vendors the private hesperides-beamer-template. Not part of QuantOS tier graph.
 
   - name: ruflo
     path: /Users/omarkhalil/GitHub/ruflo

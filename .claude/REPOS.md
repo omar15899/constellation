@@ -66,7 +66,7 @@ Last updated: **2026-06-15**.
 
 ---
 
-## Adjacent perimeter (3 repos)
+## Adjacent perimeter (4 repos)
 
 These live next to QuantOS on disk but are **independent projects** —
 not bound by QuantOS tier discipline or vault governance.
@@ -76,6 +76,7 @@ not bound by QuantOS tier discipline or vault governance.
 | **Scilux**            | typescript-vite  | external | Scientific UI / visualisation toolkit |
 | **MMARV1**            | python-light     | external | Multifractal analysis library |
 | **KarimSpecificCase** | vanilla-web      | external | gas-storage operations monitor (adjacent client UI) |
+| **brainteasers-asincronas** | mixed (LaTeX+py+sh) | active | Async-lecture production system (Hespérides Beamer + teleprompter) for the Brainteasers Quant course |
 
 ---
 
