@@ -14,6 +14,12 @@ details live in the skill / agent it wraps.
 | `/constellation`   | `constellation-brief` skill        | One-page state snapshot.                               |
 | `/tier-check`      | `tier-discipline` skill            | Audit the import graph against the tier hierarchy.     |
 
+## Adjacent-project commands
+
+| Command            | Backing                                             | Purpose                                                |
+| ------------------ | --------------------------------------------------- | ------------------------------------------------------ |
+| `/video-asincrono` | `~/GitHub/brainteasers-asincronas/CLAUDE.md`        | Produce an async lecture video (Hespérides deck + teleprompter + pedagogy note) for the Brainteasers Quant course. |
+
 ## Verification + research workflow commands
 
 Prompt-discipline commands implementing the expert-directed loop (the user owns
