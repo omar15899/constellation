@@ -230,7 +230,7 @@ repos:
     status: active
     vault_link: 05_Projects/Brainteasers_Quant
     claude_dir: null
-    notes: Symlinked as ~/OmarOS/05_Projects/Brainteasers_Quant/asincronas. Remote github.com/omar15899/brainteasers-asincronas (private). Vendors the private hesperides-beamer-template. Not part of QuantOS tier graph.
+    notes: System only; produced videos land in ~/OmarOS/05_Projects/Brainteasers_Quant/asincronas (vault-versioned). Remote github.com/omar15899/brainteasers-asincronas (private). Vendors the private hesperides-beamer-template. Not part of QuantOS tier graph.
 
   - name: ruflo
     path: /Users/omarkhalil/GitHub/ruflo
