@@ -8,17 +8,18 @@ description: Producir un subvídeo asíncrono del curso Brainteasers Quant — p
 Punto de entrada para producir un vídeo asíncrono del Máster (curso
 Brainteasers Quant). Petición típica en lenguaje natural:
 
-> Prepara el vídeo 3 de la sesión 2. Unos seis minutos. Quiero explicar por
-> qué la convexidad cambia el problema. Usa la sección 4 de los apuntes. La
-> demostración la haré a mano.
+> Prepara el vídeo 3 de la sesión 12. Unos nueve minutos. La demostración la
+> haré a mano.
 
 ## Pipeline
 
 1. Leer **`~/GitHub/brainteasers-asincronas/CLAUDE.md`** (contrato del repo)
    y `_sistema/convenciones.md`. Son autoritativos; este comando solo enruta.
-2. Seguir la "Secuencia por vídeo" de ese CLAUDE.md: syllabus → apuntes →
-   `nuevo_video.sh` → diseño conjunto slides+guion → build → render →
-   inspección visual página a página → `validar.py` hasta OK.
+2. Seguir la "Secuencia por vídeo" de ese CLAUDE.md: ficha de la sesión en el
+   syllabus definitivo → abstracción y disparadores en el mapa 2.0 → problema
+   asignado en su banco (con solución) → `nuevo_video.sh` → diseño conjunto
+   slides+guion → build → render → inspección visual página a página →
+   `validar.py` hasta OK.
 3. Entregar las tres rutas (PDF, guion, justificación) y commitear el vídeo
    en el repo del vault.
 
@@ -26,7 +27,12 @@ Brainteasers Quant). Petición típica en lenguaje natural:
 
 - Sistema: `~/GitHub/brainteasers-asincronas` (repo privado con remoto).
 - Vídeos producidos: `~/OmarOS/05_Projects/Brainteasers_Quant/asincronas/`.
-- Fuentes del curso: `~/OmarOS/05_Projects/Brainteasers_Quant/` (solo lectura).
+- **Fuente canónica del contenido**:
+  `~/OmarOS/05_Projects/Brainteasers_Quant/ApuntesDefinitivos/` (syllabus de
+  las 20 sesiones, mapa de abstracciones 2.0, doctrina, trucos nuevos).
+- Enunciados y soluciones: `V0_Repositorio_de_Problemas/` (banco propio, ID
+  `A0X-0YY`) y `QuantProf/quantprof_master.tex` (916 problemas de entrevistas
+  reales). Todo el vault es de solo lectura salvo `asincronas/`.
 
 ## Guardarraíles
 
@@ -34,6 +40,8 @@ Brainteasers Quant). Petición típica en lenguaje natural:
 - No sobrescribir vídeos con `estado: aprobado` (→ `versions/vNN`).
 - No entregar sin inspección visual del PDF renderizado ni con `validar.py`
   en fallo.
+- Ningún guion (`-`, `—`, `–`) haciendo de separador, en ningún texto que se
+  entregue. Español hablado, natural, sin fórmulas de máquina.
 
 ## Aliases
 
