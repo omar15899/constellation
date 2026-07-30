@@ -73,6 +73,31 @@ When the session descends into a single repo, that repo's `.claude/`
 is authoritative for everything internal to it. The constellation
 plane composes; per-repo planes execute.
 
+## Two agent heads, one plane
+
+Every surface here is drivable by **Claude Code or OpenAI Codex,
+interchangeably**. `.claude/` is canonical; `.codex/` and every `AGENTS.md`
+are a *generated projection* of it:
+
+| Claude Code | Codex | Invoke |
+| ----------- | ----- | ------ |
+| `CLAUDE.md` | `AGENTS.md` | automatic |
+| `.claude/agents/<n>.md` | `.codex/agents/<n>.toml` | spawn by name |
+| `.claude/skills/<n>/` | `.codex/skills/<n>` (symlink — same files) | `$<n>` |
+| `/<n>` slash command | `.codex/skills/<n>/` | `$<n>` |
+| `settings.json` hooks | `.codex/hooks.json` → same `.claude/hooks/` scripts | automatic once trusted |
+| `permissions.deny` | `.codex/rules/default.rules` | automatic once trusted |
+
+Never hand-edit `.codex/` or an `AGENTS.md`. Edit `.claude/`, then run
+`/codex-sync` (or `.claude/scripts/codex_sync.py --all`). Codex-only
+material with no Claude counterpart goes in `.codex/local/`.
+
+Codex needs two things Claude does not: project trust
+(`codex_sync.py --trust`) and a one-time interactive hook approval
+(`/hooks` → *Trust all and continue*) — **until then Codex silently runs no
+hooks at all**. Full mapping, limits and empirical basis:
+[`.claude/docs/codex_parity.md`](.claude/docs/codex_parity.md).
+
 ## Fast operations
 
 - `~/GitHub/.claude/scripts/discover_repos.py --state` — registry sync + git state.

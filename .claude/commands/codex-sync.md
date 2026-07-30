@@ -1,0 +1,69 @@
+---
+name: codex-sync
+description: Re-project the canonical .claude/ control plane onto the Codex .codex/ plane across the constellation, so either agent can drive any repo. Runs a drift check first, applies only what changed, then verifies with the Codex binary.
+argument-hint: "[--check] [--repo <path>] [--all]"
+---
+
+# /codex-sync
+
+Keep the two agent heads in sync. `.claude/` is canonical; `.codex/` and
+every `AGENTS.md` are generated from it.
+
+Full mapping and the empirical basis for it:
+[`.claude/docs/codex_parity.md`](../docs/codex_parity.md).
+
+## Pipeline
+
+1. **Drift check** — never write blind:
+
+   ```bash
+   ~/GitHub/.claude/scripts/codex_sync.py --all --check
+   ```
+
+   Exit 1 with a `DRIFT` list means `.claude/` moved and `.codex/` has not.
+   Exit 0 means the planes agree; stop here and say so.
+
+2. **Apply** — only the surfaces that drifted, or `--all`:
+
+   ```bash
+   ~/GitHub/.claude/scripts/codex_sync.py --all
+   ```
+
+   Report the per-repo written counts and **every warning verbatim**.
+   Warnings are real information: a name collision between a command and a
+   skill changes how Omar invokes it (`$cmd-<name>` instead of `$<name>`).
+
+3. **Trust** — new repos need registering before Codex reads their
+   project-local config at all:
+
+   ```bash
+   ~/GitHub/.claude/scripts/codex_sync.py --trust
+   ```
+
+4. **Verify** — confirm Codex actually loads what was written, in at least
+   one repo that changed:
+
+   ```bash
+   cd <repo> && codex debug prompt-input "hi" | python3 -m json.tool | grep -c SKILL.md
+   python3 -c "import tomllib,glob;[tomllib.load(open(p,'rb')) for p in glob.glob('<repo>/.codex/agents/*.toml')]"
+   ```
+
+5. **Commit** — atomic per repo, per constellation git policy. Never bundle
+   repos into one commit.
+
+## Invariants
+
+- **Never hand-edit anything under `.codex/`, and never hand-edit an
+  `AGENTS.md`.** Both carry a generated banner. Edit `.claude/` and re-run.
+  Codex-only material with no Claude counterpart goes in `.codex/local/`,
+  which the projection neither reads nor deletes.
+- **Hook trust is not automatic.** Any run that rewrites a `hooks.json`
+  invalidates Codex's stored `trusted_hash`. Tell Omar explicitly which
+  repos need `/hooks` → *Trust all and continue* re-approved, because until
+  he does, the secret scanner and commit gates are silently not running
+  under Codex.
+- `ruflo` is vendored third-party: its `AGENTS.md` is upstream-owned and the
+  projection refuses to touch it.
+- The generated `AGENTS.md` deliberately does **not** restate doctrine — it
+  points at `CLAUDE.md`. If you find yourself wanting to copy policy into an
+  `AGENTS.md`, that policy belongs in `CLAUDE.md` instead.

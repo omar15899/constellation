@@ -92,6 +92,27 @@ Excluded from constellation audits, refactors, and peer propagation.
 
 ---
 
+## Agent planes
+
+Every repo below is drivable by **Claude Code or OpenAI Codex,
+interchangeably**. `.claude/` is canonical; `AGENTS.md` and `.codex/` are a
+generated projection of it — regenerate with `/codex-sync` after any
+`.claude/` edit, and never hand-edit the generated side.
+
+| | Claude Code | Codex |
+| --- | --- | --- |
+| contract | `CLAUDE.md` | `AGENTS.md` |
+| plane | `.claude/` | `.codex/` (generated) |
+| skill | model-invoked or `/name` | `$name` |
+| slash command | `/name` | projected onto a skill, `$name` |
+
+`ruflo` is vendored: its `AGENTS.md` is upstream-owned and the projection
+refuses to touch it. `MMARV1`, `GasStorageOptimiserEngie` and
+`brainteasers-asincronas` have no `.claude/` plane, so they get an
+`AGENTS.md` and nothing to project.
+
+Mapping, limits and empirical basis: [`docs/codex_parity.md`](docs/codex_parity.md).
+
 ## Quick navigation
 
 - Constellation kernel: [`CLAUDE.md`](CLAUDE.md).

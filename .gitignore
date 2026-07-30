@@ -6,8 +6,13 @@
 /*
 
 # 2. Re-include the orchestrator paths (and this file).
+#    The plane is dual-headed: .claude/ is canonical, .codex/ is its
+#    generated projection (see .claude/scripts/codex_sync.py). Both are
+#    versioned so either agent can be driven from a fresh clone.
 !/.claude/
+!/.codex/
 !/CLAUDE.md
+!/AGENTS.md
 !/QUANTOS.md
 !/README.md
 !/.gitignore

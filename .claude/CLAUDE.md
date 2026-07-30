@@ -64,6 +64,41 @@ A cross-repo agent in `.claude/agents/` may delegate to a per-repo agent in
 know about the constellation plane's internals — it must only know about
 its own peers, listed in its `.claude/registry/peers.yaml`.
 
+### 2.3 The Codex head — `.codex/` and `AGENTS.md`
+
+Both planes are **dual-headed**. Every `.claude/` surface, at either level,
+has a `.codex/` twin and an `AGENTS.md`, so Omar can drive any repo with
+Claude Code or OpenAI Codex interchangeably.
+
+**`.claude/` is canonical. `.codex/` is generated.** The projection is
+[`.claude/scripts/codex_sync.py`](scripts/codex_sync.py); the mapping and its
+empirical basis are in [`docs/codex_parity.md`](docs/codex_parity.md).
+
+There is one implementation of every behaviour, never two:
+
+- agent instruction bodies are embedded from `.claude/agents/<n>.md` into the
+  TOML Codex reads;
+- `.codex/skills/<n>` is a **symlink** to `.claude/skills/<n>` — the same
+  `SKILL.md`, byte for byte, because the frontmatter contract is identical
+  in both products;
+- `.codex/hooks.json` runs the same `.claude/hooks/` scripts through a shim
+  that re-applies Claude's argument-level matchers and exports
+  `CLAUDE_PROJECT_DIR`.
+
+Only `.claude/commands/` has no Codex counterpart: Codex 0.146 has no custom
+slash commands, so each `/name` is projected onto a skill invoked `$name`.
+
+**Rules.** Never hand-edit `.codex/` or an `AGENTS.md` — both carry a
+generated banner. Edit `.claude/` and re-run `/codex-sync`. Codex-only
+material lives in `.codex/local/`, which the projection never touches.
+`AGENTS.md` must never restate doctrine that belongs in `CLAUDE.md`; it
+carries only the Codex translation layer and a directive to read `CLAUDE.md`.
+
+**Two Codex-only prerequisites.** Project trust
+(`codex_sync.py --trust`) and a one-time interactive hook approval per repo
+(`/hooks` → *Trust all and continue*). Until hooks are trusted Codex runs
+**none** of them, silently — including `secret_scan` and the commit gates.
+
 ---
 
 ## 3. Repo classification (canonical taxonomy)
