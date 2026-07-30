@@ -172,7 +172,15 @@ read the same `SKILL.md` byte for byte. Verified by pointing a
 skill appeared in `codex debug prompt-input`.
 
 The frontmatter contract (`name`, `description`) is the same in both products,
-which is why no translation is needed.
+which is why no translation is needed. A `SKILL.md` missing either key is
+invisible to **both** agents — six Scilux skills were silently dead this way
+until the verifier caught them.
+
+> **`.agents/skills/` is a second front door.** Because Codex reads it too,
+> anything left there is loaded alongside `.codex/skills/` and shadows it. A
+> dead 2026-07-17 projection attempt was putting 20 stale duplicates into every
+> root session. `--verify` now fails on any non-vendored repo with skills there.
+> (`ruflo` ships its own upstream `.agents/skills/` and is exempt.)
 
 Invocation differs: Claude auto-invokes skills or takes `/name`; Codex takes
 `$name` (and `@name` in the ChatGPT UI).

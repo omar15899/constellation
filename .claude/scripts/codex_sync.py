@@ -1070,6 +1070,16 @@ def verify(surfaces: list[Surface]) -> tuple[list[str], int]:
         if unseen:
             problems.append(f"{len(unseen)}/{len(expected)} skills not discovered: {unseen[:5]}")
 
+        # Codex also reads `.agents/skills/`. In a repo we project, anything
+        # there is outside the projection and can only be a stale surface
+        # shadowing the real one. Vendored repos ship their own and keep it.
+        rogue = sorted(p.parent.name for p in (s.path / ".agents" / "skills").glob("*/SKILL.md"))
+        if rogue and s.name not in VENDORED:
+            problems.append(
+                f"{len(rogue)} skills in .agents/skills/ are outside the projection and "
+                f"are being loaded alongside it: {rogue[:5]}"
+            )
+
         status = "FAIL" if problems else "ok"
         failures += bool(problems)
         lines.append(f"{status:4} {s.name}: {len(expected)} skills, "
