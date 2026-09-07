@@ -28,6 +28,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -228,6 +229,49 @@ def section_hub_git() -> Section:
     return sec
 
 
+def section_codex() -> Section:
+    """Check the local projection without claiming native hook approval."""
+    sec = Section("Codex control plane")
+    try:
+        config = tomllib.loads((GITHUB_ROOT / ".codex/config.toml").read_text())
+        enabled = config.get("features", {}).get("hooks", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("features.hooks must be boolean")
+        sec.checks.append(Check("hooks feature", "PASS" if enabled else "FAIL",
+                                "project setting; native trust is separate"))
+        hooks = json.loads((GITHUB_ROOT / ".codex/hooks.json").read_text())
+        if set(hooks) - {"description", "hooks"} or not isinstance(hooks.get("hooks"), dict):
+            raise ValueError("unsupported hooks.json structure")
+        count = 0
+        for groups in hooks["hooks"].values():
+            for group in groups:
+                for hook in group["hooks"]:
+                    timeout = hook.get("timeout")
+                    if (hook.get("type") != "command" or not hook.get("command")
+                            or isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                            or not 0 < timeout <= 600):
+                        raise ValueError("hook missing a command or bounded timeout")
+                    count += 1
+        if not count or not (GITHUB_ROOT / ".codex/hook_shim.py").is_file():
+            raise ValueError("hooks or adapter missing")
+        sec.checks.append(Check("hook configuration", "PASS", f"{count} bounded command handlers"))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        sec.checks.append(Check("hook configuration", "FAIL", "invalid/missing project config, hooks or adapter"))
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "codex_sync.py"), "--repo", str(GITHUB_ROOT), "--check", "--json"],
+            capture_output=True, text=True, timeout=30,
+        )
+        sec.checks.append(Check("Codex projection", "PASS" if result.returncode == 0 else "FAIL",
+                                "canonical sources agree" if result.returncode == 0 else "run codex_sync.py --repo . --check for details"))
+    except (OSError, subprocess.TimeoutExpired):
+        sec.checks.append(Check("Codex projection", "NOT_RUN", "projection check failed to execute"))
+    sec.checks.append(Check("native hook activation", "INFO",
+                            "not inferred by doctor; review current project hooks in Codex /hooks"))
+    return sec
+
+
 # --------------------------------------------------------------------------- #
 # Section 4 — optional --repo target
 # --------------------------------------------------------------------------- #
@@ -374,6 +418,7 @@ def run(repo_arg: str | None) -> list[Section]:
     sections = [
         section_validators(),
         section_hub_structure(),
+        section_codex(),
         section_hub_git(),
     ]
     if repo_arg:

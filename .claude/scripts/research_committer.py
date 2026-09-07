@@ -14,18 +14,21 @@ default; nothing is applied or pushed unless asked.
 Usage:
     research_committer.py [--apply] [--push] [--repo ID|PATH ...]
                           [--task ID] [--run-class CLASS]
-                          [--message-subject "..."] [--scope SCOPE ...]
+                          [--message-subject "..."] [--scope SCOPE ...] [--path FILE ...]
                           [--include-prestaged] [--allow-branch-mismatch]
                           [--lever ID] [--session ID]
 
 Defaults: dry-run (no staging mutation, no commit, no push), all dirty repos.
+Use --repo ID|PATH with repeated --path FILE for an exact file selection.
+--include-prestaged requires that explicit selection and rejects partial files.
 
 Hard rules (enforced, not advisory):
   - dry-run never mutates the real index (operates on a throwaway GIT_INDEX_FILE);
   - never `git add .` / `git add -A` from a parent — staging is by explicit pathspec;
   - never mixes two repos in one commit (one `git -C <repo>` surface per commit);
   - never mixes two scopes in one commit (one commit per scope);
-  - pre-staged files not produced by this run ABORT the repo unless --include-prestaged;
+  - pre-staged files ABORT unless explicitly selecting whole files with --include-prestaged;
+  - successful commits synchronize only their selected paths in the real index;
   - a staged secret / .env / key / token ABORTS the commit;
   - a failed check ABORTS that scope's commit (never declares success);
   - push refused when HEAD != expected_branch (unless --allow-branch-mismatch);
@@ -46,7 +49,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 TAG = "[constellation:research_committer]"
 GITHUB_ROOT = Path.home() / "GitHub"
@@ -95,6 +98,7 @@ def git(repo: Path, *args: str, index_file: str | None = None,
     # Literal pathspecs: a filename containing * ? [ must never glob-expand and
     # sweep in unrelated files (otherwise `git add -- 'a*'` over-matches).
     env["GIT_LITERAL_PATHSPECS"] = "1"
+    env.pop("GIT_INDEX_FILE", None)
     if index_file:
         env["GIT_INDEX_FILE"] = index_file
     if binary:
@@ -117,20 +121,44 @@ def branch_of(repo: Path) -> str:
     return git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
 
 
-def temp_index_for(repo: Path) -> str | None:
+def checked_git(repo: Path, *args: str, index_file: str | None = None,
+                binary: bool = False) -> subprocess.CompletedProcess:
+    result = git(repo, *args, index_file=index_file, binary=binary)
+    if result.returncode:
+        raise RuntimeError(f"git {args[0]} failed (exit {result.returncode}); no further commit attempted")
+    return result
+
+
+def exact_path(value: str) -> str:
+    """Accept one literal repository-relative file, never a directory selector."""
+    path = PurePosixPath(value)
+    if (not value or path.is_absolute() or str(path) != value or
+            any(part in {".", "..", ".git"} for part in path.parts) or not path.parts):
+        raise argparse.ArgumentTypeError("--path must be an exact repository-relative file without traversal")
+    return value
+
+
+def temp_index_for(repo: Path) -> str:
     """A throwaway index seeded from HEAD (NOT from the real index), so staging,
     checks, and the commit itself see exactly HEAD + this scope's paths — the
-    real index (and any pre-staged content in it) is never read or mutated."""
+    real index is never used as a fallback if creation or seeding fails."""
+    tmp: str | None = None
     try:
         fd, tmp = tempfile.mkstemp(prefix="rc_idx_")
         os.close(fd)
         os.unlink(tmp)  # let git create it fresh
-        # seed from HEAD if there is one; on an unborn branch leave it empty
-        if git(repo, "rev-parse", "--verify", "-q", "HEAD").returncode == 0:
-            git(repo, "read-tree", "HEAD", index_file=tmp)
+        head = git(repo, "rev-parse", "--verify", "-q", "HEAD")
+        if head.returncode == 0:
+            checked_git(repo, "read-tree", "HEAD", index_file=tmp)
+        elif head.returncode == 1:
+            checked_git(repo, "read-tree", "--empty", index_file=tmp)
+        else:
+            raise RuntimeError("cannot determine HEAD while creating a temporary index")
         return tmp
     except Exception:
-        return None
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 # ------------------------------------------------------------------ yaml parser
@@ -288,6 +316,8 @@ def policy_for(repo: Path, policy: dict) -> dict:
 
 # --------------------------------------------------------------- scope mapping
 SCOPE_RULES = [
+    ("config", re.compile(r"^\.codex/(?:AGENTS\.md|README\.md|MANIFEST\.json|config\.toml|hooks\.json|hook_shim\.py|agents/[^/]+\.toml|skills/[^/]+(?:/SKILL\.md)?|rules/[^/]+\.rules)$")),
+    ("config", re.compile(r"^\.claude/templates/")),
     ("hooks", re.compile(r"(^|/)\.claude/hooks/")),
     ("commands", re.compile(r"(^|/)\.claude/commands/")),
     ("contracts", re.compile(r"(^|/)\.claude/contracts/")),
@@ -336,7 +366,9 @@ def porcelain(repo: Path) -> tuple[list[str], list[str], list[str]]:
     working_changed = files with working-tree changes the committer may stage."""
     # -uall expands untracked DIRECTORIES into individual files; without it git
     # collapses a brand-new dir to 'dir/', which would mis-classify as unknown.
-    out = git(repo, "status", "--porcelain", "-uall", "-z").stdout
+    # Treat renames as an explicit deletion and addition so selecting one path
+    # cannot implicitly stage the other side of a rename.
+    out = checked_git(repo, "status", "--porcelain", "-uall", "-z", "--no-renames").stdout
     working, prestaged, untracked = [], [], []
     parts = out.split("\0")
     i = 0
@@ -363,17 +395,35 @@ def porcelain(repo: Path) -> tuple[list[str], list[str], list[str]]:
 # ---------------------------------------------------------------------- checks
 def _staged_files(repo: Path, paths: list[str], idx: str | None) -> list[str]:
     ps = ["--", *paths] if paths else []
-    out = git(repo, "diff", "--cached", "--name-only", *ps, index_file=idx).stdout
-    return [l.strip() for l in out.splitlines() if l.strip()]
+    out = checked_git(repo, "diff", "--cached", "--name-only", "--no-renames", "-z",
+                      *ps, index_file=idx).stdout
+    return [name for name in out.split("\0") if name]
+
+
+def index_entries(repo: Path, paths: list[str], idx: str | None = None) -> dict[str, list[str]]:
+    """Read mode/blob/stage identities, preserving unusual literal filenames."""
+    out = checked_git(repo, "ls-files", "--stage", "-z", "--", *paths, index_file=idx).stdout
+    entries: dict[str, list[str]] = {}
+    for entry in out.split("\0"):
+        if entry:
+            identity, path = entry.split("\t", 1)
+            entries.setdefault(path, []).append(identity)
+    return entries
 
 
 def check_secret_scan(repo, paths, idx, pol):
     # Scan raw staged BLOB BYTES (not the textual diff): a binary or
     # .gitattributes -diff file cannot hide a key/token from a byte scan.
+    current_entries = index_entries(repo, paths, idx)
     for f in _staged_files(repo, paths, idx):
         if SENSITIVE_NAME.search(f):
             return False, f"sensitive file staged: {f}"
-        blob = git(repo, "show", f":{f}", index_file=idx, binary=True).stdout
+        if f not in current_entries:  # a staged deletion has no new blob
+            continue
+        result = git(repo, "show", f":{f}", index_file=idx, binary=True)
+        if result.returncode:
+            return False, f"cannot inspect staged blob: {f}"
+        blob = result.stdout
         if not isinstance(blob, (bytes, bytearray)):
             blob = str(blob).encode("utf-8", "replace")
         if KEY_BLOCK_B.search(blob) or TOKEN_B.search(blob):
@@ -412,6 +462,8 @@ check_py_compile_changed = check_py_compile_hooks
 
 
 def check_no_workflow_todos(repo, paths, idx, pol):
+    import tokenize
+
     staged = _staged_files(repo, paths, idx)
     hits = []
     for f in staged:
@@ -421,11 +473,29 @@ def check_no_workflow_todos(repo, paths, idx, pol):
         if not fp.is_file() or fp.suffix not in (".py", ".md", ".sh"):
             continue
         try:
-            for i, line in enumerate(fp.read_text(errors="ignore").splitlines(), 1):
+            text = fp.read_text()
+            if fp.suffix == ".py":
+                # Fixture strings and parser examples are data, not unfinished
+                # implementation. Comments and docstrings retain the TODO gate.
+                import ast
+                import io
+                candidates = [(token.start[0], token.string)
+                              for token in tokenize.generate_tokens(io.StringIO(text).readline)
+                              if token.type == tokenize.COMMENT]
+                for node in ast.walk(ast.parse(text)):
+                    if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    if ast.get_docstring(node, clean=False) is not None:
+                        expr = node.body[0]
+                        candidates.extend((expr.lineno + offset, line)
+                                          for offset, line in enumerate(expr.value.value.splitlines()))
+            else:
+                candidates = list(enumerate(text.splitlines(), 1))
+            for i, line in candidates:
                 if TODO_MARK.search(line):
                     hits.append(f"{f}:{i}")
-        except Exception:
-            continue
+        except (OSError, UnicodeError, SyntaxError, tokenize.TokenError) as error:
+            return False, f"cannot inspect workflow markers in {f}: {type(error).__name__}"
     return (False, "actionable TODO/FIXME markers: " + ", ".join(hits[:5])) if hits else (True, "no workflow TODOs")
 
 
@@ -526,6 +596,17 @@ def process_repo(repo: Path, pol: dict, args) -> dict:
     res: dict = {"repo": pol.get("id", repo.name), "path": str(repo),
                  "branch": branch_of(repo), "commits": [], "skipped": [],
                  "unknown": [], "notes": []}
+    selected = {exact_path(path) for path in getattr(args, "path", [])}
+    if args.include_prestaged and not selected:
+        res["status"] = "ABORTED"
+        res["notes"].append("--include-prestaged requires explicit --path selection")
+        return res
+    for relative in selected:
+        target = repo / relative
+        if target.is_dir() and not target.is_symlink():
+            res["status"] = "ABORTED"
+            res["notes"].append(f"--path selects files, not directories: {relative}")
+            return res
     apply = args.apply and not pol.get("dry_run_only", False)
     if args.apply and pol.get("dry_run_only", False):
         res["notes"].append("dry_run_only: forced dry-run regardless of --apply")
@@ -544,8 +625,8 @@ def process_repo(repo: Path, pol: dict, args) -> dict:
         res["status"] = "ABORTED"
         res["notes"].append(
             f"{len(prestaged)} pre-staged file(s) not owned by this run "
-            f"(e.g. {', '.join(prestaged[:3])}). Pass --include-prestaged to fold "
-            f"them in, or unstage them. Refusing to mix.")
+            f"(e.g. {', '.join(prestaged[:3])}). --include-prestaged permits selected "
+            f"whole-file changes only; partially staged selected files are refused.")
         return res
 
     candidates = working[:] + (prestaged if args.include_prestaged else [])
@@ -554,6 +635,8 @@ def process_repo(repo: Path, pol: dict, args) -> dict:
     # Classify into scopes, applying include/exclude.
     by_scope: dict[str, list[str]] = {}
     for rel in candidates:
+        if selected and rel not in selected:
+            continue
         if not included(rel, pol):
             res["skipped"].append(rel)
             continue
@@ -587,24 +670,39 @@ def process_repo(repo: Path, pol: dict, args) -> dict:
              "research-code", "config", "docs", "reports", "artifacts"]
     scopes = sorted(by_scope, key=lambda s: order.index(s) if s in order else 99)
 
-    any_committed = False
     for scope in scopes:
         paths = sorted(by_scope[scope])
-        # ALWAYS stage into a throwaway index seeded from HEAD — for dry-run AND
-        # apply. The real index is never read or mutated, so a BLOCKED scope can
-        # never leave a secret staged, and the commit contains exactly HEAD + this
-        # scope's paths (no other staged content, no cross-scope bleed).
-        idx = temp_index_for(repo)
+        # Stage and check against HEAD in isolation. The real index is read for
+        # ownership checks and updated only for paths that actually commit.
+        idx: str | None = None
         commit_rec = {"scope": scope, "files": paths, "checks": [], "status": ""}
         try:
+            original_entries = index_entries(repo, paths)
+            idx = temp_index_for(repo)
             for p in paths:
-                git(repo, "add", "--", p, index_file=idx)
-            staged = _staged_files(repo, paths, idx)
+                # A selected directory-to-symlink replacement already stages its
+                # tracked descendants as deletions. Git refuses to traverse the
+                # new link to add those old descendant paths individually.
+                if any(str(parent) in paths and (repo / parent).is_symlink()
+                       for parent in PurePosixPath(p).parents if str(parent) != "."):
+                    continue
+                checked_git(repo, "add", "--", p, index_file=idx)
+            staged = _staged_files(repo, [], idx)
+            if not set(staged).issubset(paths):
+                raise RuntimeError("temporary index contains paths outside the selected scope")
+            selected_prestaged = set(paths).intersection(prestaged)
+            if selected_prestaged:
+                prepared = index_entries(repo, sorted(selected_prestaged), idx)
+                partial = [p for p in sorted(selected_prestaged)
+                           if original_entries.get(p) != prepared.get(p)]
+                if partial:
+                    raise RuntimeError("partially staged selected files differ from the working tree: "
+                                       + ", ".join(partial))
             if not staged:
                 commit_rec["status"] = "skip (nothing staged)"
                 res["commits"].append(commit_rec)
                 continue
-            stat = git(repo, "diff", "--cached", "--shortstat", index_file=idx).stdout.strip()
+            stat = checked_git(repo, "diff", "--cached", "--shortstat", index_file=idx).stdout.strip()
             commit_rec["summary"] = stat or "no diff"
 
             # Run policy checks. An UNKNOWN check id fails CLOSED (a typo must not
@@ -647,10 +745,24 @@ def process_repo(repo: Path, pol: dict, args) -> dict:
                 commit_rec["status"] = "COMMIT BLOCKED: " + (c.stderr.strip() or c.stdout.strip())[:200]
                 res["commits"].append(commit_rec)
                 continue
-            commit_rec["commit"] = git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
+            commit_rec["commit"] = checked_git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
+            committed_paths = [p for p in checked_git(
+                repo, "diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames",
+                "-r", "-z", "HEAD").stdout.split("\0") if p]
+            if not committed_paths or not set(committed_paths).issubset(paths):
+                raise RuntimeError("commit differs from the selected paths; real index left unchanged")
+            if index_entries(repo, paths) != original_entries:
+                raise RuntimeError("real index changed during commit; left unchanged for reconciliation")
+            # A path-limited reset updates index entries only, leaving both
+            # unrelated staged hunks and all working-tree content intact.
+            checked_git(repo, "reset", "-q", "HEAD", "--", *committed_paths)
             commit_rec["status"] = "committed"
-            any_committed = True
             res["commits"].append(commit_rec)
+        except (OSError, RuntimeError) as error:
+            prefix = "COMMITTED; INDEX SYNC FAILED" if commit_rec.get("commit") else "BLOCKED"
+            commit_rec["status"] = f"{prefix}: {error}"
+            res["commits"].append(commit_rec)
+            break
         finally:
             if idx and os.path.exists(idx):
                 try:
@@ -658,17 +770,13 @@ def process_repo(repo: Path, pol: dict, args) -> dict:
                 except OSError:
                     pass
 
-    # Sync the real index to the new HEAD so git status is clean for what we
-    # committed (we committed via throwaway indexes; the real index is stale).
-    # Safe: unowned pre-staged content was already refused above unless folded in.
-    if apply and any_committed:
-        git(repo, "reset", "-q")
-
     # Push once if anything was committed (or preview the push in dry-run).
     committed = [c for c in res["commits"] if c.get("status") == "committed"]
-    if args.push and (committed or not apply):
+    sync_failed = any("INDEX SYNC FAILED" in c.get("status", "") for c in res["commits"])
+    if args.push and not sync_failed and (committed or not apply):
         res["push"] = do_push(repo, pol, args.allow_branch_mismatch, dry=not apply or not committed)
-    res["status"] = "committed" if committed else ("dry-run" if not apply else "no-commit")
+    res["status"] = "partial (index reconciliation required)" if sync_failed else (
+        "committed" if committed else ("dry-run" if not apply else "no-commit"))
     return res
 
 
@@ -736,12 +844,18 @@ def main() -> int:
     ap.add_argument("--message-subject", dest="message_subject", default="", help="Commit subject line.")
     ap.add_argument("--context", default="", help="One-line Context: body for the message.")
     ap.add_argument("--scope", action="append", default=[], help="Restrict to these scopes (repeatable).")
+    ap.add_argument("--path", action="append", default=[], type=exact_path,
+                    help="Exact literal repo-relative file (repeatable); requires one explicit --repo.")
     ap.add_argument("--lever", default="", help="Lever id for the Lever: trailer.")
     ap.add_argument("--session", default=os.environ.get("CLAUDE_SESSION_ID", ""))
     ap.add_argument("--include-prestaged", dest="include_prestaged", action="store_true")
     ap.add_argument("--allow-branch-mismatch", dest="allow_branch_mismatch", action="store_true")
     ap.add_argument("--json", action="store_true", help="Emit machine-readable results on stdout.")
     args = ap.parse_args()
+    if args.path and len(args.repo) != 1:
+        ap.error("--path requires exactly one explicit --repo")
+    if args.include_prestaged and not args.path:
+        ap.error("--include-prestaged requires explicit --path selection")
 
     policy = load_policy()
     targets = resolve_targets(args, policy)

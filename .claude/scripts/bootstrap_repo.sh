@@ -1,104 +1,173 @@
 #!/usr/bin/env bash
-# bootstrap_repo.sh — apply the standard constellation layout to a repo.
-#
-# Usage:
-#   bootstrap_repo.sh <repo_path> [--variant quantos|adjacent] [--apply]
-#
-# Default is --variant adjacent and dry-run (no --apply). The script
-# NEVER overwrites an existing file. Re-running on the same repo emits
-# zero diffs.
+# bootstrap_repo.sh — create missing constellation scaffold files.
+# Usage: bootstrap_repo.sh <repo_path> [--variant quantos|adjacent] [--apply]
+# Dry-run is the default. Existing files are preserved; templates need local configuration.
+set -euo pipefail
 
-set -u
+exec python3 - "$0" "$@" <<'PY'
+from __future__ import annotations
 
-REPO=""
-VARIANT="adjacent"
-APPLY=0
+import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
 
-while (( "$#" )); do
-  case "$1" in
-    --variant) VARIANT="$2"; shift 2 ;;
-    --apply)   APPLY=1; shift ;;
-    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)         REPO="$1"; shift ;;
-  esac
-done
+HUB = Path(sys.argv[1]).resolve().parents[1]
+DIRECTORIES = (
+    ".claude", ".claude/agents", ".claude/commands", ".claude/skills",
+    ".claude/hooks", ".claude/registry",
+)
 
-[[ -z "$REPO" ]] && { echo "missing repo path" >&2; exit 2; }
-[[ ! -d "$REPO" ]] && { echo "not a directory: $REPO" >&2; exit 2; }
-[[ ! -d "$REPO/.git" ]] && { echo "not a git repo: $REPO" >&2; exit 2; }
 
-HUB="${HOME}/GitHub/.claude"
-TPL="${HUB}/templates"
-ACTIONS=()
+class BootstrapError(Exception):
+    """A precondition failed; do not silently omit part of the scaffold."""
 
-note() { ACTIONS+=("$1"); }
 
-# Plan: directories.
-for d in .claude .claude/agents .claude/commands .claude/skills .claude/hooks .claude/registry; do
-  [[ -d "$REPO/$d" ]] || note "mkdir $REPO/$d"
-done
+def repo_root(value: str) -> Path:
+    root = Path(value).expanduser().resolve(strict=True)
+    if not root.is_dir():
+        raise BootstrapError(f"not a directory: {root}")
+    # Ambient Git routing must not make an unrelated directory look like a root.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, timeout=10, env=env,
+    )
+    if result.returncode or Path(result.stdout.rstrip("\n")).resolve() != root:
+        raise BootstrapError(f"expected a Git repository or worktree root: {root}")
+    return root
 
-# Plan: CLAUDE.md (only if missing).
-if [[ ! -f "$REPO/CLAUDE.md" ]]; then
-  note "copy templates/CLAUDE.md.template → $REPO/CLAUDE.md"
-fi
 
-# Plan: peers.yaml seeded from master registry.
-if [[ ! -f "$REPO/.claude/registry/peers.yaml" ]]; then
-  note "seed $REPO/.claude/registry/peers.yaml from master registry"
-fi
+def exists(path: Path) -> bool:
+    return os.path.lexists(path)
 
-# Plan: variant-specific files.
-case "$VARIANT" in
-  quantos)
-    [[ ! -f "$REPO/.importlinter" ]] && note "copy importlinter contract template (quantos)"
-    [[ ! -f "$REPO/.github/workflows/lint.yml" ]] && note "copy CI lint workflow template"
-    ;;
-  adjacent)
-    : # nothing variant-specific
-    ;;
-  *)
-    echo "unknown variant: $VARIANT (use quantos | adjacent)" >&2
-    exit 2 ;;
-esac
 
-# Show the plan.
-echo "Repo:     $REPO"
-echo "Variant:  $VARIANT"
-echo
-echo "Planned actions (${#ACTIONS[@]}):"
-for a in "${ACTIONS[@]}"; do
-  echo "  - $a"
-done
+def validate_destination(root: Path, relative: str, directory: bool) -> bool:
+    """Reject symlinks, type conflicts and nested repositories before any writes."""
+    parts = Path(relative).parts
+    current = root
+    for index, part in enumerate(parts):
+        current = current / part
+        if not exists(current):
+            continue
+        mode = current.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            raise BootstrapError(f"symlink destination is not supported: {current}")
+        is_directory = index < len(parts) - 1 or directory
+        if is_directory:
+            if not stat.S_ISDIR(mode):
+                raise BootstrapError(f"expected a directory: {current}")
+            if exists(current / ".git"):
+                raise BootstrapError(f"destination crosses another Git root: {current}")
+        elif not stat.S_ISREG(mode):
+            raise BootstrapError(f"expected a regular file: {current}")
+    return exists(root / relative)
 
-if [[ $APPLY -eq 0 ]]; then
-  echo
-  echo "(dry-run — pass --apply to execute)"
-  exit 0
-fi
 
-# Apply.
-for d in .claude .claude/agents .claude/commands .claude/skills .claude/hooks .claude/registry; do
-  mkdir -p "$REPO/$d"
-done
+def source_bytes(source: Path) -> bytes:
+    if not exists(source) or not stat.S_ISREG(source.lstat().st_mode):
+        raise BootstrapError(f"required source is missing or not a regular file: {source}")
+    return source.read_bytes()
 
-if [[ ! -f "$REPO/CLAUDE.md" && -f "$TPL/CLAUDE.md.template" ]]; then
-  cp "$TPL/CLAUDE.md.template" "$REPO/CLAUDE.md"
-fi
 
-# Seed peers.yaml as a copy of the master registry, prefixed with a
-# header indicating it is a snapshot.
-if [[ ! -f "$REPO/.claude/registry/peers.yaml" && -f "$HUB/registry/repos.yaml" ]]; then
-  {
-    echo "# peers.yaml — snapshot of ~/GitHub/.claude/registry/repos.yaml"
-    echo "# Generated by bootstrap_repo.sh on $(date -u +%Y-%m-%d). Refresh with peer_sync.py."
-    echo "self:"
-    echo "  name: $(basename "$REPO")"
-    echo "  path: $REPO"
-    echo
-    cat "$HUB/registry/repos.yaml"
-  } > "$REPO/.claude/registry/peers.yaml"
-fi
+@contextmanager
+def parent_directory(root_fd: int, relative: str) -> Iterator[tuple[int, str]]:
+    """Open each ancestor without following symlinks, including during apply."""
+    descriptor = os.dup(root_fd)
+    try:
+        for component in Path(relative).parts[:-1]:
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            try:
+                os.stat(".git", dir_fd=descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise BootstrapError(f"destination crosses another Git root: {relative}")
+        yield descriptor, Path(relative).name
+    finally:
+        os.close(descriptor)
 
-echo
-echo "applied."
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog=Path(sys.argv[1]).name,
+        description="Create missing constellation scaffold files; dry-run by default.",
+    )
+    parser.add_argument("repo_path")
+    parser.add_argument("--variant", choices=("quantos", "adjacent"), default="adjacent")
+    parser.add_argument("--apply", action="store_true", help="Apply the displayed plan.")
+    args = parser.parse_args(sys.argv[2:])
+    root = repo_root(args.repo_path)
+
+    directories = list(DIRECTORIES)
+    sources = {
+        "CLAUDE.md": HUB / "templates/CLAUDE.md.template",
+        ".claude/registry/peers.yaml.snapshot": HUB / "registry/repos.yaml",
+    }
+    if args.variant == "quantos":
+        directories += [".claude/tests", ".github", ".github/workflows"]
+        sources.update({
+            ".importlinter": HUB / "templates/importlinter.template",
+            ".github/workflows/lint.yml": HUB / "templates/lint.yml.template",
+        })
+
+    # Preflight every destination and load every needed source before mutation.
+    planned_directories = [
+        name for name in directories if not validate_destination(root, name, directory=True)
+    ]
+    planned_files: dict[str, bytes] = {}
+    for name, source in sources.items():
+        if validate_destination(root, name, directory=False):
+            continue
+        content = source_bytes(source)
+        if name.endswith("peers.yaml.snapshot"):
+            content = (
+                "# peers.yaml.snapshot — mirror of the constellation registry\n"
+                "# Refresh with ~/GitHub/.claude/hooks/peer_sync.py.\n"
+                "# The repository's own peers.yaml remains authoritative.\n\n"
+            ).encode() + content
+        planned_files[name] = content
+
+    print(f"Repo: {root}\nVariant: {args.variant}")
+    print(f"Planned actions ({len(planned_directories) + len(planned_files)}):")
+    for name in planned_directories:
+        print(f"  mkdir {name}")
+    for name in planned_files:
+        print(f"  create {name}")
+    if not args.apply:
+        print("Dry-run: no writes. Pass --apply to execute this plan.")
+        return 0
+
+    # The same plan drives apply. Exclusive creation never replaces existing work.
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for name in planned_directories:
+            with parent_directory(root_fd, name) as (parent_fd, leaf):
+                os.mkdir(leaf, dir_fd=parent_fd)
+        for name, content in planned_files.items():
+            with parent_directory(root_fd, name) as (parent_fd, leaf):
+                fd = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o644, dir_fd=parent_fd)
+                with os.fdopen(fd, "wb") as output:
+                    output.write(content)
+    finally:
+        os.close(root_fd)
+    print("Applied scaffold plan." if planned_directories or planned_files else "No changes needed.")
+    if planned_files:
+        print("Copied templates are drafts: configure their repo-specific placeholders before use.")
+    return 0
+
+
+try:
+    raise SystemExit(main())
+except (BootstrapError, OSError, subprocess.TimeoutExpired) as error:
+    print(f"Bootstrap refused or incomplete: {error}", file=sys.stderr)
+    raise SystemExit(2)
+PY

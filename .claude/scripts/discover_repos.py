@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""discover_repos.py — refresh ~/GitHub/.claude/registry/repos.yaml.
+"""discover_repos.py — inspect filesystem drift against the registry.
 
 Walks ~/GitHub/, identifies every git repository, diffs against the
-current registry, and either prints the planned changes (--dry-run,
-default) or applies them (--apply).
+current registry, and prints proposals. It never updates the registry.
 
 This script is intentionally dependency-free: only the standard
 library and the system `git` binary are used. YAML is hand-parsed in
@@ -13,7 +12,7 @@ verbatim".
 
 Usage:
     python3 ~/GitHub/.claude/scripts/discover_repos.py            # dry-run
-    python3 ~/GitHub/.claude/scripts/discover_repos.py --apply    # writes
+    python3 ~/GitHub/.claude/scripts/discover_repos.py --state    # git summary
     python3 ~/GitHub/.claude/scripts/discover_repos.py --json     # machine
 """
 from __future__ import annotations
@@ -100,7 +99,7 @@ def diff(on_disk: list[RepoOnDisk], registered: set[str]) -> dict[str, list[str]
 
 
 def git_state(path: str) -> dict[str, str]:
-    def run(args: list[str]) -> str:
+    def run(args: list[str]) -> str | None:
         try:
             r = subprocess.run(
                 ["git", "-C", path] + args,
@@ -109,14 +108,14 @@ def git_state(path: str) -> dict[str, str]:
                 timeout=5,
                 check=False,
             )
-            return r.stdout.strip()
-        except Exception:
-            return ""
+            return r.stdout.strip() if r.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired):
+            return None
 
     branch = run(["rev-parse", "--abbrev-ref", "HEAD"]) or "?"
     last = run(["log", "-1", "--format=%cs %s"]) or "?"
     porcelain = run(["status", "--porcelain"])
-    dirty = "dirty" if porcelain else "clean"
+    dirty = "unknown" if porcelain is None else "dirty" if porcelain else "clean"
     return {"branch": branch, "last": last, "state": dirty}
 
 
