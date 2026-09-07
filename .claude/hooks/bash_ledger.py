@@ -1,48 +1,23 @@
 #!/usr/bin/env python3
-"""bash_ledger.py — PostToolUse Bash command ledger (constellation plane).
+"""PostToolUse execution evidence, local-only and free of command/output text.
 
-Fires after every Bash tool call. Appends one JSONL record per command to a
-per-session ledger so that "what actually ran, and how it exited" is machine
-evidence — not reconstructed from the model's prose. This closes the loop that
-`evidence_audit.py` and `/ship-loop` depend on: a claim like "tests pass" can be
-cross-checked against a real test invocation in the ledger.
+Records command SHA-256, check classification, observed exit/unknown status,
+interruption and evidence signals in gitignored .claude/run/. Files are private
+and event IDs are deduplicated under a lock. No transcripts, command arguments,
+descriptions, stdout or stderr are persisted. Existing historical ledgers are
+not rewritten. evidence_audit.py consumes is_test/ok, which remain compatible.
 
-Ledger location: ~/GitHub/.claude/run/<session_id>.jsonl  (git-ignored — these
-are ephemeral session evidence; the DURABLE research ledger is the commit-trailer
-history written by constellation_commit.py).
-
-Record schema (one JSON object per line):
-    {
-      "ts":         ISO-8601 local timestamp,
-      "cwd":        working directory of the call,
-      "command":    the command string,
-      "description": the tool's human description (if any),
-      "exit":       integer exit code if the harness exposed one, else null,
-      "interrupted": bool,
-      "ok":         best-effort success flag (see below),
-      "stdout_tail": last ~400 chars of stdout,
-      "stderr_tail": last ~400 chars of stderr,
-      "signals":    detected evidence tokens (test-runner, pass/fail, etc.)
-    }
-
-`exit` is null when the harness does not surface a numeric code. `ok` is then a
-three-valued signal verdict: False if interrupted, if a known test runner emitted
-a fail token, or if a fail token appears with no pass token; True only on a clear
-pass token; None ("unknown") when no signal is decisive — so a silent exit-1 is
-never recorded as success.
-
-Safety contract: append-only, never blocks (always exit 0), dependency-free
-stdlib, bounded record size. On ANY internal error exits 0 silently — a logging
-hook must never brick a turn.
-
-Env switches:
-    BASH_LEDGER_DISABLE=1   turn the ledger off entirely
+Missing exit status is unknown unless actual result signals establish a verdict.
+This observational hook never blocks a turn. BASH_LEDGER_DISABLE=1 opts out.
 """
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -51,10 +26,29 @@ TAG = "[constellation:bash_ledger]"
 LEDGER_DIR = Path.home() / "GitHub" / ".claude" / "run"
 TAIL = 400
 
-TEST_RUNNER = re.compile(
-    r"(?i)\b(pytest|python\s+-m\s+pytest|unittest|tox|nox|cargo\s+test"
-    r"|go\s+test|npm\s+(?:run\s+)?test|vitest|jest|py_compile|mypy|ruff|bash\s+-n)\b"
-)
+def is_test_command(command: str) -> bool:
+    """Conservative recognition of an executed check, never a file mention."""
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return False
+    if not argv or re.search(r"[;&|<>`\n]|\$\(", command):
+        return False  # compound shell status cannot prove every check passed
+    if set(argv) & {"--help", "-h", "--version", "-V", "--collect-only", "--co", "--list-tests", "--list", "-l"}:
+        return False
+    executable = Path(argv[0]).name
+    if executable in {"pytest", "unittest", "tox", "nox", "vitest", "jest"}:
+        return True
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", executable):
+        args = argv[1:]
+        while args and args[0] in {"-B", "-u", "-I", "-s", "-E"}:
+            args.pop(0)
+        if args[:1] == ["-m"]:
+            return len(args) > 1 and args[1] in {"pytest", "unittest"}
+        return bool(args and re.fullmatch(r"test_[A-Za-z0-9_]+\.py", Path(args[0]).name))
+    return ((executable in {"cargo", "go"} and argv[1:2] == ["test"])
+            or (executable == "npm" and argv[1:2] == ["test"])
+            or (executable == "npm" and argv[1:3] == ["run", "test"]))
 FAIL_TOKEN = re.compile(
     r"(?i)(\bFAILED\b|\bERROR\b|\bfailed\b|Traceback|\bE\s+assert|exit\s*code\s*[1-9]"
     r"|\b\d+\s+failed\b|fatal:|command not found|No such file|Permission denied)"
@@ -109,7 +103,7 @@ def main() -> int:
     if not command:
         return 0  # nothing to log
 
-    stdout = tail(tr.get("stdout", "") or "")
+    stdout = tail(tr.get("stdout", "") or tr.get("output", "") or "")
     stderr = tail(tr.get("stderr", "") or "")
     interrupted = bool(tr.get("interrupted") or data.get("interrupted"))
     exit_code = first_int(tr, "exitCode", "exit_code", "returnCode", "return_code", "code", "status")
@@ -117,7 +111,7 @@ def main() -> int:
         exit_code = first_int(data, "exitCode", "exit_code", "returnCode")
 
     blob = f"{stdout}\n{stderr}"
-    is_test = bool(TEST_RUNNER.search(command))
+    is_test = is_test_command(command)
     has_fail = bool(FAIL_TOKEN.search(blob))
     has_pass = bool(PASS_TOKEN.search(blob))
 
@@ -153,24 +147,33 @@ def main() -> int:
         ts = ""
 
     rec = {
+        "schema": 2,
         "ts": ts,
         "cwd": data.get("cwd") or os.getcwd(),
-        "command": command[:1000],
-        "description": (ti.get("description") or "")[:300],
+        "command_sha256": hashlib.sha256(command.encode()).hexdigest(),
         "exit": exit_code,
         "interrupted": interrupted,
         "ok": ok,
         "is_test": is_test,
-        "stdout_tail": stdout,
-        "stderr_tail": stderr,
         "signals": signals,
     }
 
+    # Keep only execution evidence. Commands, arguments, descriptions and
+    # outputs can contain private conversation text or credentials.
+    event_id = data.get("tool_use_id")
+    if event_id:
+        rec["event_sha256"] = hashlib.sha256(str(event_id).encode()).hexdigest()
+
     try:
-        LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-        session = str(data.get("session_id") or "nosession").replace("/", "_")
+        LEDGER_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        session = hashlib.sha256(str(data.get("session_id") or "nosession").encode()).hexdigest()
         path = LEDGER_DIR / f"{session}.jsonl"
-        with path.open("a", encoding="utf-8") as fh:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "a+", encoding="utf-8") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            fh.seek(0)
+            if event_id and any(json.loads(line).get("event_sha256") == rec["event_sha256"] for line in fh if line.strip()):
+                return 0
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:
         return 0

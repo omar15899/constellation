@@ -4,8 +4,9 @@
 # PreToolUse(Write|Edit|MultiEdit): scans the PENDING content/new_string and,
 #   on exit 2, the write is DENIED — the secret never reaches disk.
 # PostToolUse(Write|Edit|MultiEdit): scans the written file_path.
-# Either context, and when run inside a git work tree, also scans the staged
-# diff. Exit 0 = clean, exit 2 = block (Claude Code feeds stderr back).
+# Either context also scans the changed index blobs, not the working copy.
+# Protected filenames are refused before opening them. Exit 0 = clean;
+# exit 2 = blocked or unable to verify. Diagnostics never quote source text.
 #
 # Pattern matching runs in embedded python3 (portable on macOS BSD grep, which
 # lacks -P/PCRE). Detection is tuned for LOW false positives: it does NOT do
@@ -13,65 +14,48 @@
 # content-addressed SHA roots that such a detector would flag constantly.
 set -uo pipefail
 
-payload=""
-if [ ! -t 0 ]; then payload="$(cat 2>/dev/null || true)"; fi
-
-python3 - "$payload" <<'PY'
+# Keep the event on stdin, never in process arguments or a temporary file.
+exec python3 /dev/fd/3 3<<'PY'
 import sys, os, re, json, subprocess
+from pathlib import Path
 
 TAG = "[constellation:secret_scan]"
 MAX_BYTES = 5_000_000
-payload = sys.argv[1] if len(sys.argv) > 1 else ""
+payload = sys.stdin.read() if not sys.stdin.isatty() else ""
 
 def emit(m): sys.stderr.write(f"{TAG} {m}\n")
 
-# (path, text-or-None). text!=None means scan that text (pending content);
-# text==None means read path from disk.
-targets, staged = [], []
-
-if payload.strip():
-    try:
-        d = json.loads(payload)
-        ti = d.get("tool_input") or {}
-        fp = ti.get("file_path")
-        pending = []
-        if isinstance(ti.get("content"), str):
-            pending.append(ti["content"])
-        if isinstance(ti.get("new_string"), str):
-            pending.append(ti["new_string"])
-        for e in (ti.get("edits") or []):
-            if isinstance(e, dict) and isinstance(e.get("new_string"), str):
-                pending.append(e["new_string"])
-        if pending:
-            targets.append((fp or "<pending>", "\n".join(pending)))
-        elif fp and os.path.isfile(fp):
-            targets.append((fp, None))
-    except Exception:
-        pass
-
-in_git = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
-                        capture_output=True).returncode == 0
-if in_git:
-    out = subprocess.run(["git", "diff", "--cached", "--name-only"],
-                         capture_output=True, text=True)
-    staged = [l.strip() for l in out.stdout.splitlines() if l.strip()]
-    for f in staged:
-        if os.path.isfile(f):
-            targets.append((f, None))
-
 fail = False
 
-# .env by filename (written or staged)
-for f in [t[0] for t in targets] + staged:
-    b = os.path.basename(f)
-    if b == ".env" or b.startswith(".env."):
-        emit(f"BLOCKED: '{f}' is an environment secrets file — never stage/commit it.")
+def protected(path):
+    parts = tuple(part.lower() for part in Path(path).parts)
+    b = parts[-1] if parts else ""
+    private_tree = ("_conversations" in parts
+                    or any(pair in {(".codex", "sessions"), (".codex", "archived_sessions"),
+                                    (".claude", "run")} for pair in zip(parts, parts[1:])))
+    return (b.startswith(".env") or b.endswith((".pem", ".key"))
+            or b == "credentials.json" or (b.startswith("rollout") and b.endswith(".jsonl"))
+            or private_tree)
+
+def refuse_path(path, *, follow_links=False):
+    global fail
+    if protected(path) or (follow_links and protected(str(Path(path).resolve()))):
+        emit(f"BLOCKED: protected private/secrets path {path!r}; contents were not read.")
         fail = True
+        return True
+    return False
+
+def git(*args, check=True):
+    result = subprocess.run(["git", *args], capture_output=True, timeout=5,
+                            env=dict(os.environ, LC_ALL="C"))
+    if check and result.returncode:
+        raise RuntimeError("git inspection failed")
+    return result
 
 KEY_BLOCK = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 PREFIX = re.compile(
-    r"(AKIA[0-9A-Z]{12,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}"
-    r"|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}"
+    r"((?:AKIA|ASIA)[0-9A-Z]{12,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}"
+    r"|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}"
     r"|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_\-]{30,})")
 CRED = (r"api[_-]?key|secret(?:[_-]?key)?|client[_-]?secret|access[_-]?key"
         r"|secret[_-]?access[_-]?key|auth[_-]?token|access[_-]?token|token"
@@ -121,37 +105,95 @@ def scan(path, text):
     k = kind(path)
     for i, line in enumerate(text.splitlines(), 1):
         if KEY_BLOCK.search(line):
-            emit(f"BLOCKED: private key material in {path}:{i}"); fail = True
+            emit(f"BLOCKED: private key material in {path!r}:{i}"); fail = True
         m = PREFIX.search(line)
         if m:
-            emit(f"BLOCKED: credential-prefixed token in {path}:{i} (starts {m.group(0)[:6]}…)")
+            emit(f"BLOCKED: credential-prefixed token in {path!r}:{i}")
             fail = True
         if k == "doc":
             continue  # docs: only hard tokens/keys, to avoid flagging tutorials
         for am in ASSIGN_QUOTED.finditer(line):
             if not is_placeholder(am.group(2)):
-                emit(f"BLOCKED: secret-like assignment in {path}:{i} — {am.group(1)} = <{len(am.group(2))} chars, quoted>")
+                emit(f"BLOCKED: secret-like assignment in {path!r}:{i}")
                 fail = True
         if k == "config":
             bm = ASSIGN_BARE.match(line)
             if bm and not is_placeholder(bm.group(2)) and secretish(bm.group(2)):
-                emit(f"BLOCKED: secret-like config entry in {path}:{i} — {bm.group(1)}=<{len(bm.group(2))} chars>")
+                emit(f"BLOCKED: secret-like config entry in {path!r}:{i}")
                 fail = True
 
-for path, text in targets:
-    if text is None:
-        try:
-            if os.path.getsize(path) > MAX_BYTES:
-                continue
-            with open(path, "r", errors="ignore") as fh:
-                text = fh.read()
-        except Exception:
-            continue
-    else:
-        text = text[:MAX_BYTES]
-    if "\x00" in text[:2048]:
-        continue
+def scan_bounded(path, content):
+    if len(content) > MAX_BYTES:
+        raise RuntimeError("content exceeds scan limit")
+    text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else content
     scan(path, text)
+
+def main():
+    global fail
+    data = json.loads(payload) if payload.strip() else {}
+    if not isinstance(data, dict):
+        raise ValueError("invalid event")
+    if data.get("cwd"):
+        os.chdir(data["cwd"])
+    ti = data.get("tool_input") or {}
+    fp = ti.get("file_path")
+    pending = []
+    for name in ("content", "new_string"):
+        if isinstance(ti.get(name), str):
+            pending.append(ti[name])
+    for edit in ti.get("edits") or []:
+        if isinstance(edit, dict) and isinstance(edit.get("new_string"), str):
+            pending.append(edit["new_string"])
+    if not (fp and refuse_path(fp, follow_links=True)):
+        # PostToolUse must inspect the complete result, including context that
+        # could combine with an inserted fragment to form a credential.
+        if fp and data.get("hook_event_name") == "PostToolUse":
+            path = Path(fp)
+            if path.is_file():
+                with path.open("rb") as source:
+                    scan_bounded(fp, source.read(MAX_BYTES + 1))
+        elif pending:
+            scan_bounded(fp or "<pending>", "\n".join(pending))
+        elif fp and Path(fp).is_file():
+            with open(fp, "rb") as source:
+                scan_bounded(fp, source.read(MAX_BYTES + 1))
+
+    repo = git("rev-parse", "--show-toplevel", check=False)
+    if repo.returncode:
+        if b"not a git repository" in repo.stderr:
+            return
+        raise RuntimeError("cannot determine git context")
+    os.chdir(os.fsdecode(repo.stdout.rstrip(b"\n")))
+    changed = set(git("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXB").stdout.split(b"\0"))
+    changed.discard(b"")
+    # Read metadata first so protected names never reach cat-file. NUL records
+    # preserve spaces, tabs and newlines in Git paths.
+    entries = git("ls-files", "--stage", "-z").stdout.split(b"\0")
+    for entry in entries:
+        if not entry:
+            continue
+        metadata, raw_path = entry.split(b"\t", 1)
+        if raw_path not in changed:
+            continue
+        mode, oid, stage = metadata.split()
+        path = os.fsdecode(raw_path)
+        if refuse_path(path):
+            continue
+        if stage != b"0":
+            raise RuntimeError("unmerged index")
+        if mode == b"160000":
+            continue  # A gitlink is a commit reference, not file contents.
+        object_id = oid.decode("ascii")
+        if int(git("cat-file", "-s", object_id).stdout) > MAX_BYTES:
+            raise RuntimeError("staged content exceeds scan limit")
+        scan_bounded(f"index:{path}", git("cat-file", "blob", object_id).stdout)
+
+try:
+    main()
+except Exception as exc:
+    # Error strings and tracebacks can contain event data or source lines.
+    emit(f"BLOCKED: secret verification could not finish ({type(exc).__name__}); inspect hook inputs, file size and Git state locally.")
+    fail = True
 
 if fail:
     emit("Remove the secret; use an env var or secrets manager; then re-run.")
