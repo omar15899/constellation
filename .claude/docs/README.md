@@ -1,23 +1,12 @@
-# `~/GitHub/.claude/docs/`
+# Hub documentation
 
-Long-form documentation for the constellation hub.
+- [Architecture](architecture.md): ownership, routing and canonical projection.
+- [Adding a repository](how_to_add_a_repo.md): classification and scoped setup.
+- [Codex parity](codex_parity.md): supported surfaces, migration and runtime limits.
+- [Control-plane audit](control_plane_audit.md): consolidation decisions and evidence.
+- [Research workflow](research_pipeline.md): validity, promotion and command evidence.
 
-| File                    | Purpose                                                                    |
-| ----------------------- | -------------------------------------------------------------------------- |
-| `architecture.md`       | Two-plane architecture (hub + per-repo), data flow, persistence.           |
-| `how_to_add_a_repo.md`  | End-to-end walkthrough for adding a new repository to the constellation.   |
-
-## Generated artefacts (also live here)
-
-These files are *not* checked in by hand — they are produced by agents
-running against the live state of the constellation:
-
-- `drift_report.md` — produced by `perimeter-keeper`.
-- `import_audit.md` — produced by `import-graph-auditor`.
-- `orchestration_state.md` — produced by `multi-repo-orchestrator`
-  when a pipeline is interrupted; consumed on resume.
-- `escalation_drafts/` — short markdown drafts queued for the vault
-  to pick up via its own routing pipeline.
-
-These are ephemeral: stale reports get overwritten on the next run.
-Drafts persist until the user routes them into the vault.
+Metadata and import reports may be written here when a task needs them. Do not
+create or refresh reports automatically, overwrite unrelated drafts or treat an
+old report as live evidence. Private logs and conversation archives do not belong
+in this versioned directory.

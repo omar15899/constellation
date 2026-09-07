@@ -1,51 +1,35 @@
 ---
 name: repo-discovery
-description: Scan ~/GitHub/ for new, removed, or renamed repositories and refresh registry/repos.yaml + REPOS.md. Trigger when the user says "rescan repos", "discover new repos", "refresh the constellation index", "actualiza el índice de repos", or after a fresh clone has landed in ~/GitHub/.
+description: Discover new or missing repositories, classify an unknown project, or audit and repair registry metadata. Use for rescan repos, classify this repo, refresh the index or perimeter metadata drift.
 ---
 
-# repo-discovery
+# Discover and classify repositories
 
-A focused skill that materialises the cartographer's pipeline as a
-one-shot user-invocable operation.
+Read the [registry](../../registry/repos.yaml) and relevant
+[perimeters](../../policies/perimeter_doctrine.md). Use
+`constellation-cartographer` for classification or metadata work with a separate
+context; follow its [procedure](../../agents/constellation-cartographer.md)
+directly for a small inspection.
 
-## When to fire
-
-- "Rescan ~/GitHub/", "refresh the constellation", "what's new on disk".
-- After a `git clone` into `~/GitHub/`.
-- Before invoking `multi-repo-orchestrator` on a session that has been
-  idle for >24h.
-- Implicitly fired as the first step of `/repos` and `/constellation`.
-
-## Operating procedure
-
-1. List `~/GitHub/` and identify git repos (directories containing
-   `.git/`). Skip caches and `.claude/`.
-2. Load `registry/repos.yaml`.
-3. Compute three sets:
-   - `added` (on disk, not in registry).
-   - `removed` (in registry, missing on disk).
-   - `renamed` (matched by `.git/config` remote URL despite path change).
-4. For each `added`: dispatch the `repo-classifier` logic to draft a
-   proposed YAML row.
-5. Write the new registry atomically (preserve comments).
-6. Render `REPOS.md` from the registry.
-7. Report a short summary back to the user.
-
-## Bundled script
-
-`scripts/discover_repos.py` implements the full pipeline. The skill
-shells out to it via:
+From the hub, run the read-only comparison:
 
 ```bash
-python3 ~/GitHub/.claude/scripts/discover_repos.py --apply
+python3 .claude/scripts/discover_repos.py --json
+python3 .claude/scripts/discover_repos.py --state
 ```
 
-Use `--dry-run` to preview the diff without writing.
+There is no `--dry-run` flag. The reserved `--apply` does not update anything.
+A classification request produces an evidence-backed proposal; an update request
+authorizes unambiguous registry and index corrections. Do not ask again for
+routine edits already covered by that request.
 
-## Invariants
+Resolve linked worktree identity with Git instead of counting every `.git` file
+as a new repo. Never derive a QuantOS tier solely from an import or `.importlinter`
+presence. Keep language stack values separate from tooling profiles. Unknown
+ownership or architecture remains a proposal, not a silently chosen fact.
 
-- Never deletes a registry entry whose on-disk path is missing —
-  marks it `missing` and asks.
-- Never auto-assigns a QuantOS tier to an unknown repo. Adjacent by
-  default; user confirms promotion.
-- Idempotent: no on-disk changes ⇒ no registry writes.
+For updates, preserve unrelated work and keep `repos:`, perimeter memberships
+and [REPOS.md](../../REPOS.md) consistent. Missing roots are findings, not an
+instruction to delete rows. Run `python3 .claude/scripts/validate_repos.py` and
+review the diff; that validator is not a complete schema/architecture audit.
+No blanket peer sync, neighbor writes or recurring scans are implied.

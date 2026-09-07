@@ -1,39 +1,18 @@
-# `~/GitHub/.claude/skills/`
+# Repository skills
 
-Cross-repo skills. Each is a folder with a `SKILL.md` that declares
-when to fire and how to operate.
+These six reusable workflows complement the eight
+[command skills](../commands/README.md). Claude and Codex use the same sources;
+Codex invokes them with `$name`. Do not add a command wrapper for an existing skill.
 
-| Skill                 | What it does                                            |
-| --------------------- | ------------------------------------------------------- |
-| `repo-discovery`      | Scan `~/GitHub/` and refresh the registry.              |
-| `multi-repo-status`   | Aggregate `git status` across the constellation.        |
-| `cross-repo-grep`     | Search across every repo with filters.                  |
-| `repo-bootstrap`      | Bring an under-equipped repo up to the standard layout. |
-| `tier-discipline`     | Verify the import graph respects the tier hierarchy.    |
-| `cross-repo-refactor` | Propagate a typed change across multiple repos.         |
-| `perimeter-classify`  | Classify an unknown folder into a perimeter.            |
-| `constellation-brief` | One-page state of the whole constellation.              |
+| Skill | Responsibility |
+| --- | --- |
+| repo-status | Git state, inventory and constellation brief without metadata writes |
+| find-in-repos | Scoped source search and consumer location |
+| repo-discovery | Discovery, classification and registry metadata updates when requested |
+| repo-bootstrap | Missing repository scaffolding, preserving existing files |
+| tier-check | Tier and perimeter dependency audit with explicit coverage |
+| cross-repo-refactor | Propagate a provider/API/schema change across repositories |
 
-## Composition
-
-Skills compose freely. A typical session looks like:
-
-```
-/constellation        →  constellation-brief
-   (sees drift)
-/repo-status          →  multi-repo-status
-   (sees a dirty repo)
-/find-in-repos X      →  cross-repo-grep
-   (locates the symbol)
-"refactor rename X"   →  cross-repo-refactor
-                          →  multi-repo-orchestrator
-                            →  tier-discipline
-```
-
-## Above and below
-
-- **Above**: vault-side OmarOS skills handle vision/decision/reflection
-  writes.
-- **Below**: per-repo skills under `<repo>/.claude/skills/` handle
-  lab-internal work once the cross-repo skill descends into a single
-  repo.
+Descriptions determine selection. Detailed contracts and scripts load on demand.
+Add a skill when it owns a distinct recurring decision or procedure; a new name
+for an existing step does not justify another discoverable entry.

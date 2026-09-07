@@ -35,8 +35,8 @@ release blocker. Open an ADR proposing one of:
 - Generalise the existing `Shared/` primitive.
 - Document that the lab's variant is intentionally different (and why).
 
-The `perimeter-keeper` agent detects vendored duplicates by symbol
-name + signature similarity.
+Use `find-in-repos` to locate possible duplicates, then compare behavior and
+ownership. Symbol or signature similarity alone does not establish equivalence.
 
 ## When to lift from lab → Shared
 
@@ -47,7 +47,7 @@ second. Workflow:
 2. Lift the primitive into `Shared/packages/<appropriate>/`.
 3. Update the source lab to import from `Shared/`.
 4. Update the second lab to import from `Shared/`.
-5. Run `tier-discipline` (auditor) — the lifted primitive must not
+5. Run `tier-check` (auditor) — the lifted primitive must not
    create a tier inversion.
 6. Open a vault-side decision under
    `~/OmarOS/05_Projects/QuantOS/Decisions/`.

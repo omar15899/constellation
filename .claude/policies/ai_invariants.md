@@ -9,15 +9,15 @@ debated; these cannot.
 
 Every repo under `~/GitHub/` is either in `registry/repos.yaml` or it
 is unknown. An agent that operates on an unknown repo first runs
-`repo-discovery` and `repo-classifier`. No silent operation on
+`repo-discovery` and resolves classification with the cartographer. No silent operation on
 undiscovered state.
 
 ## 2. Routing before writing
 
-A free-form request does not produce a write until `cross-repo-router`
-has classified it and (where applicable) `multi-repo-orchestrator` has
-authorised the work. The router never writes; the orchestrator only
-writes with explicit user authorisation per operation.
+The current agent establishes target and authority using
+[`routing`](../contracts/routing.md) before writing. Use
+`multi-repo-orchestrator` for the cases defined there. User authority persists
+through necessary implementation and verification; routing is not an approval.
 
 ## 3. One commit per repo
 
@@ -61,21 +61,23 @@ side-effects (other than reporting "no change").
 ## 9. Stderr is loud, stdout is clean
 
 Hooks and scripts log to stderr with a `[constellation:<name>]` tag.
-Stdout is reserved for primary output (the report, the table, the
-plan). Never silent: if a hook chose not to act, it says so on stderr.
+Stdout is reserved for primary output or the client's structured hook response.
+Report failures and material findings; an irrelevant event or successful
+no-op may exit quietly so routine checks do not flood the agent context.
 
 ## 10. Failure surfaces, never bypasses
 
 When a hook, a gate, an auditor, or a linter refuses an action, the
-correct response is to **surface the refusal and ask**. The wrong
-response is to disable the hook, suppress the error, or skip the
-check.
+correct response is to surface the refusal and repair its cause within the
+authorized task. Ask when repair requires a new decision, broader authority
+or a change to the contract. Do not disable the hook, suppress the error or
+skip the check. A failed test does not itself revoke permission to fix code.
 
 ## 11. Secrets are out of bounds
 
 The hub never reads `.env*`, `*.pem`, `*.key`, `credentials.json`, or
 any file matching common secret patterns. Scripts use the standard
-exclude globs declared in `cross-repo-grep`.
+exclude globs declared in `find-in-repos`, including private conversation paths.
 
 ## 12. No emoji, no AI attribution
 

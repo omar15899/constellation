@@ -1,83 +1,62 @@
 # constellation
 
-The AI control plane for a constellation of independent repositories.
+The shared AI control plane for independent repositories under `~/GitHub/`.
+It provides discovery, routing, cross-repository agents, shared skills and
+verification hooks. Repository classification lives in
+[registry/repos.yaml](.claude/registry/repos.yaml); each neighboring repository
+keeps its own history, toolchain and operating contract.
 
-`~/GitHub/` hosts 18 registered repos — 14 QuantOS labs (Shared, BacktestLab,
-MonteCarloLab, Sweeplab, PricingLab, MarketDataLab, NewsLab, ResearchLab,
-IntelligenceLab, PortfolioLab, RiskLab, ExecutionLab, StrategyOrchestrationLab,
-tradinginterface) plus four adjacent/external repos (Scilux, MMARV1,
-KarimSpecificCase, ruflo). This repository is the orchestration layer that sits
-*between* those repos: discovery, routing, cross-repo agents, shared skills,
-slash commands, perimeter/tier policy, and the verification hooks.
+The structure is small at the point of use:
 
-## What this repo intentionally does NOT contain
+- [AGENTS.md](AGENTS.md) is the Codex entry point.
+- [CLAUDE.md](CLAUDE.md) points both agents to the
+  [canonical kernel](.claude/CLAUDE.md).
+- [.claude/](.claude/) owns contracts, registry, hooks, agents and skills.
+- [.codex/](.codex/) is generated from those sources.
 
-The 18 sub-repos are **not** vendored here. Each is its own independent git
-repository with its own history, CI, and `.claude/` plane. The `.gitignore` is
-an allowlist: it ignores everything at the root and re-includes only the
-orchestrator surface (`.claude/`, `CLAUDE.md`, `QUANTOS.md`, `README.md`). The
-sub-repos, local caches (`.venv`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`,
-`.playwright-mcp`), `__pycache__`, `.DS_Store`, and runtime lock files are never
-tracked. Cloning this repo gives you the control plane alone.
+The kernel loads specialized contracts when needed. QuantOS tier discipline,
+research promotion gates and each adjacent project's autonomy remain explicit.
+[QUANTOS.md](QUANTOS.md) describes the QuantOS architecture. OmarOS is the vault
+for vision and decisions, and is read-only from this repository.
 
-## Start here
+## Working on the control plane
 
-- `.claude/CLAUDE.md` — the constitutional kernel (constellation long-form).
-- `.claude/REPOS.md` — human-readable repo index (perimeter + tier + stack).
-- `QUANTOS.md` — canonical QuantOS map (tier hierarchy + production data flow).
+Edit canonical files, regenerate only the intended repository, and verify:
 
-The three CLAUDE.md layers compose, most-specific-wins:
-`~/CLAUDE.md` (user) -> `~/GitHub/CLAUDE.md` (root pointer) ->
-`~/GitHub/.claude/CLAUDE.md` (this kernel) -> `<repo>/CLAUDE.md` (lab contract).
+```bash
+python3 .claude/scripts/codex_sync.py --repo . --check
+python3 .claude/scripts/codex_sync.py --repo .
+python3 .claude/tests/test_codex_sync.py
+python3 .claude/tests/test_codex_projection_safety.py
+python3 .claude/tests/test_codex_workflow.py
+python3 .claude/tests/test_hook_safety.py
+python3 .claude/tests/test_promotion_enforcement.py
+python3 .claude/tests/test_repo_bootstrap.py
+python3 .claude/tests/test_discovery_state.py
+python3 .claude/tests/test_research_committer_safety.py
+python3 .claude/scripts/doctor.py
+python3 .claude/scripts/codex_sync.py --repo . --verify
+```
 
-## What it provides
+Choose checks appropriate to the change. Everything above uses the Python
+standard library; no lab virtual environment is needed. The doctor reports
+WARN for uncommitted work. No sync command implies permission to commit,
+push, update neighboring repositories or change global configuration.
 
-- **Cross-repo agents** (`.claude/agents/`) — cartographer, router,
-  orchestrator, cross-repo search, repo-classifier, perimeter-keeper,
-  import-graph-auditor.
-- **Cross-repo skills** (`.claude/skills/`) — repo-discovery, multi-repo-status,
-  cross-repo-grep, repo-bootstrap, tier-discipline, cross-repo-refactor,
-  perimeter-classify, constellation-brief.
-- **Slash commands** (`.claude/commands/`) — `/repos`, `/repo-status`,
-  `/find-in-repos`, `/repo-route`, `/constellation`, `/repo-bootstrap`,
-  `/tier-check`.
-- **Registry** (`.claude/registry/`) — machine-readable `repos.yaml`,
-  `perimeters.yaml`, `stacks.yaml`, `agents.yaml`.
-- **Policies** (`.claude/policies/`) — perimeter doctrine, tier discipline,
-  shared-vs-local, cross-repo commits, escalation, AI invariants.
-- **Scripts** (`.claude/scripts/`) — `discover_repos.py --state`,
-  `status_all.sh`, `grep_all.sh`, `bootstrap_repo.sh`.
+## Hooks
 
-## Expert-directed verification workflow
+[settings.json](.claude/settings.json) wires shared local hooks for pending
+content, staged secrets, Python syntax, research context and evidence.
+Codex's adapter handles native patches, including multiple files and renames.
+The execution ledger stores hashes and status metadata, without command text
+or output. Stop does not read conversation transcripts.
 
-The control plane enforces a validity-first, evidence-anchored loop:
+[Hook behavior](.claude/hooks/README.md) and
+[Codex integration](.claude/docs/codex_parity.md) document the precise coverage.
+Script tests and valid configuration do not prove native activation: review
+new or changed hooks with Codex's `/hooks` interface when prompted.
 
-- `/verify-loop` — bounded Plan -> Execute -> Verify -> Refute -> Repair with an
-  evidence table.
-- `/quant-loop` — the same loop specialised for quantitative research
-  (provenance, alignment, lookahead, survivorship, costs, alpha-vs-beta).
-- `/ship-loop` — the final verified-success gate before committing.
-- `/refute` — adversarial self-review; tries to falsify the current claim.
-- `/evidence` — audits every numerical or completion claim against hard evidence.
-- `.claude/contracts/` — the expert-agent and task contracts the loops bind to.
+Nothing runs in the background. The hub is an on-demand library and contract.
 
-## Deterministic hooks
-
-Wired in `.claude/settings.json` (`$CLAUDE_PROJECT_DIR`-relative):
-
-- `secret_scan.sh` — blocks staged/written secrets (token prefixes, PEM keys,
-  credential assignments).
-- `changed_python_syntax.sh` — syntax-checks changed Python.
-- `evidence_audit.py` — checks completion/numeric claims carry evidence.
-- `loop_guard.py` — guards against unsupported completion language; the
-  prose-heuristic enforcement is **opt-in** via `LOOP_GUARD_STRICT=1` (off by
-  default so a misjudged Stop never bricks a turn).
-
-Because this root is now a git repository, the `secret_scan` staged-diff path is
-live: the hook scans the staged diff on commit, not just individual file writes.
-
-## Not a daemon, not the vault
-
-Nothing here runs unless an agent or the user invokes it — this is a library
-plus a contract. Vision, decisions, and long-form governance live in the OmarOS
-vault (`~/OmarOS/`), which is read-only from any session running here.
+The [control-plane audit](.claude/docs/control_plane_audit.md) records the
+consolidation of skills and agents, capabilities retained and verified limitations.

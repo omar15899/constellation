@@ -24,13 +24,11 @@ When two policies appear to disagree:
 
 ## How a Claude session uses these
 
-Every constellation agent (`agents/*.md`) and every skill
-(`skills/*/SKILL.md`) references the relevant policy explicitly in
-its "Invariants" section. A session that picks up a non-trivial
-request:
+Load policies relevant to the task, without copying them into every skill.
+A session that picks up a non-trivial request:
 
 1. Reads the kernel (`~/GitHub/.claude/CLAUDE.md`).
-2. Reads the routing taxonomy in `cross-repo-router`.
+2. Establishes scope with `contracts/routing.md` in the current agent.
 3. Reads the relevant policy from this directory if the request
    touches it.
 4. Acts.

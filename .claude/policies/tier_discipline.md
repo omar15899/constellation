@@ -1,98 +1,51 @@
-# Tier Discipline
+# Tier discipline
 
-QuantOS encodes a strict dependency partial-order. This policy makes it
-explicit and enforceable.
+The [repository registry](../registry/repos.yaml) declares current members and
+tiers. This hub has no QuantOS tier. Agent orchestration is a workflow; it must
+not be confused with Tier 4 application code.
 
-## The ladder
+For an edge `importer repository → dependency repository` between distinct
+QuantOS repositories with numeric tiers, require:
 
-```
-Tier 4 — Orchestration
-        Claude Code workflows (across all labs).
-        Imports allowed: any (workflows are external to the import graph).
-        Imports forbidden: none.
+`dependency.tier < importer.tier`
 
-Tier 3 — Risk & Execution            (touches money)
-        Members: RiskLab, ExecutionLab.
-        May import from: Tier 0, 1, 1.5, 2, 2.5.
-        May NOT import from: each other's tier-3 internals (use HTTP/queue).
+Fractional tiers use numeric order. Tier 2 → Tier 1 is allowed by this rule;
+Tier 1 → Tier 2 and same-tier sibling imports are forbidden. Internal imports
+within one repo follow its local contracts. Stricter perimeter and local
+forbidden-import constraints still apply.
 
-Tier 2.5 — Allocation
-        Members: PortfolioLab.
-        May import from: Tier 0, 1, 1.5, 2.
+| Tier | Role | Permitted numeric dependency tiers |
+| --- | --- | --- |
+| 0 | Shared substrate | None in QuantOS |
+| 1 | Data and causal evaluators | 0 |
+| 1.5 | Pricing | 0, 1 |
+| 2 | Information channels | 0, 1, 1.5 |
+| 2.5 | Allocation | 0, 1, 1.5, 2 |
+| 3 | Risk and execution | 0, 1, 1.5, 2, 2.5 |
+| 4 | Strategy orchestration code | 0, 1, 1.5, 2, 2.5, 3 |
+| UI | Separate transport boundary | HTTP/WS, not Python cross-imports |
 
-Tier 2 — Information channels
-        Members: NewsLab, ResearchLab, IntelligenceLab.
-        May import from: Tier 0, 1, 1.5.
-        May NOT import from: each other (use FeatureSet contract).
+## Enforcement and coverage
 
-Tier 1.5 — Pricing
-        Members: PricingLab.
-        May import from: Tier 0, 1.
-
-Tier 1 — Causal evaluators
-        Members: BacktestLab, MonteCarloLab, Sweeplab.
-        May import from: Tier 0.
-        May NOT import from: each other (use Shared types).
-
-Tier 0 — Substrate
-        Members: Shared.
-        May import from: nothing in QuantOS (only stdlib + approved deps).
-
-UI tier (outside Python import graph)
-        Members: tradinginterface.
-        Talks over HTTP/WS only.
-```
-
-## The two invariants
-
-**Invariant 1 — No back-imports.** A Tier *k* component may not import
-from a Tier *j* component with *j ≥ k*.
-
-**Invariant 2 — No same-tier coupling between siblings.** A Tier 2
-component (NewsLab) may not import another Tier 2 component
-(ResearchLab) directly. They communicate by typed artefacts
-(`FeatureSet`, `Study`, etc.) materialised through `Shared/`.
-
-## How it is enforced
-
-1. **Per-lab `.importlinter` contract.** Each lab declares its layers
-   and forbidden imports. Pre-commit gate refuses commits that violate
-   the contract.
-2. **Cross-lab `import-graph-auditor`.** Walks the union graph across
-   all labs. Detects violations that a single lab's contract cannot see
-   (because the foreign package is a workspace dependency, not a
-   first-class import).
-3. **`tier-discipline` skill.** User-invocable summary of the auditor.
-   Returns `PASS` / `BLOCKER`.
-4. **`multi-repo-orchestrator`.** Halts cross-repo work the moment a
-   tier inversion is introduced.
+Local `.importlinter` contracts constrain imports when the repository runs them;
+their mere existence does not establish enforcement. The
+[import-graph-auditor](../agents/import-graph-auditor.md), invoked through
+`tier-check`, audits relevant cross-repository edges and reports `PASS`,
+`BLOCKER` or `INCOMPLETE` with explicit scope. A static scan cannot prove all
+dynamic imports are absent. The orchestrator stops dependent promotion when a
+verified violation is found and repairs it within task authority.
 
 ## Exceptions
 
-There are exactly two:
+- Cross-tier imports in `tests/cross_repo/` may verify cross-repository contracts.
+- Tier 0 conformance tests may import higher-tier mock shims located inside
+  `Shared/conformance/` to verify Shared contracts.
 
-- **Tests.** Cross-tier imports in `tests/cross_repo/` are permitted
-  because they exist precisely to verify the contracts hold.
-- **Conformance suites.** A Tier 0 conformance suite may import
-  higher-tier shims (mock implementations) to verify Shared's
-  contracts. These shims live inside `Shared/conformance/` only.
+Ordinary tests are not automatically exempt. Neither exception permits production
+coupling. Other proposed exceptions require an architectural decision; do not
+relabel the repository or weaken its contract to make the audit pass.
 
-No other exceptions are permitted. If you find yourself wanting one,
-the design is wrong — refactor via `cross-repo-refactor` and open an
-ADR.
-
-## Why tier discipline matters
-
-The constellation's audit story rests on this discipline:
-
-- Every artefact's BLAKE3 root depends on its inputs.
-- Inputs are typed and content-addressed.
-- A tier inversion creates a cycle in the dependency graph, which
-  breaks the content-addressing invariant: a hash of A can no longer
-  be computed before A's inputs, because A's inputs (transitively)
-  depend on A.
-- Without content-addressing, the audit DAG collapses, and with it the
-  causal-identity guarantee that distinguishes QuantOS from a pile of
-  scripts.
-
-So tier discipline is not aesthetic. It is the load-bearing wall.
+Strictly decreasing numeric tiers preclude cycles among those production edges.
+A tier inversion violates the architectural order even if it does not itself
+create a cycle. Dependency acyclicity and content-addressing claims still need
+the actual graph and artifact contracts; tier labels alone do not prove them.

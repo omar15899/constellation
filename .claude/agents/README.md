@@ -1,38 +1,19 @@
-# `~/GitHub/.claude/agents/`
+# Shared agents
 
-Cross-repo agent definitions. Each `.md` file is a Claude Code sub-agent
-spec — frontmatter at the top, full operating instructions below.
+The specs in this directory are the canonical roster; there is no duplicate
+agent registry. Each role inherits the session model and effort.
 
-| Agent                          | Tier   | Writes? | Role                                          |
-| ------------------------------ | ------ | ------- | --------------------------------------------- |
-| `constellation-cartographer`   | Opus   | `.claude/`  | Discovers + classifies + indexes              |
-| `cross-repo-router`            | Opus   | none    | Routes free-form requests                     |
-| `multi-repo-orchestrator`      | Opus   | repos   | Coordinates multi-repo work (with consent)    |
-| `cross-repo-search`            | Sonnet | none    | Ripgrep + ranked search across constellation  |
-| `repo-classifier`              | Sonnet | none    | Classifies a single unknown repo              |
-| `perimeter-keeper`             | Sonnet | `.claude/`  | Detects drift; writes drift report            |
-| `import-graph-auditor`         | Sonnet | `.claude/`  | Audits tier discipline across labs            |
+| Agent | Distinct responsibility | Writes |
+| --- | --- | --- |
+| constellation-cartographer | Discovery, classification and metadata drift | Authorized hub registry/index changes |
+| import-graph-auditor | Cross-repository tier and perimeter dependencies | Requested hub reports only |
+| multi-repo-orchestrator | Integration across repositories and production-sensitive decomposition | Authorized target repositories |
 
-## Doctrine
+[Routing](../contracts/routing.md) happens in the current agent. Search and status
+use skills and existing tools; neither needs a dedicated agent. Delegate bounded
+work only when independent context or parallelism helps. Role tool restrictions
+remain binding; available general workers can handle other authorized subtasks.
 
-- Only `cross-repo-router` and `multi-repo-orchestrator` may spawn
-  other constellation agents.
-- No agent here writes inside a repo without explicit user
-  authorisation routed through the orchestrator.
-- All agents are read-only on `~/OmarOS/`. Vault writes happen via
-  the vault-side orchestrator.
-
-## How a per-repo `.claude/` can use these agents
-
-Two options:
-
-1. **Symlink in.** Per-repo `.claude/agents/_shared/` symlinked to
-   `~/GitHub/.claude/agents/`. The repo can then reference the agents by
-   the same name as the rest of the constellation.
-2. **Delegate by name.** A per-repo orchestrator that needs a
-   cross-repo capability emits a hand-off envelope, and the
-   `multi-repo-orchestrator` picks it up from the constellation plane.
-
-The recommended pattern is **option 2** — agents stay defined once,
-in one place. The `.claude/templates/claude_subagent_link.sh` script
-prepares option 1 for repos that prefer it.
+These are instructions, not proof that a client loaded or sandboxed each role.
+See [Codex parity](../docs/codex_parity.md). All roles preserve neighboring changes
+and treat OmarOS as read-only from this plane.

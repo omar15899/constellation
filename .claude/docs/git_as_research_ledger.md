@@ -143,4 +143,6 @@ tier-ordered committer (quick per-repo commits with provenance trailers).
 `research_committer.py` is the policy-driven superset: per-scope grouping,
 per-repo checks, pre-staged protection, run-class, and the verbose message above.
 Use `/commit-research` for governed research/implementation work;
-`/commit-constellation` remains for quick control-plane commits.
+`commit-research` is the shared entry point, including control-plane work.
+Always select the authorized repositories and scopes explicitly. The older
+`constellation_commit.py` remains for direct callers, without a discoverable skill.

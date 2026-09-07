@@ -54,7 +54,7 @@ not a guarantee — always confirm with `git worktree list`, not the name.
 - `peer_sync.py` writes `peers.yaml.snapshot` into a worktree only incidentally
   (the worktree shares the parent's `.claude/`); that snapshot is gitignored
   like any other and is not tracked.
-- `multi-repo-status` / `status_all.sh` may *report* worktree state for
+- `repo-status` may *report* worktree state for
   visibility but must label it as a worktree, never as an unregistered repo.
 
 ## Why this is a policy and not just a convention

@@ -84,7 +84,8 @@ If the orchestrator is interrupted mid-pipeline:
 
 - A single commit containing files from more than one repo (impossible
   in practice, but worth stating).
-- `.claude/` updates bundled with code edits. The hub is not a repo. If
-  the hub needs updating, do so as a separate session.
+- Hub control-plane updates bundled with a lab's code edits. The hub is its
+  own `constellation` repository and receives its own scoped commit when
+  authorized.
 - Vault-side updates bundled with `~/GitHub/` work. Vault commits are
   recorded inside `~/OmarOS/`'s git history, never in a lab.

@@ -8,11 +8,13 @@ allowed cross-imports.
 
 | Perimeter      | Tier scope | Vault-bound | Tier-enforced | Members                                            |
 | -------------- | ---------- | ----------- | ------------- | -------------------------------------------------- |
-| `quantos-core` | 0–1.5      | yes         | yes           | Shared, BacktestLab, MonteCarloLab, Sweeplab, PricingLab |
+| `quantos-core` | 0–1.5      | yes         | yes           | Shared, BacktestLab, MonteCarloLab, Sweeplab, PricingLab, MarketDataLab |
 | `quantos-info` | 2          | yes         | yes           | NewsLab, ResearchLab, IntelligenceLab              |
 | `quantos-alloc`| 2.5        | yes         | yes           | PortfolioLab                                       |
 | `quantos-prod` | 3          | yes         | yes           | RiskLab, ExecutionLab                              |
 | `quantos-ui`   | UI         | yes         | no            | tradinginterface                                   |
+| `quantos-orchestration` | 4 | yes | yes | StrategyOrchestrationLab |
+| `external` | n/a | no | no | Vendored upstream, excluded from hub governance |
 | `adjacent`     | n/a        | optional    | no            | Scilux, MMARV1, KarimSpecificCase                  |
 | `future`       | n/a        | n/a         | n/a           | (reserved)                                         |
 
@@ -26,6 +28,11 @@ allowed cross-imports.
 | **quantos-prod**       | ✓              | ✓              | ✓               | tier-internal  | ✗            | ✗          |
 | **quantos-ui** (HTTP)  | ✓ HTTP/WS only | ✓ HTTP/WS only | ✓ HTTP/WS only  | ✓ HTTP/WS only | tier-internal| ✗          |
 | **adjacent**           | ✗              | ✗              | ✗               | ✗              | ✗            | self-only  |
+
+The registry owns current membership. `quantos-orchestration` application code
+is Tier 4: it may depend on lower numeric QuantOS tiers, subject to stricter local
+contracts. Lower tiers cannot import it. Agent workflows have no application tier.
+External vendored code is outside governance, not a license to bypass boundaries.
 
 - ✓ → allowed.
 - ✗ → forbidden. `import-graph-auditor` flags as `tier_inversion` or
@@ -48,17 +55,14 @@ allowed cross-imports.
 
 ## Drift detection
 
-The `perimeter-keeper` agent watches for:
+The cartographer checks requested registry metadata against paths, language,
+declared Claude resources and vault-link existence. The import auditor checks
+relevant dependency and tier boundaries, including QuantOS/adjacent leakage.
+These are on-demand audits, not monitoring services.
 
-- An `adjacent` repo's deps gaining `quant_core` or similar.
-- A `quantos-*` repo whose `.importlinter` contract no longer matches
-  its declared tier.
-- A repo whose `claude_dir`, `vault_link`, or `stack` field in
-  `registry/repos.yaml` no longer matches reality.
-
-When drift is detected, the keeper writes `docs/drift_report.md` and
-the constellation orchestrator surfaces the report before any
-cross-repo work proceeds.
+Report verified violations and unresolved coverage separately. Persist a report
+only when the task needs an artifact; do not overwrite unrelated work or refresh
+unchanged timestamps. A metadata check does not prove dependency correctness.
 
 ## Promotion / demotion
 
