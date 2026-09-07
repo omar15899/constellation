@@ -135,7 +135,7 @@ perimeters:
     members: []
 
 # When a new repo appears under ~/GitHub/ that does not match any
-# existing perimeter, `repo-classifier` assigns it the perimeter that
+# existing perimeter, `constellation-cartographer` proposes the perimeter that
 # best matches its stack, dependency graph, and CLAUDE.md (if any),
 # and proposes the classification for human confirmation before
 # editing repos.yaml.

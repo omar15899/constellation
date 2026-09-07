@@ -49,12 +49,29 @@ repos:
     default_run_class: control-plane
     include:
       - .claude/
+      # Versioned Codex projection; private/local runtime directories are excluded.
+      - .codex/AGENTS.md
+      - .codex/README.md
+      - .codex/MANIFEST.json
+      - .codex/config.toml
+      - .codex/hooks.json
+      - .codex/hook_shim.py
+      - .codex/agents/
+      - .codex/skills/
+      - .codex/rules/
+      - AGENTS.md
       - CLAUDE.md
       - QUANTOS.md
       - README.md
       - .gitignore
     exclude:
       - .claude/run/
+      - .codex/local/
+      - .codex/sessions/
+      - .codex/archived_sessions/
+      - .codex/log/
+      - .codex/logs/
+      - _conversations/
     checks:
       - settings_json
       - py_compile_hooks

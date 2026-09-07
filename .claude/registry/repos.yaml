@@ -9,10 +9,10 @@
 #   perimeter  — one of: quantos-core | quantos-info | quantos-alloc | quantos-prod
 #                       | quantos-ui   | quantos-orchestration | adjacent
 #                       | external     | future
-#   tier       — QuantOS tier (0, 1, 1.5, 2, 2.5, 3, UI) or null for adjacent
+#   tier       — QuantOS tier (0, 1, 1.5, 2, 2.5, 3, 4, UI) or null for adjacent
 #   role       — one-line role summary
 #   stack      — python | typescript | vanilla-web | mixed | other
-#   status     — stub | substantive | mature | external | reserved
+#   status     — stub | substantive | mature | active | external | reserved
 #   vault_link — relative path inside ~/OmarOS/ for the canonical vision (or null)
 #   claude_dir — relative path of the per-repo .claude/ surface (or null)
 #   notes      — free text

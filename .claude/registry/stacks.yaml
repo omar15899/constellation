@@ -54,6 +54,6 @@ stacks:
 
 # Adding a stack:
 #   1. Define it here with tooling + members.
-#   2. Update repos.yaml stack field for each member.
-#   3. Cross-repo skills (cross-repo-refactor, multi-repo-status) pick
-#      up the new profile automatically.
+#   2. Keep repos.yaml stack values as coarse language categories; these
+#      tooling profile names are a separate vocabulary.
+#   3. Verify each member's actual tooling before applying profile-specific checks.
