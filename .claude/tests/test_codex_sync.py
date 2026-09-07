@@ -14,12 +14,13 @@ import sys
 import tempfile
 import tomllib
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import codex_sync as cs  # noqa: E402
 
-ROOT = Path("/Users/omarkhalil/GitHub")
+ROOT = Path(__file__).resolve().parents[2]
 
 
 # --- semantic mapping -------------------------------------------------------
@@ -156,29 +157,95 @@ def test_shim_normalises_codex_field_names() -> None:
     assert "EVENT PreToolUse" in out and '"exit_code": 7' in out
 
 
+def test_projected_hooks_use_codex_top_level_schema() -> None:
+    """Codex accepts only `description` and `hooks` at the top level."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp)
+        surface = cs.Surface(name="test", path=path)
+        settings = {
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
+                            {"type": "command", "command": "python3 stop.py"},
+                        ],
+                    },
+                ],
+            },
+        }
+
+        projection = cs.Projection()
+        projection.project_hooks(surface, settings)
+        projection.apply(surface)
+
+        projected = json.loads((path / ".codex/hooks.json").read_text(encoding="utf-8"))
+        assert set(projected) == {"description", "hooks"}
+        assert cs.BANNER in projected["description"]
+        assert ".claude/settings.json" in projected["description"]
+
+
+def test_skill_catalog_resolves_aliases_and_ignores_incidental_paths() -> None:
+    text = (
+        "Incidental (file: /unrelated/check/SKILL.md)\n"
+        "## Skills\n### Skill roots\n- `r0` = `/project/.codex/skills`\n"
+        "### Available skills\n"
+        "- check: Check the project. (file: r0/check/SKILL.md)\n"
+        "- global: Another skill. (file: /global/check/SKILL.md)\n"
+        "# Other instructions\n"
+        "- fake: Ignore this. (file: /outside/check/SKILL.md)\n"
+    )
+    blob = json.dumps([{"role": "developer", "content": [{"type": "text", "text": text}]}])
+    assert cs.discovered_skill_paths(cs.prompt_fragments(blob)) == {
+        Path("/project/.codex/skills/check/SKILL.md"), Path("/global/check/SKILL.md")}
+
+
+def test_verifier_requires_local_origin_and_distinguishes_agent_parsing() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / ".claude/skills/check"
+        source.mkdir(parents=True)
+        (source / "SKILL.md").write_text("---\nname: check\ndescription: Check.\n---\nCheck.\n")
+        skills = root / ".codex/skills"
+        skills.mkdir(parents=True)
+        (skills / "check").symlink_to("../../.claude/skills/check")
+        agents = root / ".codex/agents"
+        agents.mkdir()
+        (agents / "audit.toml").write_text('name = "audit"\ndescription = "Audit"\ndeveloper_instructions = "Inspect"\n')
+        surface = cs.Surface("fixture", root)
+        for origin, expected_failures in [("/global/check/SKILL.md", 1),
+                (str(skills / "check/SKILL.md"), 0), (str((source / "SKILL.md").resolve()), 0)]:
+            prompt = "## Skills\n### Available skills\n- check: Check. (file: " + origin + ")\n"
+            response = subprocess.CompletedProcess([], 0, json.dumps([{"text": prompt}]), "")
+            with patch.object(cs.shutil, "which", return_value="/test/codex"), patch.object(subprocess, "run", return_value=response):
+                lines, failures = cs.verify([surface])
+            assert failures == expected_failures, lines
+            assert "1 agent configs parsed (agent discovery not verified)" in lines[0], lines
+            assert ("0/1 skills discovered" if expected_failures else "1/1 skills discovered") in lines[0], lines
+
+
 # --- the projected tree -----------------------------------------------------
 
 
 def test_every_generated_agent_toml_is_valid() -> None:
     checked = 0
-    for toml_path in ROOT.glob("*/.codex/agents/*.toml"):
+    for toml_path in ROOT.glob(".codex/agents/*.toml"):
         parsed = tomllib.loads(toml_path.read_text(encoding="utf-8"))
         for key in ("name", "description", "developer_instructions"):
             assert key in parsed, f"{toml_path}: missing {key}"
         assert parsed["developer_instructions"].strip(), f"{toml_path}: empty instructions"
         checked += 1
-    assert checked > 100, f"expected the full constellation, saw {checked} agents"
+    assert checked > 0, "expected the hub agent projection"
 
 
 def test_every_projected_skill_declares_itself() -> None:
-    for skill in ROOT.glob("*/.codex/skills/*/SKILL.md"):
+    for skill in ROOT.glob(".codex/skills/*/SKILL.md"):
         meta, _ = cs.split_frontmatter(skill.read_text(encoding="utf-8", errors="replace"))
         assert meta.get("name"), f"{skill}: no name — invisible to both agents"
         assert meta.get("description"), f"{skill}: no description"
 
 
 def test_skill_symlinks_point_at_the_canonical_claude_plane() -> None:
-    links = [p for p in ROOT.glob("*/.codex/skills/*") if p.is_symlink()]
+    links = [p for p in ROOT.glob(".codex/skills/*") if p.is_symlink()]
     assert links, "skills should be shared by symlink, not copied"
     for link in links:
         target = os.readlink(link)
@@ -187,7 +254,7 @@ def test_skill_symlinks_point_at_the_canonical_claude_plane() -> None:
 
 
 def test_no_agents_md_exceeds_the_codex_size_cap() -> None:
-    for md in list(ROOT.glob("*/AGENTS.md")) + [ROOT / "AGENTS.md"]:
+    for md in [ROOT / "AGENTS.md", ROOT / ".codex/AGENTS.md"]:
         if md.is_file():
             assert md.stat().st_size <= 32 * 1024, f"{md} exceeds project_doc_max_bytes"
 
@@ -195,7 +262,7 @@ def test_no_agents_md_exceeds_the_codex_size_cap() -> None:
 def test_projection_is_idempotent() -> None:
     """A --check straight after a sync must report zero drift."""
     done = subprocess.run(
-        [sys.executable, str(ROOT / ".claude/scripts/codex_sync.py"), "--all", "--check"],
+        [sys.executable, str(ROOT / ".claude/scripts/codex_sync.py"), "--repo", str(ROOT), "--check"],
         capture_output=True, text=True,
     )
     assert done.returncode == 0, f"projection drifted:\n{done.stdout}"
