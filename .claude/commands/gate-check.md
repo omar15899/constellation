@@ -1,73 +1,122 @@
 ---
 name: gate-check
-description: Run a research result through the promotion gate (DSR/PBO/reality-check/BH-FDR/bootstrap-CI at the honest family m), assign a verdict from the canonical vocabulary, and record it as a structured row in registry/levers.yaml + research_ledger.md. The bar that turns a headline Sharpe into a CONFIRMED/REFUTED/CAPPED verdict.
+description: Assess a research result against the promotion contract and record its verdict, or record an already settled verdict without rerunning the experiment.
 ---
 
-# /gate-check <result, glob, or lever id>
+# /gate-check <result, experiment family or settled verdict>
 
-Judge a quantitative research result against the standing bar in
-[`contracts/promotion_gate.md`](../contracts/promotion_gate.md) and persist the
-verdict so no future session re-derives or re-runs it.
+Use this to adjudicate research evidence or persist an established judgment.
+The [promotion contract](../contracts/promotion_gate.md) sets the bar; this
+workflow does not lower it. Inspect the [lever registry](../registry/levers.yaml)
+first. Reuse existing artifacts for closed levers and respect DO-NOT-RE-RUN.
+Recording a verdict is not authorization to rerun or reopen its experiment.
 
-**The bar is the user's planning decision. Do not lower it to make a result pass.**
+If the user requests only assessment, return the assessment. When recording is
+part of the request, continue through the writer and verification below.
+An already settled verdict enters directly at recording after checking its
+evidence; do not repeat the experiment just to persist it.
 
-## Steps
+## Assess the evidence
 
-1. **Identify the family.** Determine the full set of cells swept — this IS the
-   multiple-testing denominator `m`. If only the winner is shown, find the rest;
-   a verdict at a shrunken `m` is invalid.
+1. Identify the candidate, baseline, run class and complete search family.
+   Account for discarded and failed trials, and state the honest denominator
+   `m`. A winner-centered selection is not the family; a larger trial count
+   alone also does not supply omitted return series for family diagnostics.
+2. Prefer an existing gate report that matches the candidate, source data,
+   return frequency, costs and full search. Inspect the actual artifact,
+   not a summary detached from it. For an authorized new gate calculation,
+   load the ResearchLab contract and use its current
+   [promotion driver](../../ResearchLab/research_algorithms/learning_to_rank_cross_sectional/scripts/promotion_report.py).
+   Check its implementation and supported flags before invoking it. The driver
+   accepts repeatable `--glob`, `--ppy`, `--n-trials-total`, `--run-class`
+   and `--out`; choose an explicit output path to preserve previous reports.
+   Verify the inferred trial count against the search record rather than
+   accepting it automatically. Preserve the methodology's thresholds and
+   engine enforcement.
+3. Read annualised Sharpe, DSR, block-bootstrap CI lower bound and BH-FDR
+   adjusted p against the contract's four bars, plus family PBO, Reality Check
+   and robust selection objective. State `m`, thresholds and material missing
+   diagnostics with the conclusion. Inspect the full report: a per-cell table
+   may omit diagnostics or an engine-related downgrade.
+4. Assign only a canonical verdict:
+   `OPEN / CONFIRMED / CAPPED / NO_IMPROVEMENT / REFUTED / HOLD`.
+   CONFIRMED requires every statistical bar at the honest `m` and the
+   applicable validity checks. High PBO can refute a headline winner.
+   Missing evidence is not a pass. Distinguish an edge against zero from an
+   improvement over the incumbent.
+5. Tag the run as `deployable / broad-floor / diagnostic / production`.
+   Deployable and production CONFIRMED additionally require audited
+   BacktestLab evidence or a qualifying reconciliation PASS for the same
+   experiment, as specified in the contract. Vectorized-only evidence caps
+   those classes at HOLD. Keep current-universe and historical-universe
+   results separate.
 
-2. **Run or ingest the gate.** Prefer the authoritative instrument in ResearchLab:
-   `scripts/promotion_report.py --glob '<outputs glob>' [--ppy 252]`, which writes
-   `reports/promotion_*.json`. If a report already exists, ingest it — do not
-   re-run blindly.
+Use [quant-loop](quant-loop.md) for doubts about causal timing, universe,
+costs or the validity of the underlying result. Compare candidates in a table
+when useful; do not promote a result because a report happens to print PASS.
 
-3. **Read the four bars** for the candidate: BH–FDR adjusted p, block-bootstrap
-   Sharpe CI lower bound, annualised Sharpe, DSR. Plus family PBO and the
-   reality-check. Print:
+## Record a settled verdict
 
-   | cell | Sharpe | DSR | CI_low | BH-FDR p | PBO(family) | bar met? |
-   |---|---|---|---|---|---|---|
+Use the [deterministic writer](../scripts/record_lever_verdict.py), never
+hand-edit the registry. The writer records the judgment; it does not compute
+or independently verify the statistical gate. Supplying metric flags is not
+proof that the bars pass.
 
-4. **Assign the verdict** from the canonical vocabulary (OPEN / CONFIRMED /
-   CAPPED / NO_IMPROVEMENT / REFUTED / HOLD). CONFIRMED requires **all four**
-   bars at the honest `m`. High PBO REFUTES regardless of headline Sharpe.
+Run a dry-run first; it prints a proposed diff without changing the registry
+or its [human mirror](../research_ledger.md):
 
-5. **Tag the run class** — deployable / broad-floor / diagnostic / production.
-   Never conflate the deployable headline with the survivorship-honest broad floor.
+```bash
+python3 ~/GitHub/.claude/scripts/record_lever_verdict.py \
+  --lever <id> --verdict <canonical-verdict> \
+  --run-class <run-class> --artifact <absolute-evidence-path> \
+  --summary "<judgment and its limits>" --mode research_strict \
+  --rerun false
+```
 
-6. **Record it** with the deterministic writer — do **not** hand-edit the YAML.
-   Run [`scripts/record_lever_verdict.py`](../scripts/record_lever_verdict.py)
-   ([`/record-verdict`](record-verdict.md)) dry-run first, review the diff, then
-   `--apply`:
+For a research-strict CONFIRMED, supply all five supported metric flags from
+the assessed report:
 
-   ```bash
-   python3 ~/GitHub/.claude/scripts/record_lever_verdict.py \
-     --lever <id> --verdict <V> --run-class <class> \
-     --artifact <promotion_*.json> --summary "<one sentence>" --mode research_strict \
-     --sharpe <s> --dsr <d> --pbo <p> --ci-low <c> --p-bh <q>      # dry-run
-   #   ...re-run with --apply once the diff is clean
-   ```
+```text
+--sharpe <annualised> --dsr <value> --pbo <family-value> \
+--ci-low <bootstrap-lower-bound> --p-bh <adjusted-p>
+```
 
-   It appends or updates the lever in
-   [`registry/levers.yaml`](../registry/levers.yaml) (the structured source of
-   truth), mirrors the readable row in
-   [`research_ledger.md`](../research_ledger.md), and bumps `last_updated`. Pass
-   `--rerun false` for a closed verdict (REFUTED / CONFIRMED / final
-   NO_IMPROVEMENT); `--rerun true` only if a specific new data source or method
-   would genuinely reopen it (then `--rerun-guard "<what>"`). It never silently
-   overwrites an existing verdict — a verdict change is folded into the `note` as
-   `old->new (date)`. The four bars (`--sharpe --dsr --pbo --ci-low --p-bh`) are
-   **required** for a `research_strict` CONFIRMED, and the writer refuses without
-   them.
+There is no writer `--m` flag: keep the full family and `m` in the evidence
+report and verdict summary. For a new lever, include `--hypothesis`,
+`--strategy` and `--repo` when applicable, using the existing registry's
+identifiers. Use the driver's research run classes above; the writer's broader
+schema also accepts `research` and `control-plane`, which do not substitute
+for the run class of a trading result.
 
-7. **Refute** (`/refute`) and attach evidence (`/evidence`). A verdict without a
-   backing artifact (`promotion_*.json`, `pnl.csv`) is unsupported.
+Review both proposed changes, including the verdict-transition note, run class,
+evidence pointer, retained metadata and rerun policy. Keep closed work at
+`--rerun false`; set `--rerun true --rerun-guard "<specific reopening condition>"`
+only when reopening is authorized and that condition is met. Check existing
+metadata rather than relying on command defaults when recording an OPEN or
+HOLD item.
 
-## Guardrails
+Once the proposal matches the evidence and authorized scope, repeat with
+`--apply`. If the registry changed since review, review a fresh dry-run.
+After applying, inspect both resulting files and run the
+[registry validator](../scripts/validate_levers.py):
 
-- A high Sharpe from a large sweep is a draw from the search, not evidence.
-- If a fresh run contradicts the reference anchors in the contract without a code
-  change to explain it, suspect a regression in the gate before believing it.
-- This command **writes to the registry** — it is the only sanctioned path for a
-  lever verdict to enter persistent state.
+```bash
+python3 ~/GitHub/.claude/scripts/validate_levers.py
+```
+
+A dry-run alone does not prove that a proposed row passes every apply-time
+check. The writer validates the proposed registry on apply and requires
+engine provenance for deployable/production CONFIRMED. If it cannot represent
+the required structured engine metadata, report the writer defect and repair
+the writer within authorized scope; do not bypass the refusal by hand-editing
+a verdict or switching modes.
+
+`--external` skips a local artifact-existence check. Use it only for genuine,
+verified external evidence with a precise reference, never to conceal a missing
+artifact. An existing memory reference may be recorded with `--memory`; this
+does not authorize enabling Memories or transmitting private data.
+
+Verify the resulting claim with [verify-loop](verify-loop.md). Report the
+judgment, decisive evidence and whether recording actually succeeded. A
+successful schema check establishes structural validity, not the truth of
+the research conclusion.

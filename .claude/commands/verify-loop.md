@@ -1,42 +1,81 @@
 ---
 name: verify-loop
-description: Run a task through bounded Plan → Execute → Verify → Refute → Repair loops with an evidence table. The expert-directed verification loop. (Named verify-loop because /loop is the recurring scheduler.)
+description: "Execute and verify substantial tasks, or audit an existing claim: preserve the requested outcome, test plausible failures, repair defects and report evidence."
 ---
 
-# /verify-loop <task>
+# /verify-loop <task, change, report or claim>
 
-Run the requested task through bounded verification loops. **The user owns
-planning; Claude owns execution** (see
-[`contracts/expert_agent_contract.md`](../contracts/expert_agent_contract.md)).
+Use this for work with several requirements, uncertain correctness or a
+material completion claim. For a small edit, the kernel's ordinary checks are
+enough. This is an on-demand workflow; it does not create a recurring task.
 
-> Naming: `/loop` is reserved for the recurring-scheduler skill. This command
-> is the verification loop. Alias intent: `/loop-task`.
+## Establish what must hold
 
-Default maximum loops: **3**.
+Identify the user's explicit requirements, consequential assumptions and
+observable success criteria. Preserve prior constraints when new input arrives.
+Inspect the relevant contract, implementation and initial worktree state; keep
+existing work separate from the change being made. Resolve routine choices from
+that evidence. Ask only when a missing decision changes the intended result,
+authority or material risk. See the [expert contract](../contracts/expert_agent_contract.md).
 
-Each loop must include:
+If the request is an audit, evaluate the existing work within that scope. If it
+authorizes implementation or repair, carry it through verification. Choose a
+plan or an evidence table when dependencies or several claims justify one;
+neither is a mandatory artifact.
 
-1. **Intent reconstruction** — restate the request; separate explicit vs
-   inferred; mark which decisions are the user's (planning) and which are
-   Claude's (execution).
-2. **Definition of done** — concrete, falsifiable.
-3. **Minimal execution step** — smallest change that advances the goal.
-4. **Cheap verification** — run the cheapest check that could fail.
-5. **Evidence table update.**
-6. **Refutation pass** — try to falsify the step (see `/refute`).
-7. **Decision:**
-   - continue if a user requirement is unmet;
-   - continue if evidence is missing;
-   - continue if a plausible failure remains untested;
-   - stop only if success is verified, or the task is explicitly blocked.
+## Execute, test and repair
 
-Do not ask the user to approve every execution detail. Ask only when an
-ambiguity changes the definition of success or touches irreversible risk.
+Make a coherent change that advances the outcome. Run checks that could detect
+the defects this change can introduce, including required repository checks.
+Test likely counterexamples instead of merely confirming the happy path. For
+example, a hook needs refusal and timeout cases; a generator needs safe path
+handling and a second run with no writes. Reuse existing coverage when it
+already supplies the relevant evidence.
 
-**Final output (required):**
+For each important claim, ask what would make it false and inspect or test that
+possibility. Prefer plausible failures with consequences over a fixed quota of
+failure modes. Repair failures within the authorized scope, then retest what
+changed. Broaden checks only when a failure or unresolved concern warrants it.
+Do not stop after an arbitrary number of loops while useful authorized work
+remains. If a repeated attempt makes no progress, change the diagnostic or
+identify the specific blocker; do not repeat it blindly.
 
-| requirement | evidence | status | caveat |
-|---|---|---|---|
+For numerical research use [quant-loop](quant-loop.md), and for unexplained
+metrics use [debug-metric](debug-metric.md). Statistical promotion and persistent
+verdicts belong to [gate-check](gate-check.md).
 
-For serious sessions, append an entry to
-[`loop_ledger.md`](../loop_ledger.md). Close with `/ship-loop` before finalising.
+## Establish the final claim
+
+Inspect the resulting diff and requested artifacts. Confirm that the evidence
+belongs to the current code, data and run. Passing tests, command results,
+inspected files, generated artifacts and source references support different
+claims; none proves more than it actually checks. Distinguish implementation,
+test results and runtime activation. If evidence is missing, narrow the claim
+or state what remains unverified.
+
+For hub Python changes, the [syntax hook](../hooks/changed_python_syntax.sh)
+compiles changed source without executing it or producing bytecode. For shell
+changes, use `bash -n` with explicit paths. For projection changes, follow
+[codex-sync](codex-sync.md) for drift, idempotence and discovery checks; discovery
+does not prove native hook trust. Before a commit, use the repository's checks
+and [secret scanner](../hooks/secret_scan.sh); its staged-content check alone
+does not cover unstaged changes.
+
+The optional [evidence scanner](../hooks/evidence_audit.py) checks whether prose
+has nearby evidence references; it does not verify the referenced result:
+
+```bash
+python3 ~/GitHub/.claude/hooks/evidence_audit.py path/to/report.md
+python3 ~/GitHub/.claude/hooks/evidence_audit.py --strict path/to/report.md
+```
+
+Use `--ledger /absolute/path/to/session.jsonl` only when a local run-ledger
+cross-check is needed and that ledger belongs to the work being assessed. Do
+not use the newest unrelated session as evidence. Keep logs and conversations
+private, and do not create a permanent task log merely to satisfy this workflow.
+
+Report the resulting behavior, relevant checks actually executed and material
+limitations in the user's language. An evidence table helps when several
+claims need comparison; concise prose is sufficient otherwise. Commit or push
+only when authorized, preserving each repository's checks and history. Finish
+when the requested result is supported, without adding unrelated work.
