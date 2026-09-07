@@ -9,7 +9,7 @@ Authoritative implementations:
 
 - [`../registry/repo_commit_policy.yaml`](../registry/repo_commit_policy.yaml) — per-repo machine-readable policy.
 - [`../scripts/research_committer.py`](../scripts/research_committer.py) — the policy-driven committer (`/commit-research`).
-- [`../scripts/constellation_commit.py`](../scripts/constellation_commit.py) — the lighter tier-ordered committer (`/commit-constellation`).
+- [`../scripts/constellation_commit.py`](../scripts/constellation_commit.py) — legacy implementation, retained for direct callers; no longer a discoverable command. Use the scoped `commit-research` workflow for new tasks.
 - [`../hooks/commit_guard.py`](../hooks/commit_guard.py) — standalone commit/push validator.
 - [`../docs/git_as_research_ledger.md`](../docs/git_as_research_ledger.md) — the doctrine this contract abridges.
 
@@ -28,6 +28,11 @@ path:
 
 `contracts · registry · hooks · scripts · commands · tests · research-code ·
 config · docs · reports · artifacts · unknown`
+
+Use one explicit repository and repeat `--path` for exact task files. File selection
+intersects scopes and policy; it never widens the allowed set. `--include-prestaged`
+requires exact paths and rejects selected partial staging. After each commit,
+only its paths are synchronized in the real index; unrelated entries survive.
 
 Commits land in a stable scope order (contracts/registry first, reports/artifacts
 last). Files that do not classify land in `unknown` and are **left out and
