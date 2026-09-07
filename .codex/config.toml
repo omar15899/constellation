@@ -6,6 +6,9 @@
 
 sandbox_mode = "workspace-write"
 
+[features]
+hooks = true
+
 [agents]
 enabled = true
-# 7 project agents in .codex/agents/ — spawn them by name
+# 3 project agents in .codex/agents/ — spawn them by name

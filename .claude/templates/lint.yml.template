@@ -1,5 +1,7 @@
-# lint.yml — standard QuantOS lab CI lint workflow.
-# Drop into <repo>/.github/workflows/lint.yml.
+# lint.yml — draft QuantOS CI workflow; configure before relying on this gate.
+# The repo must declare uv, ruff, mypy and import-linter dependencies and configure
+# .importlinter for its real packages. Adapt the mypy target to the repo layout.
+# Missing configuration and failed checks must fail the job.
 
 name: lint
 on: [push, pull_request]
@@ -15,6 +17,6 @@ jobs:
       - name: ruff format check
         run: uv run ruff format --check .
       - name: mypy strict
-        run: uv run mypy packages/ || echo "mypy: no packages yet"
+        run: uv run mypy packages/
       - name: import-linter
-        run: uv run lint-imports || echo "import-linter: not yet configured"
+        run: uv run lint-imports

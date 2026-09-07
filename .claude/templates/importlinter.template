@@ -1,50 +1,23 @@
-# .importlinter — template for a QuantOS lab.
+# .importlinter — draft QuantOS forbidden-import contract.
 #
-# Replace <LAB_NAME>, <TIER>, and the package list with the real values.
-# Then drop into the repo root and run:
-#     uv run lint-imports
+# Replace <ROOT_PACKAGE>, <LAB_NAME> and <FORBIDDEN_PACKAGE> with importable
+# package names from the repository and constellation tier registry. List every
+# same-tier sibling and higher-tier package that this lab must not import.
+# Repeat source_modules/root_packages entries for a multi-package repository.
+# Keep repo-specific contracts; this draft does not infer the complete tier graph.
+# Placeholders deliberately require configuration before lint-imports can pass.
 #
-# This template encodes:
-#   1. The tier layer contract.
-#   2. The "no sibling-tier cross-imports" rule.
-#   3. The standard "no QuantOS-internal cycles" rule.
+# Format: https://import-linter.readthedocs.io/en/latest/contract_types/forbidden/
 
 [importlinter]
 root_packages =
-    quant_<LAB_PACKAGE>          # e.g. quant_backtest, quant_risk_core
+    <ROOT_PACKAGE>
 include_external_packages = True
 
-# ── 1. Tier-layer contract ─────────────────────────────────────────────────
-[importlinter:contract:tier-layers]
-name = Tier layers for <LAB_NAME> (tier <TIER>)
-type = layers
-layers =
-    quant_<LAB_PACKAGE>          # this lab's tier
-    quant_observability          # tier 0
-    quant_data                   # tier 0
-    quant_core                   # tier 0
-containers =
-    quant_<LAB_PACKAGE>
-    Shared.packages.quant_observability
-    Shared.packages.quant_data
-    Shared.packages.quant_core
-
-# ── 2. Forbidden imports (sibling tiers + higher tiers) ────────────────────
-[importlinter:contract:no-higher-tier]
-name = <LAB_NAME> must not import higher-tier packages
+[importlinter:contract:no-same-or-higher-tier]
+name = <LAB_NAME> must not import same-tier siblings or higher tiers
 type = forbidden
 source_modules =
-    quant_<LAB_PACKAGE>
+    <ROOT_PACKAGE>
 forbidden_modules =
-    quant_risk_core
-    quant_exec_core
-    quant_portfolio_core
-    # remove the lines above that correspond to this lab itself, and
-    # add any higher-tier package the lab is forbidden from importing.
-
-# ── 3. No cycles ───────────────────────────────────────────────────────────
-[importlinter:contract:acyclic]
-name = <LAB_NAME> dependency graph is acyclic
-type = independence
-modules =
-    quant_<LAB_PACKAGE>
+    <FORBIDDEN_PACKAGE>

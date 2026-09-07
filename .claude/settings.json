@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/research_session_loader.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/research_session_loader.py\"",
+            "timeout": 15
           }
         ]
       }
@@ -16,7 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/secret_scan.sh\""
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/secret_scan.sh\"",
+            "timeout": 15
           }
         ]
       },
@@ -25,7 +27,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/dead_lever_guard.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/dead_lever_guard.py\"",
+            "timeout": 15
           }
         ]
       }
@@ -36,7 +39,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/bash_ledger.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/bash_ledger.py\"",
+            "timeout": 15
           }
         ]
       },
@@ -45,15 +49,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/secret_scan.sh\""
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/secret_scan.sh\"",
+            "timeout": 15
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/changed_python_syntax.sh\""
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/changed_python_syntax.sh\"",
+            "timeout": 15
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/metric_provenance.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/metric_provenance.py\"",
+            "timeout": 15
           }
         ]
       }
@@ -63,7 +70,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/loop_guard.py\""
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/loop_guard.py\"",
+            "timeout": 15
           }
         ]
       }

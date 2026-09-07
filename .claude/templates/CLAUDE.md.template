@@ -58,7 +58,7 @@ When work in this repo is part of a multi-repo refactor:
 
 - **Adjacent / Tier ≤ 2:** routine local work is low-risk.
 - **Tier 3 (touches money):** every change is medium-to-high risk.
-  Verify with `tier-check` and `multi-repo-status` before opening a PR.
+  Verify changed dependencies with `tier-check` and inspect state with `repo-status`.
 
 ## Authoritative references
 
