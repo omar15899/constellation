@@ -6,9 +6,8 @@
 /*
 
 # 2. Re-include the orchestrator paths (and this file).
-#    The plane is dual-headed: .claude/ is canonical, .codex/ is its
-#    generated projection (see .claude/scripts/codex_sync.py). Both are
-#    versioned so either agent can be driven from a fresh clone.
+#    Claude and Codex own independent versioned entry points.
+#    .codex_NOTUSE remains a local archive under the root deny rule.
 !/.claude/
 !/.codex/
 !/CLAUDE.md
@@ -36,3 +35,6 @@
 #    evidence_audit). Ephemeral — never committed. The DURABLE research ledger
 #    is the commit-trailer history, not these files.
 /.claude/run/
+
+# Private native-profile migration archive; never stage its local contents.
+/.codex_NOTUSE/

@@ -1,62 +1,41 @@
 # constellation
 
-The shared AI control plane for independent repositories under `~/GitHub/`.
-It provides discovery, routing, cross-repository agents, shared skills and
-verification hooks. Repository classification lives in
-[registry/repos.yaml](.claude/registry/repos.yaml); each neighboring repository
-keeps its own history, toolchain and operating contract.
+Herramientas compartidas para los repositorios independientes de `~/GitHub/`.
+Cada repositorio conserva su historia, sus pruebas y su contrato. El
+[registro operativo](.codex/repositories.json) delimita el workspace;
+[QUANTOS.md](QUANTOS.md) describe la arquitectura cuantitativa.
 
-The structure is small at the point of use:
+Codex empieza en [AGENTS.md](AGENTS.md) y utiliza su
+[perfil nativo mínimo](.codex/README.md): autonomía, alcance explícito, pruebas
+pertinentes y cierre con Git verificado. Se edita directamente y no carga
+agentes especializados ni cadenas de skills. El marcador `.codex/profile.json`
+impide que la proyección de Claude lo sustituya.
 
-- [AGENTS.md](AGENTS.md) is the Codex entry point.
-- [CLAUDE.md](CLAUDE.md) points both agents to the
-  [canonical kernel](.claude/CLAUDE.md).
-- [.claude/](.claude/) owns contracts, registry, hooks, agents and skills.
-- [.codex/](.codex/) is generated from those sources.
+Claude conserva [CLAUDE.md](CLAUDE.md), su [kernel](.claude/CLAUDE.md), contratos,
+roles, skills y hooks. Los 19 proyectos propios tienen perfiles Codex nativos
+con sus reglas técnicas y una referencia al motor común. `ruflo` conserva su
+perfil externo. Ninguna operación incluye otros proyectos sin declararlos.
 
-The kernel loads specialized contracts when needed. QuantOS tier discipline,
-research promotion gates and each adjacent project's autonomy remain explicit.
-[QUANTOS.md](QUANTOS.md) describes the QuantOS architecture. OmarOS is the vault
-for vision and decisions, and is read-only from this repository.
+Para trabajar sobre cualquiera de ellos desde la raíz o desde un hijo:
 
-## Working on the control plane
-
-Edit canonical files, regenerate only the intended repository, and verify:
-
-```bash
-python3 .claude/scripts/codex_sync.py --repo . --check
-python3 .claude/scripts/codex_sync.py --repo .
-python3 .claude/tests/test_codex_sync.py
-python3 .claude/tests/test_codex_projection_safety.py
-python3 .claude/tests/test_codex_workflow.py
-python3 .claude/tests/test_hook_safety.py
-python3 .claude/tests/test_promotion_enforcement.py
-python3 .claude/tests/test_repo_bootstrap.py
-python3 .claude/tests/test_discovery_state.py
-python3 .claude/tests/test_research_committer_safety.py
-python3 .claude/scripts/doctor.py
-python3 .claude/scripts/codex_sync.py --repo . --verify
+```sh
+python3 ~/GitHub/.codex/workspace.py route Shared/README.md PricingLab/README.md
 ```
 
-Choose checks appropriate to the change. Everything above uses the Python
-standard library; no lab virtual environment is needed. The doctor reports
-WARN for uncommitted work. No sync command implies permission to commit,
-push, update neighboring repositories or change global configuration.
+El [flujo entre repositorios](.codex/WORKSPACE.md) divide los archivos por dueño
+Git y coordina plan, pruebas, revisión, commits y pushes. Cada push va al
+upstream de su rama; las dependencias se publican en orden y se verifica el
+SHA remoto. Los cambios pendientes ajenos y cada índice se preservan.
 
-## Hooks
+Para instalar y probar el flujo nativo:
 
-[settings.json](.claude/settings.json) wires shared local hooks for pending
-content, staged secrets, Python syntax, research context and evidence.
-Codex's adapter handles native patches, including multiple files and renames.
-The execution ledger stores hashes and status metadata, without command text
-or output. Stop does not read conversation transcripts.
+```sh
+python3 .codex/install.py
+python3 -m unittest discover -s .codex/tests -v
+```
 
-[Hook behavior](.claude/hooks/README.md) and
-[Codex integration](.claude/docs/codex_parity.md) document the precise coverage.
-Script tests and valid configuration do not prove native activation: review
-new or changed hooks with Codex's `/hooks` interface when prompted.
-
-Nothing runs in the background. The hub is an on-demand library and contract.
-
-The [control-plane audit](.claude/docs/control_plane_audit.md) records the
-consolidation of skills and agents, capabilities retained and verified limitations.
+Python 3.9+ y Git bastan para este flujo. Las herramientas de proyección de
+Claude necesitan Python 3.12+. El [README de Codex](.codex/README.md) detalla las
+pruebas específicas, la preservación de cambios previos y los límites de los
+controles. Pasar pruebas o instalar hooks de Git no activa automáticamente los
+hooks de Codex: sus nuevas definiciones requieren revisión nativa en `/hooks`.

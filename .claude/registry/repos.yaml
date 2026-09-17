@@ -20,7 +20,9 @@
 # Schema version. Bump when fields change.
 schema_version: 1
 generated_by: constellation-cartographer
-last_updated: 2026-06-15
+last_updated: 2026-09-17
+# Directory membership refreshed; historical maturity labels below are not a new code audit.
+# Codex ownership/participation: ../../.codex/repositories.json; Git decides actual file ownership.
 
 perimeters:
   quantos-core:          [Shared, BacktestLab, MonteCarloLab, Sweeplab, PricingLab, MarketDataLab]
@@ -29,7 +31,7 @@ perimeters:
   quantos-prod:          [RiskLab, ExecutionLab]
   quantos-ui:            [tradinginterface]
   quantos-orchestration: [StrategyOrchestrationLab]
-  adjacent:              [Scilux, MMARV1, KarimSpecificCase, brainteasers-asincronas]
+  adjacent:              [Scilux, MMARV1, KarimSpecificCase, GasStorageOptimiserEngie, brainteasers-asincronas]
   external:              [ruflo]
   future:                []
 
@@ -231,6 +233,17 @@ repos:
     vault_link: 05_Projects/Brainteasers_Quant
     claude_dir: null
     notes: System only; produced videos land in ~/OmarOS/05_Projects/Brainteasers_Quant/asincronas (vault-versioned). Remote github.com/omar15899/brainteasers-asincronas (private). Vendors the private hesperides-beamer-template. Not part of QuantOS tier graph.
+
+  - name: GasStorageOptimiserEngie
+    path: /Users/omarkhalil/GitHub/GasStorageOptimiserEngie
+    perimeter: adjacent
+    tier: null
+    role: rolling-intrinsic gas-storage valuation and hedging; frozen original and working implementation
+    stack: python
+    status: active
+    vault_link: null
+    claude_dir: null
+    notes: Independent repository. Preserve src/rollint_original; develop src/rollint. Native Codex profile, outside the QuantOS tier graph.
 
   - name: ruflo
     path: /Users/omarkhalil/GitHub/ruflo

@@ -4,7 +4,11 @@ Human-readable mirror of [`registry/repos.yaml`](registry/repos.yaml).
 Refreshed by the `constellation-cartographer` agent or the
 `repo-discovery` skill.
 
-Last updated: **2026-06-15**.
+Directory membership updated: **2026-09-17**. Maturity and stack labels retain
+the earlier domain inventory; they are not a fresh code audit. Git determines
+file ownership, and [Codex's registry](../.codex/repositories.json) determines
+native or external workspace participation. There are 19 own child repositories
+and one external repository, in addition to the constellation hub.
 
 ---
 
@@ -66,7 +70,7 @@ Last updated: **2026-06-15**.
 
 ---
 
-## Adjacent perimeter (4 repos)
+## Adjacent perimeter (5 repos)
 
 These live next to QuantOS on disk but are **independent projects** —
 not bound by QuantOS tier discipline or vault governance.
@@ -76,6 +80,7 @@ not bound by QuantOS tier discipline or vault governance.
 | **Scilux**            | typescript-vite  | external | Scientific UI / visualisation toolkit |
 | **MMARV1**            | python-light     | external | Multifractal analysis library |
 | **KarimSpecificCase** | vanilla-web      | external | gas-storage operations monitor (adjacent client UI) |
+| **GasStorageOptimiserEngie** | python | active | Rolling-intrinsic gas-storage valuation and hedging; frozen original and working implementation |
 | **brainteasers-asincronas** | mixed (LaTeX+py+sh) | active | Async-lecture production system (Hespérides Beamer + teleprompter) for the Brainteasers Quant course |
 
 ---
@@ -94,22 +99,24 @@ Excluded from constellation audits, refactors, and peer propagation.
 
 ## Agent planes
 
-Every repo below is drivable by **Claude Code or OpenAI Codex,
-interchangeably**. `.claude/` is canonical; `AGENTS.md` and `.codex/` are a
-generated projection of it — regenerate with `/codex-sync` after any
-`.claude/` edit, and never hand-edit the generated side.
+Claude Code keeps its own `.claude/` contracts and tools. Codex uses native
+`AGENTS.md` and `.codex/` profiles in the hub and the 19 own projects. A native
+`profile.json` excludes that entire profile from projection: edit it directly.
+Domain rules remain shared, while each client controls its own execution.
 
 | | Claude Code | Codex |
 | --- | --- | --- |
 | contract | `CLAUDE.md` | `AGENTS.md` |
-| plane | `.claude/` | `.codex/` (generated) |
+| plane | `.claude/` | native `.codex/` |
 | skill | model-invoked or `/name` | `$name` |
-| slash command | `/name` | projected onto a skill, `$name` |
+| workflow | project commands | shared `workspace.py` plus project tools |
 
 `ruflo` is vendored: its `AGENTS.md` is upstream-owned and the projection
 refuses to touch it. `MMARV1`, `GasStorageOptimiserEngie` and
-`brainteasers-asincronas` have no `.claude/` plane, so they get an
-`AGENTS.md` and nothing to project.
+`brainteasers-asincronas` use the same minimal native Codex contract without
+needing a `.claude/` plane. New repositories join the Codex workspace through
+an explicit entry in [repositories.json](../.codex/repositories.json); this
+does not install Claude or change Codex trust.
 
 Mapping, limits and empirical basis: [`docs/codex_parity.md`](docs/codex_parity.md).
 

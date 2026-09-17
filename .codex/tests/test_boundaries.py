@@ -1,0 +1,412 @@
+"""Regression tests for repository ownership and fixed publication destinations."""
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import shlex
+import subprocess
+import sys
+import unittest
+from unittest.mock import patch
+
+
+SPEC = importlib.util.spec_from_file_location("workflow_fixture", Path(__file__).with_name("test_workflow.py"))
+assert SPEC and SPEC.loader
+fixture = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(fixture)
+w = fixture.w
+
+
+class RepositoryBoundaries(unittest.TestCase):
+    setUp = fixture.GitFixture.setUp
+    tearDown = fixture.GitFixture.tearDown
+    commit = fixture.GitFixture.commit
+    task = fixture.GitFixture.task
+
+    def nested(self):
+        child = self.root / "child"
+        child.mkdir(exist_ok=True)
+        subprocess.run(["git", "init", "-q", str(child)], check=True)
+        return child.resolve()
+
+    def another_destination(self):
+        remote = self.base / "different.git"
+        subprocess.run(["git", "clone", "--bare", "-q", str(self.remote), str(remote)], check=True)
+        return remote
+
+    def test_plan_rejects_files_owned_by_nested_repository(self):
+        child = self.nested()
+        (child / "answer.md").write_text("nested answer\n")
+        self.flow.begin("nested")
+        with self.assertRaisesRegex(w.Blocked, "nested repository"):
+            self.flow.plan({"requirements": ["child answer"], "paths": ["child/answer.md"]})
+        with self.assertRaisesRegex(w.Blocked, "nested repository"):
+            w.safe_path(self.root, "child/missing.md", deletion=True)
+
+    def test_owner_resolves_files_and_nonexistent_descendants(self):
+        self.assertEqual(w.owner_root(self.root / "not-yet/a/b.md"), self.root.resolve())
+        child = self.nested()
+        self.assertEqual(w.owner_root(child / "not-yet/a.md"), child.resolve())
+
+    def test_new_repository_boundary_invalidates_an_existing_review(self):
+        (self.root / "child").mkdir()
+        self.task("child/answer.md")
+        self.nested()
+        with self.assertRaisesRegex(w.Blocked, "nested repository"):
+            self.flow.finish()
+        self.assertIsNone(self.flow.load().get("finished"))
+
+    def test_distinct_pushurl_is_blocked_before_transmission(self):
+        destination = self.another_destination()
+        old = w.git(self.root, "rev-parse", "HEAD")
+        self.task()
+        w.git(self.root, "remote", "set-url", "--push", "origin", str(destination))
+        with self.assertRaisesRegex(w.Blocked, "identical fetch and push URL"):
+            self.flow.commit(["answer.md"], "Add answer")
+        self.assertEqual(w.git(self.root, "diff", "--cached", "--name-only"), "")
+        self.assertEqual(w.git(destination, "rev-parse", "refs/heads/main"), old)
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), old)
+
+    def test_multiple_pushurls_are_rejected_even_when_identical(self):
+        w.git(self.root, "config", "--add", "remote.origin.pushurl", str(self.remote))
+        w.git(self.root, "config", "--add", "remote.origin.pushurl", str(self.remote))
+        state = self.flow.begin("multiple destinations")
+        self.assertIn("multiple pushurl", state["sync_error"])
+        with self.assertRaises(w.Blocked):
+            self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+
+    def test_changed_remote_url_cannot_reuse_review_or_plan(self):
+        destination = self.another_destination()
+        self.task()
+        w.git(self.root, "remote", "set-url", "origin", str(destination))
+        with self.assertRaisesRegex(w.Blocked, "destination changed"):
+            self.flow.commit(["answer.md"], "Add answer")
+        with self.assertRaisesRegex(w.Blocked, "destination changed"):
+            self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+        self.assertEqual(w.git(self.root, "diff", "--cached", "--name-only"), "")
+
+    def test_changed_branch_and_upstream_ref_are_rejected(self):
+        self.task()
+        w.git(self.root, "checkout", "-b", "different", "--track", "origin/main")
+        with self.assertRaisesRegex(w.Blocked, "destination changed"):
+            self.flow.commit(["answer.md"], "Add answer")
+        w.git(self.root, "checkout", "main")
+        w.git(self.root, "config", "branch.main.merge", "refs/heads/different")
+        with self.assertRaisesRegex(w.Blocked, "destination changed"):
+            self.flow.ensure_target(self.flow.load())
+
+    def test_target_change_after_finish_blocks_stop(self):
+        destination = self.another_destination()
+        self.task()
+        self.flow.commit(["answer.md"], "Add answer")
+        self.flow.finish()
+        w.git(self.root, "remote", "set-url", "origin", str(destination))
+        result = self.flow.stop()
+        self.assertEqual(result["decision"], "block")
+        self.assertIn("destination changed", result["reason"])
+
+    def test_renewed_plan_pins_older_contract_without_losing_baseline(self):
+        (self.root / "README.md").write_text("existing user work\n")
+        self.flow.begin("existing contract")
+        state = self.flow.load()
+        state.pop("target")
+        state["sync"].pop("url_sha256")
+        self.flow.save(state)
+        self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+        renewed = self.flow.load()
+        self.assertEqual(renewed["baseline_dirty"], ["README.md"])
+        self.assertEqual(renewed["target"], w.publication_target(self.root))
+        self.assertNotIn(str(self.remote), self.flow.path.read_text())
+
+    def test_failed_begin_has_nonzero_cli_exit_code(self):
+        w.git(self.root, "remote", "set-url", "origin", str(self.base / "missing.git"))
+        result = subprocess.run([sys.executable, str(fixture.MODULE), "--root", str(self.root),
+                                 "--session", "cli-failure", "begin"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("sync_error", json.loads(result.stdout))
+
+    def test_replan_retries_transient_fetch_failure_without_losing_baseline(self):
+        (self.root / "README.md").write_text("existing work\n")
+        original = w.git
+        def unavailable(root, *args):
+            if args and args[0] == "fetch":
+                raise w.Blocked("Synthetic temporary network failure")
+            return original(root, *args)
+        with patch.object(w, "git", side_effect=unavailable):
+            self.flow.begin("temporary failure")
+        self.assertIn("sync_error", self.flow.load())
+        self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+        state = self.flow.load()
+        self.assertNotIn("sync_error", state)
+        self.assertEqual(state["baseline_dirty"], ["README.md"])
+        self.assertEqual(state["turn"], "temporary failure")
+
+    def test_fetch_recovery_cannot_change_the_frozen_destination(self):
+        self.flow.begin("initial")
+        state = self.flow.load()
+        state["sync_error"] = "Synthetic network failure"
+        self.flow.save(state)
+        destination = self.another_destination()
+        w.git(self.root, "remote", "set-url", "origin", str(destination))
+        with self.assertRaisesRegex(w.Blocked, "destination changed"):
+            self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+
+    def test_push_uses_audited_sha_when_head_moves_concurrently(self):
+        self.task()
+        original = w.git
+        audited = []
+        def race(root, *args):
+            if args and args[0] == "push":
+                audited.append(original(root, "rev-parse", "HEAD"))
+                self.assertEqual(args[-1], f"{audited[0]}:refs/heads/main")
+                (root / "other.md").write_text("concurrent unrelated commit\n")
+                original(root, "add", "other.md")
+                original(root, "commit", "-m", "Concurrent work")
+            return original(root, *args)
+        with patch.object(w, "git", side_effect=race):
+            with self.assertRaisesRegex(w.Blocked, "Remote verification failed"):
+                self.flow.commit(["answer.md"], "Add answer")
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), audited[0])
+        self.assertNotEqual(w.git(self.root, "rev-parse", "HEAD"), audited[0])
+        self.assertIsNone(self.flow.load().get("finished"))
+
+    def test_edits_during_add_are_not_committed_or_published(self):
+        self.task()
+        before = w.git(self.root, "rev-parse", "HEAD")
+        original = w.git
+        def concurrent_edit(root, *args):
+            if args[:2] == ("--literal-pathspecs", "add"):
+                (root / "answer.md").write_text("not reviewed\n")
+            return original(root, *args)
+        with patch.object(w, "git", side_effect=concurrent_edit):
+            with self.assertRaisesRegex(w.Blocked, "Staged content differs"):
+                self.flow.commit(["answer.md"], "Add answer")
+        self.assertEqual(w.git(self.root, "rev-parse", "HEAD"), before)
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), before)
+        self.assertEqual((self.root / "answer.md").read_text(), "not reviewed\n")
+
+    def test_unrelated_work_staged_during_add_is_preserved_and_not_committed(self):
+        self.task()
+        before = w.git(self.root, "rev-parse", "HEAD")
+        original = w.git
+        def concurrent_stage(root, *args):
+            if args[:2] == ("--literal-pathspecs", "add"):
+                (root / "other.md").write_text("unrelated staged work\n")
+                original(root, "add", "other.md")
+            return original(root, *args)
+        with patch.object(w, "git", side_effect=concurrent_stage):
+            with self.assertRaisesRegex(w.Blocked, "unselected work"):
+                self.flow.commit(["answer.md"], "Add answer")
+        self.assertEqual(w.git(self.root, "rev-parse", "HEAD"), before)
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), before)
+        self.assertEqual(set(w.git(self.root, "diff", "--cached", "--name-only").splitlines()), {"answer.md", "other.md"})
+
+    def test_hook_mutation_of_committed_blob_blocks_publication_and_retry(self):
+        self.task()
+        before = w.git(self.root, "rev-parse", "HEAD")
+        hook = self.root / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\nprintf 'not reviewed\\n' > answer.md\ngit add -- answer.md\nprintf 'answer\\n' > answer.md\n")
+        hook.chmod(0o755)
+        with self.assertRaisesRegex(w.Blocked, "local commit failed verification"):
+            self.flow.commit(["answer.md"], "Add answer")
+        self.assertNotEqual(w.git(self.root, "rev-parse", "HEAD"), before)
+        self.assertEqual(w.git(self.root, "show", "HEAD:answer.md"), "not reviewed")
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), before)
+        with self.assertRaisesRegex(w.Blocked, "local commit failed verification"):
+            self.flow.publish()
+        with self.assertRaisesRegex(w.Blocked, "local commit failed verification"):
+            self.flow.commit(["answer.md"], "Retry cannot clear the publication blocker")
+
+    def test_hook_adding_unselected_file_blocks_publication(self):
+        self.task()
+        before = w.git(self.root, "rev-parse", "HEAD")
+        hook = self.root / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\nprintf 'unrelated\\n' > other.md\ngit add -- other.md\n")
+        hook.chmod(0o755)
+        with self.assertRaisesRegex(w.Blocked, "local commit failed verification"):
+            self.flow.commit(["answer.md"], "Add answer")
+        self.assertEqual(w.git(self.root, "show", "HEAD:other.md"), "unrelated")
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), before)
+        self.assertTrue(self.flow.load()["publication_blocker"])
+
+    def test_interruption_after_git_commit_preserves_publication_blocker(self):
+        self.task()
+        before = w.git(self.root, "rev-parse", "HEAD")
+        original = w.git
+        def interrupted(root, *args):
+            result = original(root, *args)
+            if args and args[0] == "commit":
+                raise OSError("Synthetic interruption after Git committed")
+            return result
+        with patch.object(w, "git", side_effect=interrupted):
+            with self.assertRaises(OSError):
+                self.flow.commit(["answer.md"], "Add answer")
+        self.assertNotEqual(w.git(self.root, "rev-parse", "HEAD"), before)
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), before)
+        with self.assertRaisesRegex(w.Blocked, "local commit failed verification"):
+            self.flow.publish()
+
+    def test_preserve_index_keeps_partially_staged_user_work(self):
+        (self.root / "README.md").write_text("user staged version\n")
+        w.git(self.root, "add", "README.md")
+        (self.root / "README.md").write_text("user unstaged continuation\n")
+        self.task()
+        fingerprint = w.index_fingerprint(self.root, ["answer.md"])
+        staged_diff = w.git(self.root, "diff", "--cached", "--binary")
+        self.flow.commit(["answer.md"], "Add answer only", preserve_index=True)
+        self.assertEqual(w.index_fingerprint(self.root, ["answer.md"]), fingerprint)
+        self.assertEqual(w.git(self.root, "diff", "--cached", "--binary"), staged_diff)
+        self.assertEqual((self.root / "README.md").read_text(), "user unstaged continuation\n")
+        self.assertEqual(w.git(self.remote, "show", "refs/heads/main:README.md"), "seed")
+        self.assertTrue(self.flow.finish()["completed"])
+
+    def test_preserve_index_keeps_deletion_mode_and_private_addition_with_hooks(self):
+        script = self.root / "tool.sh"
+        script.write_text("#!/bin/sh\nexit 0\n")
+        self.commit("Seed executable fixture")
+        w.git(self.root, "push")
+        script.chmod(0o755)
+        (self.root / "README.md").unlink()
+        (self.root / "auth.json").write_text('{"synthetic":"private staged fixture"}\n')
+        w.git(self.root, "add", "tool.sh", "README.md", "auth.json")
+        self.task()
+        fingerprint = w.index_fingerprint(self.root, ["answer.md"])
+        staged_diff = w.git(self.root, "diff", "--cached", "--binary")
+        hook = self.root / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\nprintf 'ran' > .git/hook-ran\nexec "
+                        + shlex.quote(sys.executable) + " " + shlex.quote(str(fixture.MODULE))
+                        + " git-hook pre-commit\n")
+        hook.chmod(0o755)
+        self.flow.commit(["answer.md"], "Add answer with preserved index", preserve_index=True)
+        self.assertEqual((self.root / ".git/hook-ran").read_text(), "ran")
+        self.assertEqual(w.index_fingerprint(self.root, ["answer.md"]), fingerprint)
+        self.assertEqual(w.git(self.root, "diff", "--cached", "--binary"), staged_diff)
+        self.assertFalse((self.root / "README.md").exists())
+        self.assertEqual(w.git(self.remote, "ls-tree", "refs/heads/main", "auth.json"), "")
+        self.assertEqual(w.git(self.remote, "show", "refs/heads/main:README.md"), "seed")
+        self.assertTrue(w.git(self.root, "ls-files", "--stage", "tool.sh").startswith("100755"))
+
+    def test_preserve_index_rejects_selected_staged_paths(self):
+        self.task()
+        w.git(self.root, "add", "answer.md")
+        before = w.git(self.root, "rev-parse", "HEAD")
+        index = w.git(self.root, "ls-files", "--stage", "-z")
+        with self.assertRaisesRegex(w.Blocked, "overlap existing staged work"):
+            self.flow.commit(["answer.md"], "Cannot adopt staged task file", preserve_index=True)
+        self.assertEqual(w.git(self.root, "rev-parse", "HEAD"), before)
+        self.assertEqual(w.git(self.root, "ls-files", "--stage", "-z"), index)
+
+    def test_preserve_index_hook_cannot_publish_an_unselected_staged_file(self):
+        (self.root / "README.md").write_text("user staged version\n")
+        w.git(self.root, "add", "README.md")
+        (self.root / "README.md").write_text("user unstaged continuation\n")
+        self.task()
+        before = w.git(self.root, "rev-parse", "HEAD")
+        fingerprint = w.index_fingerprint(self.root, ["answer.md"])
+        hook = self.root / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\ngit add -- README.md\n")
+        hook.chmod(0o755)
+        with self.assertRaisesRegex(w.Blocked, "failed verification|without publication"):
+            self.flow.commit(["answer.md"], "Hook tries to include another file", preserve_index=True)
+        self.assertEqual(w.index_fingerprint(self.root, ["answer.md"]), fingerprint)
+        self.assertEqual((self.root / "README.md").read_text(), "user unstaged continuation\n")
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), before)
+        with self.assertRaisesRegex(w.Blocked, "local commit failed verification"):
+            self.flow.publish()
+
+    def test_preserve_index_cli_publishes_only_explicit_paths(self):
+        (self.root / "README.md").write_text("unrelated staged work\n")
+        w.git(self.root, "add", "README.md")
+        self.task()
+        result = subprocess.run([sys.executable, str(fixture.MODULE), "--root", str(self.root),
+                                 "--session", "test-session", "commit", "--preserve-index",
+                                 "-m", "Add answer only", "answer.md"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(w.staged_paths(self.root), {"README.md"})
+        self.assertEqual(w.git(self.remote, "show", "refs/heads/main:README.md"), "seed")
+
+    def test_staged_paths_include_both_sides_of_a_rename(self):
+        w.git(self.root, "mv", "README.md", "renamed.md")
+        self.assertEqual(w.staged_paths(self.root), {"README.md", "renamed.md"})
+
+    def workspace_command(self, *args, payload=None):
+        return subprocess.run([sys.executable, str(self.root / ".codex/workspace.py"),
+                               "--session", "hook-workspace", *args], cwd=self.root,
+                              input=json.dumps(payload) if payload is not None else None,
+                              capture_output=True, text=True, timeout=15)
+
+    def native_workspace(self, *, include_hub=False):
+        runtime = self.root / ".codex"
+        runtime.mkdir()
+        for filename in ("workflow.py", "workspace.py"):
+            shutil.copyfile(fixture.MODULE.parent / filename, runtime / filename)
+        (runtime / "profile.json").write_text('{"mode":"native"}\n')
+        (runtime / "repositories.json").write_text(json.dumps({"schema_version": 1, "repositories": [
+            {"path": ".", "management": "native"}, {"path": "child", "management": "native"}]}))
+        (self.root / ".git/info/exclude").write_text(".codex/\nchild/\n")
+        child = self.root / "child"
+        subprocess.run(["git", "clone", "-q", "-b", "main", str(self.remote), str(child)], check=True)
+        for key, value in (("user.name", "Test"), ("user.email", "test@example.invalid"),
+                           ("commit.gpgsign", "false"), ("core.hooksPath", str(child / ".git/hooks"))):
+            w.git(child, "config", key, value)
+        paths = ["child/answer.md"] + (["hub.md"] if include_hub else [])
+        result = self.workspace_command("plan", payload={"requirements": ["workspace answer"], "paths": paths})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return child.resolve()
+
+    def native_event(self, event, **fields):
+        payload = {"session_id": "hook-workspace", "cwd": str(self.root), **fields}
+        return subprocess.run([sys.executable, str(self.root / ".codex/workflow.py"), "hook", event],
+                              cwd=self.root, input=json.dumps(payload), capture_output=True,
+                              text=True, timeout=10)
+
+    def test_native_workspace_patch_dispatches_before_taking_hub_lock(self):
+        child = self.native_workspace(include_hub=True)
+        document = (f"*** Begin Patch\n*** Add File: hub.md\n+hub\n"
+                    f"*** Add File: {child / 'answer.md'}\n+child\n*** End Patch")
+        result = self.native_event("pre-tool", tool_input={"command": document})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+        result = self.native_event("pre-tool", tool_input={"command": document.replace("answer.md", "undeclared.md")})
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_native_prompt_preserves_child_only_workspace_without_hub_begin(self):
+        self.native_workspace()
+        key = w.digest(b"hook-workspace")[:24]
+        directory = self.root / ".git/constellation"
+        manifest = directory / f"workspace-{key}.json"
+        before = manifest.read_bytes()
+        result = self.native_event("prompt", prompt="SYNTHETIC_PRIVATE_STEERING_PROMPT", turn_id="next")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("workspace lifecycle active", json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(manifest.read_bytes(), before)
+        self.assertFalse((directory / f"{key}.json").exists())
+        result = self.native_event("stop")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["decision"], "block")
+
+    def test_native_workspace_completion_and_next_prompt_start_new_lifecycle(self):
+        child = self.native_workspace()
+        (child / "answer.md").write_text("reviewed answer\n")
+        for args, payload in [(("review",), {"child": {"workspace answer": "Read and reviewed answer."}}),
+                              (("commit", "-m", "Add answer", "child/answer.md"), None),
+                              (("finish",), None)]:
+            result = self.workspace_command(*args, payload=payload)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.native_event("stop")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+        key = w.digest(b"hook-workspace")[:24]
+        directory = self.root / ".git/constellation"
+        result = self.native_event("prompt", prompt="A different task", turn_id="new-task")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((directory / f"workspace-{key}.json").exists())
+        self.assertTrue(list((directory / "history").glob(f"workspace-{key}-*.json")))
+        self.assertEqual(json.loads((directory / f"{key}.json").read_text())["turn"], "new-task")
+
+
+if __name__ == "__main__":
+    unittest.main()
