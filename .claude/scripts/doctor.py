@@ -230,8 +230,25 @@ def section_hub_git() -> Section:
 
 
 def section_codex() -> Section:
-    """Check the local projection without claiming native hook approval."""
+    """Check the profile in use without claiming client hook approval."""
+    from codex_sync import Surface, native_profile, validate_native
+
     sec = Section("Codex control plane")
+    try:
+        native = native_profile(GITHUB_ROOT)
+    except (OSError, ValueError) as exc:
+        sec.checks.append(Check("Codex profile", "FAIL", str(exc)))
+        return sec
+    if native:
+        try:
+            validate_native(Surface("constellation-root", GITHUB_ROOT))
+            sec.checks.append(Check("native Codex profile", "PASS",
+                                    "native entry points valid; no projection or adapter required"))
+        except (OSError, ValueError) as exc:
+            sec.checks.append(Check("native Codex profile", "FAIL", str(exc)))
+        sec.checks.append(Check("native hook activation", "INFO",
+                                "not inferred by doctor; review configured hooks in Codex /hooks"))
+        return sec
     try:
         config = tomllib.loads((GITHUB_ROOT / ".codex/config.toml").read_text())
         enabled = config.get("features", {}).get("hooks", True)

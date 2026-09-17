@@ -1,8 +1,10 @@
 # Constellation kernel
 
-This is the shared operating contract for Claude Code and Codex at
-`~/GitHub/`. Repository contracts add local requirements. System, developer
-and user instructions retain their priority.
+This is the operating contract for Claude Code at `~/GitHub/` and for
+repositories that explicitly retain its Codex projection. The hub's native
+Codex profile uses `../AGENTS.md` and `.codex/profile.json`; this kernel does
+not import its routing or agent chains into that profile. Repository contracts
+add local requirements. System, developer and user instructions retain priority.
 
 ## Finish the requested outcome
 
@@ -94,10 +96,12 @@ attribution or decorative emoji in repository artifacts or commits.
 
 ## One canonical implementation
 
-Edit `.claude/` sources and regenerate the targeted Codex surface with
+For repositories using projection, edit `.claude/` sources and regenerate the targeted Codex surface with
 `scripts/codex_sync.py --repo PATH`. Managed `.codex/` files and `AGENTS.md`
 are generated; Codex-only exceptions live in `.codex/local/`. Shared scripts
-implement behavior for both agents.
+implement behavior for both agents in projected repositories. A native
+`.codex/profile.json` opts out; edit that repository's Codex files directly
+and preserve its independent policy. The hub has selected this native profile.
 
 Keep hooks deterministic, bounded and local. Separate hard policy findings
 from advisory feedback. Hook discovery, script tests and native trust

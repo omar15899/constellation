@@ -60,6 +60,111 @@ class ProjectionSafetyTests(unittest.TestCase):
         self.write_manifest(data)
         return baseline
 
+    def native(self):
+        directory = self.root / ".codex"
+        directory.mkdir(exist_ok=True)
+        (directory / "profile.json").write_text('{"mode": "native"}\n')
+        (self.root / "AGENTS.md").write_text("# AGENTS.md — Native fixture\nOwn contract.\n")
+        return directory
+
+    def test_native_run_and_check_preserve_every_file_without_reading_projection(self):
+        self.agent()
+        self.run_projection()
+        directory = self.native()
+        self.source("settings.json", "invalid source JSON must not be read")
+        (directory / "MANIFEST.json").write_text("invalid legacy manifest must not be read")
+        (directory / "config.toml").write_text("# Native config\n")
+        before = self.snapshot()
+        for check in (False, True):
+            with self.subTest(check=check):
+                projection, surface = self.run_projection(check=check)
+                self.assertEqual(projection.planned, {})
+                self.assertEqual(projection.drift, [])
+                self.assertEqual(surface.written, [])
+                self.assertTrue(surface.skipped)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_direct_apply_cannot_overwrite_native_outputs(self):
+        self.native()
+        surface = sync.Surface("fixture", self.root)
+        projection = sync.Projection()
+        projection.write(surface, self.root / "AGENTS.md", "Generated overwrite\n")
+        before = self.snapshot()
+        projection.apply(surface)
+        self.assertEqual(surface.written, [])
+        self.assertTrue(surface.skipped)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_corrupt_native_marker_refuses_before_mutation(self):
+        marker = self.native() / "profile.json"
+        for text in ("broken JSON", "[]", "{}", '{"mode": "projection"}', '{"mode": null}'):
+            with self.subTest(marker=text):
+                marker.write_text(text)
+                before = self.snapshot()
+                for check in (False, True):
+                    with self.assertRaisesRegex(ValueError, "profile marker"):
+                        self.run_projection(check=check)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_symlink_or_directory_native_marker_refuses(self):
+        marker = self.native() / "profile.json"
+        marker.unlink()
+        target = self.root / "external-profile.json"
+        target.write_text('{"mode": "native"}')
+        for destination in (target, self.root / "missing-profile.json"):
+            marker.symlink_to(destination)
+            before = self.snapshot()
+            with self.assertRaisesRegex(ValueError, "regular local file"):
+                self.run_projection()
+            self.assertEqual(self.snapshot(), before)
+            marker.unlink()
+        marker.mkdir()
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "regular local file"):
+            self.run_projection()
+        self.assertEqual(self.snapshot(), before)
+
+    def test_symlink_codex_directory_refuses_before_reading_marker(self):
+        directory = self.native()
+        target = self.root / "elsewhere"
+        directory.rename(target)
+        directory.symlink_to(target, target_is_directory=True)
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "symlink ancestor"):
+            self.run_projection()
+        self.assertEqual(self.snapshot(), before)
+
+    def test_native_check_needs_no_manifest_hooks_config_or_adapter(self):
+        self.native()
+        before = self.snapshot()
+        projection, surface = self.run_projection(check=True)
+        self.assertEqual(projection.drift, [])
+        self.assertTrue(surface.skipped)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_native_entry_point_errors_refuse_without_writes(self):
+        directory = self.native()
+        for rel, content in (("AGENTS.md", ""), (".codex/config.toml", "[broken"),
+                             (".codex/hooks.json", '{"hooks": []}')):
+            with self.subTest(path=rel):
+                path = self.root / rel
+                previous = path.read_bytes() if path.exists() else None
+                path.write_text(content)
+                before = self.snapshot()
+                with self.assertRaises(ValueError):
+                    self.run_projection(check=True)
+                self.assertEqual(self.snapshot(), before)
+                if previous is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(previous)
+        agents = self.root / "AGENTS.md"
+        agents.unlink()
+        agents.symlink_to(self.root / "CLAUDE.md")
+        with self.assertRaisesRegex(ValueError, "regular local file"):
+            self.run_projection()
+        self.assertFalse((directory / "MANIFEST.json").exists())
+
     def test_source_removal_prunes_all_owned_output_kinds(self):
         agent, skill, command = self.agent(), self.skill(), self.command()
         self.source("settings.json", json.dumps({"hooks": {"Stop": [{"hooks": [

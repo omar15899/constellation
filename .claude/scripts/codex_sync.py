@@ -6,7 +6,9 @@ projection onto the Codex CLI's own configuration surface, so that Omar can
 drive any repo in the constellation with either Claude Code or Codex and get
 the same agents, the same skills, the same guardrails.
 
-Nothing here is bidirectional. Edit `.claude/`, re-run this, commit both.
+Nothing here is bidirectional. In projected repos, edit `.claude/`, re-run this,
+commit both. A regular `.codex/profile.json` declaring `mode: native` reserves
+the whole Codex surface for its native owner: no output is generated or removed.
 
 Construct mapping (codex-cli 0.146, verified empirically — see
 `.claude/docs/codex_parity.md`):
@@ -303,6 +305,63 @@ class Surface:
         return str(p.relative_to(self.path))
 
 
+def native_profile(root: Path) -> bool:
+    """Recognise native ownership before reading projection sources or outputs."""
+    directory = root / ".codex"
+    marker = directory / "profile.json"
+    if directory.is_symlink():
+        raise ValueError("symlink ancestor of Codex profile: .codex")
+    if not os.path.lexists(marker):
+        return False
+    if marker.is_symlink() or not marker.is_file():
+        raise ValueError("Codex profile marker must be a regular local file")
+    try:
+        profile = json.loads(marker.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("invalid Codex profile marker; preserve it before sync") from exc
+    if not isinstance(profile, dict) or profile.get("mode") != "native":
+        raise ValueError("Codex profile marker must declare mode native")
+    return True
+
+
+def validate_native(s: Surface) -> None:
+    """Validate native entry points without assuming a generated manifest/shim."""
+    import tomllib
+
+    for rel in ("AGENTS.md", ".codex/config.toml", ".codex/hooks.json"):
+        path = s.path / rel
+        if not os.path.lexists(path) and rel != "AGENTS.md":
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"native entry point must be a regular local file: {rel}")
+        content = path.read_text(encoding="utf-8")
+        if rel == "AGENTS.md":
+            if not content.strip():
+                raise ValueError("native AGENTS.md must not be empty")
+        elif rel.endswith(".toml"):
+            tomllib.loads(content)
+        else:
+            hooks = json.loads(content)
+            if (not isinstance(hooks, dict) or set(hooks) - {"description", "hooks"}
+                    or not isinstance(hooks.get("hooks"), dict)):
+                raise ValueError("invalid native hooks.json structure")
+            for groups in hooks["hooks"].values():
+                if not isinstance(groups, list):
+                    raise ValueError("native hook event must contain a list of groups")
+                for group in groups:
+                    if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                        raise ValueError("native hook group must contain a list of handlers")
+                    for handler in group["hooks"]:
+                        if (not isinstance(handler, dict) or handler.get("type") != "command"
+                                or not isinstance(handler.get("command"), str)
+                                or not handler["command"].strip()):
+                            raise ValueError("native command hook must declare a command")
+                        timeout = handler.get("timeout")
+                        if timeout is not None and (isinstance(timeout, bool)
+                                or not isinstance(timeout, (int, float)) or timeout <= 0):
+                            raise ValueError("native hook timeout must be positive")
+
+
 MANIFEST_VERSION = 2
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\Z")
 FIXED_OUTPUTS = {
@@ -480,6 +539,10 @@ class Projection:
 
     def apply(self, s: Surface) -> None:
         """Preflight ownership and all collisions before mutating any output."""
+        if native_profile(s.path):
+            validate_native(s)
+            s.skipped.append("native Codex profile preserved; no projection applied")
+            return
         previous = self._previous(s)
         desired = {rel: output for rel, output in self.planned.items() if rel != ".codex/MANIFEST.json"}
         retired = set(previous) - set(desired)
@@ -1051,6 +1114,10 @@ See the hub's `.claude/docs/codex_parity.md` for sources, checks and limits.
 
     def run(self, s: Surface) -> Surface:
         self.planned = {}
+        if native_profile(s.path):
+            validate_native(s)
+            s.skipped.append("native Codex profile preserved; no projection generated")
+            return s
         settings: dict[str, Any] = {}
         settings_path = s.claude / "settings.json"
         if settings_path.is_file():
@@ -1095,7 +1162,9 @@ def discover(root: Path = ROOT) -> list[Surface]:
             continue
         if not (child / ".git").exists():
             continue
-        if (child / ".claude").is_dir() or (child / "CLAUDE.md").is_file() or (child / "pyproject.toml").is_file() or (child / "package.json").is_file():
+        if (os.path.lexists(child / ".codex/profile.json") or (child / ".claude").is_dir()
+                or (child / "CLAUDE.md").is_file() or (child / "pyproject.toml").is_file()
+                or (child / "package.json").is_file()):
             surfaces.append(Surface(name=child.name, path=child))
     return surfaces
 
@@ -1124,13 +1193,14 @@ USER_APPENDIX = """
 
 ## Codex-specific notes
 
-- Project instructions live in each repo's `AGENTS.md`; the canonical
-  doctrine sits beside it in `CLAUDE.md`, which is agent-neutral. Read both.
-- Under `~/GitHub/`, every repo's `.codex/` plane is a generated projection
-  of its `.claude/` plane. Never hand-edit `.codex/` or an `AGENTS.md` —
-  edit `.claude/` and re-run `~/GitHub/.claude/scripts/codex_sync.py --all`.
-- Skills are invoked with `$name`; Claude's `/name` slash commands are
-  projected onto skills of the same name.
+- Project instructions live in each repo's `AGENTS.md`. Read its contract
+  before editing; consult `CLAUDE.md` for domain information when required.
+- A `.codex/profile.json` declaring `mode: native` means Codex owns its
+  instructions and configuration directly. The generator preserves that whole
+  surface, and Claude's agents and execution chains do not govern it.
+- Other repos may use the Claude projection: edit their `.claude/` sources
+  and regenerate only that repo with `codex_sync.py --repo PATH`. Use `--all`
+  only for authorized constellation-wide work. Skills use `$name`.
 - Hooks do not run until approved: `/hooks` -> *Trust all and continue*.
 - Full mapping: `~/GitHub/.claude/docs/codex_parity.md`.
 """
@@ -1221,6 +1291,14 @@ def verify(surfaces: list[Surface]) -> tuple[list[str], int]:
         return ["codex binary not found — cannot verify"], 1
 
     for s in surfaces:
+        try:
+            native = native_profile(s.path)
+            if native:
+                validate_native(s)
+        except (OSError, ValueError) as exc:
+            lines.append(f"FAIL {s.name}: invalid native profile: {exc}")
+            failures += 1
+            continue
         if not s.codex.is_dir() and not (s.path / "AGENTS.md").is_file():
             continue
         problems: list[str] = []
@@ -1263,9 +1341,10 @@ def verify(surfaces: list[Surface]) -> tuple[list[str], int]:
 
         # A global skill with the same name does not establish local discovery.
         # Accept only the projected file or its canonical shared-skill source.
-        expected = sorted(
-            (s.codex / "skills").glob("*/SKILL.md")
-        ) if (s.codex / "skills").is_dir() else []
+        skill_roots = [s.codex / "skills"]
+        if native:
+            skill_roots.append(s.path / ".agents" / "skills")
+        expected = sorted(path for root in skill_roots for path in root.glob("*/SKILL.md"))
         discovered = discovered_skill_paths(fragments)
         unseen = [path.parent.name for path in expected
                   if path.absolute() not in discovered and path.resolve() not in discovered]
@@ -1276,7 +1355,7 @@ def verify(surfaces: list[Surface]) -> tuple[list[str], int]:
         # there is outside the projection and can only be a stale surface
         # shadowing the real one. Vendored repos ship their own and keep it.
         rogue = sorted(p.parent.name for p in (s.path / ".agents" / "skills").glob("*/SKILL.md"))
-        if rogue and s.name not in VENDORED:
+        if rogue and not native and s.name not in VENDORED:
             problems.append(
                 f"{len(rogue)} skills in .agents/skills/ are outside the projection and "
                 f"are being loaded alongside it: {rogue[:5]}"
@@ -1366,7 +1445,7 @@ def main() -> int:
     if args.json:
         print(json.dumps({
             "surfaces": [
-                {"repo": s.name, "written": s.written, "warnings": s.warnings} for s in done
+                {"repo": s.name, "written": s.written, "skipped": s.skipped, "warnings": s.warnings} for s in done
             ],
             "drift": proj.drift,
             "trust": trust,
@@ -1374,8 +1453,10 @@ def main() -> int:
         return 1 if (args.check and proj.drift) else 0
 
     for s in done:
-        if s.written or s.warnings:
+        if s.written or s.skipped or s.warnings:
             print(f"{s.name}: {len(s.written)} written")
+            for skipped in s.skipped:
+                print(f"  {skipped}")
             for w in s.warnings:
                 print(f"  ! {w}")
     for d in proj.drift:

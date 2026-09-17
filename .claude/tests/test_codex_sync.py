@@ -13,12 +13,14 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import codex_sync as cs  # noqa: E402
+import doctor  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -223,34 +225,113 @@ def test_verifier_requires_local_origin_and_distinguishes_agent_parsing() -> Non
             assert ("0/1 skills discovered" if expected_failures else "1/1 skills discovered") in lines[0], lines
 
 
+def test_native_verifier_accepts_native_skills_without_projection() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / ".codex").mkdir()
+        (root / ".codex/profile.json").write_text('{"mode": "native"}')
+        (root / "AGENTS.md").write_text("# AGENTS.md — Native fixture\nOwn contract.\n")
+        skill = root / ".agents/skills/check/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: check\ndescription: Check.\n---\nCheck.\n")
+        surface = cs.Surface("fixture", root)
+        for origin, expected_failures in ((str(skill), 0), ("/global/check/SKILL.md", 1)):
+            prompt = ("# AGENTS.md — Native fixture\n## Skills\n### Available skills\n"
+                      f"- check: Check. (file: {origin})\n")
+            response = subprocess.CompletedProcess([], 0, json.dumps([{"text": prompt}]), "")
+            with patch.object(cs.shutil, "which", return_value="/test/codex"), patch.object(subprocess, "run", return_value=response):
+                lines, failures = cs.verify([surface])
+            assert failures == expected_failures, lines
+            assert not any("outside the projection" in line for line in lines), lines
+        assert not (root / ".codex/MANIFEST.json").exists()
+
+
+def test_native_verifier_refuses_bad_marker_before_running_codex() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / ".codex").mkdir()
+        (root / ".codex/profile.json").write_text("broken JSON")
+        with patch.object(cs.shutil, "which", return_value="/test/codex"), patch.object(subprocess, "run") as run:
+            lines, failures = cs.verify([cs.Surface("fixture", root)])
+        assert failures == 1 and "invalid native profile" in lines[0], lines
+        run.assert_not_called()
+
+
+def test_native_only_repo_is_discovered_without_claude_or_package() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        child = root / "native"
+        (child / ".git").mkdir(parents=True)
+        (child / ".codex").mkdir()
+        (child / ".codex/profile.json").write_text('{"mode": "native"}')
+        assert child in [surface.path for surface in cs.discover(root)]
+
+
+def test_doctor_accepts_native_without_projection_and_refuses_bad_marker() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / ".codex").mkdir()
+        marker = root / ".codex/profile.json"
+        marker.write_text('{"mode": "native"}')
+        (root / "AGENTS.md").write_text("# Native contract\n")
+        with patch.object(doctor, "GITHUB_ROOT", root), patch.object(subprocess, "run") as run:
+            section = doctor.section_codex()
+            assert section.status == "PASS", section
+            assert any("no projection or adapter required" in check.detail for check in section.checks)
+            assert any(check.status == "INFO" and "not inferred" in check.detail for check in section.checks)
+            marker.write_text("broken JSON")
+            assert doctor.section_codex().status == "FAIL"
+        run.assert_not_called()
+
+
 # --- the projected tree -----------------------------------------------------
 
 
+@contextmanager
+def projected_fixture():
+    """Exercise actual projection even when the hub itself has a native profile."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        agents = root / ".claude/agents"
+        agents.mkdir(parents=True)
+        (agents / "audit.md").write_text("---\nname: audit\ndescription: Audit.\n---\nInspect.\n")
+        skill = root / ".claude/skills/check/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: check\ndescription: Check.\n---\nCheck.\n")
+        (root / "CLAUDE.md").write_text("# Fixture\n")
+        cs.Projection().run(cs.Surface("fixture", root))
+        yield root
+
+
 def test_every_generated_agent_toml_is_valid() -> None:
-    checked = 0
-    for toml_path in ROOT.glob(".codex/agents/*.toml"):
-        parsed = tomllib.loads(toml_path.read_text(encoding="utf-8"))
-        for key in ("name", "description", "developer_instructions"):
-            assert key in parsed, f"{toml_path}: missing {key}"
-        assert parsed["developer_instructions"].strip(), f"{toml_path}: empty instructions"
-        checked += 1
-    assert checked > 0, "expected the hub agent projection"
+    with projected_fixture() as root:
+        paths = list(root.glob(".codex/agents/*.toml"))
+        assert paths, "expected the fixture agent projection"
+        for toml_path in paths:
+            parsed = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+            for key in ("name", "description", "developer_instructions"):
+                assert key in parsed, f"{toml_path}: missing {key}"
+            assert parsed["developer_instructions"].strip(), f"{toml_path}: empty instructions"
 
 
 def test_every_projected_skill_declares_itself() -> None:
-    for skill in ROOT.glob(".codex/skills/*/SKILL.md"):
-        meta, _ = cs.split_frontmatter(skill.read_text(encoding="utf-8", errors="replace"))
-        assert meta.get("name"), f"{skill}: no name — invisible to both agents"
-        assert meta.get("description"), f"{skill}: no description"
+    with projected_fixture() as root:
+        paths = list(root.glob(".codex/skills/*/SKILL.md"))
+        assert paths, "expected the fixture skill projection"
+        for skill in paths:
+            meta, _ = cs.split_frontmatter(skill.read_text(encoding="utf-8", errors="replace"))
+            assert meta.get("name"), f"{skill}: no name — invisible to both agents"
+            assert meta.get("description"), f"{skill}: no description"
 
 
 def test_skill_symlinks_point_at_the_canonical_claude_plane() -> None:
-    links = [p for p in ROOT.glob(".codex/skills/*") if p.is_symlink()]
-    assert links, "skills should be shared by symlink, not copied"
-    for link in links:
-        target = os.readlink(link)
-        assert target.startswith("../../.claude/skills/"), f"{link} -> {target}"
-        assert link.resolve().is_dir(), f"{link} is a broken symlink"
+    with projected_fixture() as root:
+        links = [p for p in root.glob(".codex/skills/*") if p.is_symlink()]
+        assert links, "skills should be shared by symlink, not copied"
+        for link in links:
+            target = os.readlink(link)
+            assert target.startswith("../../.claude/skills/"), f"{link} -> {target}"
+            assert link.resolve().is_dir(), f"{link} is a broken symlink"
 
 
 def test_no_agents_md_exceeds_the_codex_size_cap() -> None:

@@ -1,3 +1,10 @@
+> Scope update (2026-09-09): the constellation hub now owns a native Codex
+> profile documented in [`.codex/README.md`](../../.codex/README.md).
+> Its `profile.json` opts out of projection. The mapping below applies to
+> repositories that still use projection, not to native profiles. Since
+> 2026-09-17 the 19 own child repositories also use native profiles and the
+> shared [workspace workflow](../../.codex/WORKSPACE.md); ruflo remains external.
+
 # Codex and Claude: one canonical control plane
 
 `.claude/` contains the implementation and operating contract. `codex_sync.py`
