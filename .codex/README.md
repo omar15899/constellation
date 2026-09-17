@@ -120,7 +120,9 @@ prueba: esa parte exige revisión del agente.
 Los repositorios vecinos conservan su configuración, contratos y pruebas.
 Los perfiles propios migrados conservan la doctrina en `.codex/PROJECT.md` y
 usan el motor común. Sus proyecciones anteriores se archivaron localmente antes
-de retirarlas; `.claude/` y los hooks Git siguen intactos. El generador reconoce
+de retirarlas; `.claude/` se conserva y los validadores Git siguen ejecutándose.
+El post-commit de Sweeplab reconoce los commits del coordinador para no crear
+commits o pushes secundarios. El generador reconoce
 `profile.json` en cualquiera de ellos y nunca lo sobrescribe.
 Los hooks validan el repositorio efectivo y el marcador nativo antes de
 crear estado; un evento dirigido a un vecino no ejecuta el flujo del hub ni

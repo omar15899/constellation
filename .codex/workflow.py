@@ -25,11 +25,11 @@ class Blocked(RuntimeError):
     """A condition requiring correction before publication or completion."""
 
 
-def run(root: Path, *args: str, timeout: int = 25) -> str:
+def run(root: Path, *args: str, timeout: int = 25, extra_env: dict[str, str] | None = None) -> str:
     operation = f"git {args[1]}" if args[0] == "git" and len(args) > 1 else "command"
     try:
         result = subprocess.run(args, cwd=root, capture_output=True, text=True,
-                                timeout=timeout, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                                timeout=timeout, env={**os.environ, **(extra_env or {}), "GIT_TERMINAL_PROMPT": "0"})
     except subprocess.TimeoutExpired:
         raise Blocked(f"{operation} timed out after {timeout}s.") from None
     if result.returncode:
@@ -38,8 +38,8 @@ def run(root: Path, *args: str, timeout: int = 25) -> str:
     return result.stdout.rstrip("\n")
 
 
-def git(root: Path, *args: str) -> str:
-    return run(root, "git", *args)
+def git(root: Path, *args: str, extra_env: dict[str, str] | None = None) -> str:
+    return run(root, "git", *args, extra_env=extra_env)
 
 
 def now() -> str:
@@ -465,10 +465,12 @@ class Workflow:
                                         "It was preserved without publication; reconcile it explicitly before publishing.")
         self.save(state)
         try:
+            commit_env = {"CONSTELLATION_COMMIT_OWNER": "native"}
             if preserve_index:
-                git(self.root, "--literal-pathspecs", "commit", "--only", "-m", message, "--", *paths)
+                git(self.root, "--literal-pathspecs", "commit", "--only", "-m", message, "--", *paths,
+                    extra_env=commit_env)
             else:
-                git(self.root, "commit", "-m", message)
+                git(self.root, "commit", "-m", message, extra_env=commit_env)
         except Blocked:
             if git(self.root, "rev-parse", "HEAD") == parent:
                 state.pop("publication_blocker")
@@ -492,6 +494,44 @@ class Workflow:
         state["publication"] = published
         self.save(state)
         return published
+
+    def recover(self, expected_head: str) -> dict[str, Any]:
+        """Audit an externally repaired commit without modifying Git or publishing."""
+        state = self.load()
+        if not state.get("publication_blocker"):
+            raise Blocked("There is no blocked publication to recover.")
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected_head):
+            raise Blocked("Recovery requires the exact full commit SHA authorized for verification.")
+        if git(self.root, "rev-parse", "HEAD") != expected_head:
+            raise Blocked("HEAD does not match the expected recovery commit.")
+        self.ensure_target(state)
+        self.reviewed(state)
+        expected = state["review"]["snapshot"]
+        if stored_snapshot(self.root, state["paths"], expected_head) != expected:
+            raise Blocked("The recovery commit does not contain the reviewed artifacts.")
+        initial = state["initial_head"]
+        try:
+            git(self.root, "merge-base", "--is-ancestor", initial, expected_head)
+        except Blocked:
+            raise Blocked("Recovery must descend from the task's initial commit.") from None
+        commits = git(self.root, "rev-list", "--reverse", f"{initial}..{expected_head}").splitlines()
+        for commit in commits:
+            paths = set(filter(None, git(self.root, "diff-tree", "--root", "-m", "--no-commit-id",
+                                         "--no-renames", "--name-only", "-r", "-z", commit).split("\0")))
+            if not paths <= set(state["paths"]) or any(private_path(path) for path in paths):
+                raise Blocked("Recovery history contains private or undeclared paths; preserve the blocker and reconcile the history explicitly.")
+        self.ensure_target(state)
+        self.reviewed(state)
+        if git(self.root, "rev-parse", "HEAD") != expected_head:
+            raise Blocked("HEAD changed during recovery verification.")
+        record = {"head": expected_head, "initial_head": initial, "commits": commits, "at": now()}
+        self.log("recovery_verified", **record)
+        state.setdefault("recoveries", []).append(record)
+        state.update(commits=commits, publication=None, finished=None, stop_attempts=0)
+        state.pop("publication_blocker")
+        self.save(state)
+        return {"recovered": True, "head": expected_head, "audited_commits": len(commits),
+                "publication_verified": False}
 
     def finish(self) -> dict[str, Any]:
         state = self.load()
@@ -573,6 +613,7 @@ def main() -> int:
     sub.add_parser("review")
     sub.add_parser("status")
     sub.add_parser("finish")
+    sub.add_parser("recover").add_argument("expected_head")
     sub.add_parser("check").add_argument("argv", nargs=argparse.REMAINDER)
     commit = sub.add_parser("commit")
     commit.add_argument("-m", "--message", required=True)
@@ -619,6 +660,8 @@ def main() -> int:
             result = workflow.commit(args.paths, args.message, preserve_index=args.preserve_index)
         elif args.command == "finish":
             result = workflow.finish()
+        elif args.command == "recover":
+            result = workflow.recover(args.expected_head)
         elif args.command == "git-hook":
             if args.event == "pre-commit":
                 staged_gate(root)

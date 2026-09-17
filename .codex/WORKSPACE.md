@@ -95,6 +95,20 @@ solapamiento se rechaza y exige separar la autoría; no se resuelve por fuerza.
 El cierre admite trabajo ajeno conservado, pero sigue exigiendo que todos los
 archivos del encargo estén comprometidos y su publicación verificada.
 
+Los commits del motor exponen `CONSTELLATION_COMMIT_OWNER=native` únicamente
+al subproceso de Git. Los hooks que generan commits o pushes secundarios deben
+reconocer ese dueño; los validadores siguen ejecutándose. Sweeplab conserva sus
+cinco validadores previos y su comprobación posterior, y delega trazado y push
+al coordinador durante estos commits. Fuera de ese contexto mantiene su flujo.
+
+Si un hook crea un commit fuera del alcance, la publicación queda bloqueada
+también al reintentar. No basta con volver a ejecutar `commit` o `finish`. La
+reparación de historia requiere autorización específica; después, el motor
+local ofrece `workflow.py --root RAÍZ --session ID recover SHA_COMPLETO` para
+auditar el HEAD reparado, su árbol, revisión, destino y todos los commits desde
+el inicio. `recover` no mueve ramas, no modifica archivos ni índices y no hace
+push. Solo retira el bloqueo cuando esa evidencia vuelve a ser válida.
+
 ## Instrucciones y agentes
 
 El hub mantiene el motor; cada proyecto nativo mantiene una entrada breve y sus
