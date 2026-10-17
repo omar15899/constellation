@@ -1,0 +1,7 @@
+{
+  "name": "constellation",
+  "version": "1.0.0",
+  "description": "Portable skills and evidence-driven workflows for coding, mathematics and writing.",
+  "skills": "./skills/",
+  "hooks": "./ecosystem/hooks.json"
+}

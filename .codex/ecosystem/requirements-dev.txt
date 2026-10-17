@@ -1,0 +1,3 @@
+# Optional development dependency for the installed skill-creator quick_validate.py.
+# The portable runtime and this package's structural validator use the standard library.
+PyYAML==6.0.3

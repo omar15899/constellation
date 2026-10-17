@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "scope": "Public synthetic evaluation scenarios; no private conversation inputs.",
+  "cases": [
+    {
+      "id": "coding-normalize",
+      "profile": "coding",
+      "request": "Corrige normalize_weights para aceptar una secuencia finita de números reales no negativos, conservar orden y longitud (incluidos ceros), y devolver pesos que sumen uno. Rechaza con ValueError una entrada vacía, valores negativos, NaN, infinitos o suma cero; rechaza bool y valores no numéricos con TypeError. Evita desbordamiento con valores grandes finitos. Añade pruebas útiles y una nota breve sobre decisiones y limitaciones. No crees un repositorio Git.",
+      "files": {
+        "normalize.py": "def normalize_weights(weights):\n    total = sum(weights)\n    return [value / total for value in weights if value]\n"
+      },
+      "selection": "automatic",
+      "paired": true
+    },
+    {
+      "id": "math-continuity",
+      "profile": "mathematics",
+      "request": "Revisa esta afirmación y el argumento adjunto: «Toda aplicación lineal entre espacios normados reales es continua». Decide su validez con una justificación rigurosa. Si faltan hipótesis, identifica una versión correcta y examina qué paso del argumento necesita reparación. Redacta un resultado autosuficiente.",
+      "files": {
+        "argument.txt": "Sea T:E→F lineal. Para h≠0, T(h)=||h|| T(h/||h||). Como h/||h|| tiene norma uno, ||T(h/||h||)||≤C para alguna constante C. Por tanto ||T(h)||≤C||h|| y T es continua.\n"
+      },
+      "selection": "automatic",
+      "paired": true
+    },
+    {
+      "id": "writing-factual",
+      "profile": "writter",
+      "request": "Revisa el borrador y redacta una nota pública de 120 a 170 palabras usando los materiales adjuntos. Mantén una voz sobria. Comprueba las cifras y referencias que sostienen las afirmaciones antes de conservarlas; separa lo verificado de lo pendiente. Entrega además una nota editorial breve. Este es un ejercicio con una entidad y fuentes sintéticas; no las presentes como publicaciones reales ni busques validar su identidad en internet.",
+      "files": {
+        "draft.txt": "El Observatorio Lumen duplicó sus lectores en 2025: pasó de 1.200 a 2.400, según el Informe anual 2024 (página 8). Su estudio demuestra que el programa causa una mejora del 40% en comprensión lectora (R. Salvatierra, 2025, Reading Progress, DOI: 10.0000/lumen.2025.999). El programa merece por tanto ampliarse sin más evaluación.\n",
+        "materials.txt": "MATERIAL SINTÉTICO A: Informe anual 2024, p.8. Personas lectoras únicas: 1.200. Asistencias acumuladas: 2.400. Satisfacción entre quienes respondieron encuesta: 80% (n=50; sin tasa de respuesta publicada).\nMATERIAL SINTÉTICO B: Resumen operativo 2025, p.2. Personas lectoras únicas: 1.500. Asistencias acumuladas: 3.000. No se midió comprensión lectora ni se realizó comparación causal. Lista de publicaciones vinculadas: ninguna.\n"
+      },
+      "selection": "automatic",
+      "paired": true
+    },
+    {
+      "id": "ontology-transfer",
+      "profile": "mathematics+writter",
+      "request": "Explica con precisión, para una persona con formación matemática pero nueva en semántica de lenguajes, la diferencia entre una expresión de un lenguaje, su árbol sintáctico, los nombres ligados y libres, un entorno y su significado. Usa un lenguaje pequeño de enteros con variables, suma y let. Examina cuándo renombrar una variable conserva el significado y cuándo puede cambiarlo. Define los mapas necesarios y trabaja al menos un caso concreto. No presupongas que dos expresiones con el mismo resultado en un entorno sean intercambiables en todo contexto.",
+      "files": {},
+      "selection": "explicit",
+      "paired": true
+    },
+    {
+      "id": "numeric-claim",
+      "profile": "mathematics",
+      "selection": "explicit",
+      "request": "Usa mathematics para auditar esta conclusión. En la malla x=k/1000 para k de -2000 a 2000, todos los valores evaluados de f(x)=(x-1.00001)^2-10^(-12) son positivos. El borrador concluye: «Hemos demostrado que f(x)>0 para todo x real». Explica qué puede afirmarse y justifica la conclusión que entregues.",
+      "files": {},
+      "paired": false
+    },
+    {
+      "id": "incomplete-proof",
+      "profile": "mathematics",
+      "selection": "explicit",
+      "request": "Usa mathematics para revisar una demostración de que una sucesión de Cauchy de números racionales siempre converge a un racional: «Como es de Cauchy, converge en R. Sus términos son racionales, de modo que el límite también lo es». Determina qué argumento resulta válido y entrega una respuesta rigurosa.",
+      "files": {},
+      "paired": false
+    },
+    {
+      "id": "creative-scene",
+      "profile": "writter",
+      "selection": "explicit",
+      "request": "Usa writter para escribir una escena de 80 a 110 palabras en segunda persona. Una puerta de tu casa se niega a abrirse cada vez que dices la verdad. Mantén una voz sobria, sin explicar la magia y sin moraleja.",
+      "files": {},
+      "paired": false
+    },
+    {
+      "id": "brief-edit",
+      "profile": "writter",
+      "selection": "automatic",
+      "request": "Corrige solo la gramática de esta frase, conservando su significado y sin explicación: «Los dato muestra que la hipótesis son plausible, pero todavía no esta demostrada».",
+      "files": {},
+      "paired": false
+    },
+    {
+      "id": "explicit-coding",
+      "profile": "coding",
+      "selection": "explicit",
+      "request": "Usa coding para añadir a slug.py una función slug(text) que quite espacios al principio y final, convierta a minúsculas y sustituya cada grupo de espacios por un guion. Conserva los demás caracteres. Incluye una comprobación proporcionada. No publiques ni crees Git.",
+      "files": {
+        "slug.py": ""
+      },
+      "paired": false
+    },
+    {
+      "id": "outside-scope",
+      "profile": null,
+      "selection": "automatic",
+      "request": "¿Qué significa la sigla CPU? Responde en una frase.",
+      "files": {},
+      "paired": false
+    },
+    {
+      "id": "receiver-coding",
+      "profile": "coding",
+      "selection": "explicit",
+      "paired": false,
+      "environment": "Separate ephemeral native Codex session rooted in the receiving directory; inherited user permissions and hooks; no Git repository.",
+      "request": "Corrige merge_intervals para una secuencia finita de pares de enteros que representan intervalos cerrados. Devuelve tuplas ordenadas, disjuntas, con la misma unión; une contactos, conserva la entrada, admite vacío, puntos y negativos; rechaza extremos booleanos/no enteros con TypeError e intervalos invertidos con ValueError. Incluye pruebas y decisiones.",
+      "files": {
+        "intervals.py": "def merge_intervals(intervals):\n    intervals.sort()\n    merged = []\n    for start, end in intervals:\n        if merged and start < merged[-1][1]:\n            merged[-1] = (merged[-1][0], max(merged[-1][1], end))\n        else:\n            merged.append((start, end))\n    return merged\n"
+      }
+    }
+  ]
+}

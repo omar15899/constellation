@@ -6,10 +6,18 @@ ciclo por cada dueño Git. El registro operativo está en `repositories.json`;
 los proyectos propios usan perfiles nativos y `ruflo` conserva su perfil externo.
 La sección de uso siguiente documenta el motor de **un solo repositorio**.
 
-El perfil mantiene instrucciones breves y un único programa de ejecución,
+El perfil mantiene instrucciones breves y un motor compartido de publicación,
 adaptado de OmarOS. Codex trabaja directamente; no necesita proyectar Claude,
 cargar el sistema de agentes de Claude ni recorrer una cadena de skills. El modelo,
 esfuerzo y permisos se heredan de los ajustes del usuario.
+
+El [ecosistema personal portable](ecosystem/README.md) añade `coding`,
+`mathematics` y `writter`, recursos de agentes y controles de evidencia para
+trabajos con o sin Git. Sus fuentes están en `skills/`; el plugin instalado
+las expone con el prefijo `constellation:`. Instala el plugin y aplica la
+exclusión explícita de fuentes por ruta descrita en su guía para evitar dos
+copias activas. El paquete conserva este flujo como autoridad de publicación:
+su `close` no hace commits, push ni sustituye los controles del proyecto.
 
 El reparto nativo se genera con `workspace.py dispatch`: tareas de mapa,
 investigación, implementación, checks y revisión, ordenadas por dependencias y
@@ -23,8 +31,8 @@ Un participante sin cambios se publica y verifica con `workspace.py publish
 | --- | --- | --- |
 | Contrato de Codex | Entrada → kernel Claude → contratos y roles | `AGENTS.md` propio |
 | Agentes especializados | 3 | 6 perfiles nativos que heredan modelo y esfuerzo |
-| Skills del hub cargadas | 14 | 0; herramientas y skills generales disponibles según la tarea |
-| Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 4 comandos en 4 eventos |
+| Skills del hub cargadas | 14 | 3 módulos mediante el plugin portable; exclusión nativa explícita de fuentes para evitar duplicados |
+| Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 4 comandos del hub y 5 opcionales del plugin, con confianza independiente |
 | Verificación | Hooks dispersos y evidencia de ejecución | Prueba real, revisión independiente vigente y publicación comprobada |
 | Dependencias del flujo | Adaptador y scripts de Claude | Python estándar 3.9+ y Git |
 

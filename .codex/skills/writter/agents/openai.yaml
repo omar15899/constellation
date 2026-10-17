@@ -1,0 +1,6 @@
+interface:
+  display_name: "Writter"
+  short_description: "Redacción, edición y revisión con evidencia"
+  default_prompt: "Usa $writter para redactar o revisar este texto según su audiencia, propósito, voz y extensión."
+policy:
+  allow_implicit_invocation: true

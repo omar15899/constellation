@@ -229,13 +229,21 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
         raise ReviewError("Review risk must be quick, standard or deep.")
     mode = max((mode, risk_floor, previous_mode), key=MODES.index)
     authors = _authors(root, state)
-    token = _hash({"repository": str(root), "author": state.get("author"),
+    token_material = {"repository": str(root), "author": state.get("author"),
                    "review_authors": authors,
                    "task_started": state.get("started"), "initial_head": state.get("initial_head"),
                    "policy": policy_hash, "policy_floor": _hash(policy), "mode": mode,
                    "requirements": requirements, "paths": sorted(paths),
-                   "deletions": sorted(deletions), "artifacts": artifacts})
-    return {"enabled": True, "token": token, "mode": mode, "policy_sha256": policy_hash,
+                   "deletions": sorted(deletions), "artifacts": artifacts}
+    extra_context = {}
+    if "review_context_sha256" in state:
+        digest = state["review_context_sha256"]
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ReviewError("Review context SHA-256 must be 64 lowercase hexadecimal characters.")
+        extra_context["review_context_sha256"] = digest
+        token_material.update(extra_context)
+    token = _hash(token_material)
+    return {"enabled": True, "token": token, **extra_context, "mode": mode, "policy_sha256": policy_hash,
             "policy_floor": policy,
             "required_reviewers": policy["modes"][mode]["reviewers"],
             "required_focus": policy["modes"][mode]["focus"], "max_rounds": policy["max_rounds"],
@@ -325,7 +333,8 @@ def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None)
         if finding["status"] != "open":
             resolution = finding["resolution"]
             if (resolution["artifact"] != context["artifacts"].get(finding["path"])
-                    or finding["path"] in context["review_authors"].get(resolution["verifier"], [])):
+                    or finding["path"] in context["review_authors"].get(resolution["verifier"], [])
+                    or resolution.get("review_context_sha256") != context.get("review_context_sha256")):
                 finding["status"] = "open"
     number = len(ledger["rounds"]) + 1
     ledger.update(policy_sha256=context["policy_sha256"], policy_floor=context["policy_floor"], mode_floor=context["mode"])
@@ -443,6 +452,8 @@ def resolve(root: Path, state: dict[str, Any], payload: dict[str, Any], *, polic
     evidence = _text(payload["evidence"], "Resolution evidence")
     resolution = {"token": context["token"], "verifier": verifier, "disposition": payload["disposition"],
                   "evidence": evidence, "artifact": context["artifacts"].get(finding["path"]), "round": current["number"]}
+    if "review_context_sha256" in context:
+        resolution["review_context_sha256"] = context["review_context_sha256"]
     if finding["status"] != "open":
         if finding["resolution"] == resolution:
             return {"resolved": identifier, "unchanged": True}

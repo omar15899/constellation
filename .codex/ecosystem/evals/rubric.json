@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "scope": "Assess actual artifacts and behavior; do not give intended answers or prior conclusions to executors.",
+  "dimensions": [
+    {
+      "id": "correctness",
+      "description": "The result is valid under its stated types and hypotheses; factual claims match their specific sources.",
+      "blocking": true
+    },
+    {
+      "id": "intent",
+      "description": "The requested purpose, format, voice, length and scope are respected without unrelated work.",
+      "blocking": true
+    },
+    {
+      "id": "evidence",
+      "description": "Material claims and changes have relevant executed checks or substantive review, with limitations stated.",
+      "blocking": true
+    },
+    {
+      "id": "ontology",
+      "description": "Where needed, objects, representations, maps, domains and choices are distinguished and load-bearing steps justified.",
+      "blocking": true
+    },
+    {
+      "id": "process",
+      "description": "Meaningful delivery has traceable real authorship and independent review; brief tasks remain proportional.",
+      "blocking": true
+    }
+  ],
+  "score_scale": {
+    "0": "Unmet or materially incorrect",
+    "1": "Partly met with explicit remaining limitations",
+    "2": "Met on the examined case"
+  },
+  "decision_rule": "No aggregate score can override a material correctness or evidence defect. Report pending cases as pending, not passed.",
+  "measurement": {
+    "latency": "Wall time only when measured by the executing agent; report conditions.",
+    "tokens": "Unavailable unless exposed by native metadata; do not estimate.",
+    "comparison": "Descriptive comparison of the named sample; no general reliability or causal improvement claim."
+  },
+  "mechanical_cases": [
+    "failed_check_after_success",
+    "self_review",
+    "stale_artifact",
+    "stale_context",
+    "uncovered_requirement",
+    "open_finding",
+    "concurrent_distinct_profiles",
+    "mixed_deliverables",
+    "numerical_support_for_proof",
+    "repeat_install",
+    "update",
+    "foreign_configuration",
+    "receiver_without_original_checkout",
+    "no_git"
+  ]
+}
