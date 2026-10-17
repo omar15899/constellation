@@ -111,12 +111,17 @@ de esa confianza. No edites hashes de confianza ni uses opciones para eludirla.
 
 ## Alcance y límites
 
-La concurrencia se define en [agent-policy.json](agent-policy.json): seis
-subagentes por defecto y ocho en el hub. El primario no cuenta. El comando
+La concurrencia general de Codex se configura en `~/.codex/config.toml` con
+`agents.max_concurrent_threads_per_session = 64`. Las instrucciones globales
+permiten usar hasta ese máximo cuando haga falta; el primario no cuenta.
+La política [agent-policy.json](agent-policy.json) alinea los perfiles nativos
+en 64 para que no prevalezcan los anteriores límites de seis u ocho. El comando
 `python3 .codex/agent_policy.py show` muestra la política efectiva;
 `check` detecta divergencias y `apply --repo RUTA` actualiza únicamente las rutas
 de configuración declaradas en el plan. Reinicia la sesión para cargar cambios.
-No modifica modelo, esfuerzo, permisos, confianza ni configuración global.
+La herramienta de aplicación no modifica modelo, esfuerzo, permisos, confianza
+ni configuración global. Esta última se mantiene por separado; el máximo es
+capacidad disponible, no una obligación de usar todos los agentes.
 [OpenAI Docs: subagentes](https://learn.chatgpt.com/docs/agent-configuration/subagents).
 
 La revisión independiente se aplica a los repositorios nativos registrados

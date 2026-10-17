@@ -116,8 +116,12 @@ push. Solo retira el bloqueo cuando esa evidencia vuelve a ser válida.
 
 ### Presupuesto por repositorio
 
-`agent-policy.json` es la fuente común. `defaults.max_concurrent_threads_per_session`
-vale 6 y `repositories` permite sobrescribirlo por dueño Git; el hub usa 8.
+La configuración general `~/.codex/config.toml` permite hasta 64 subagentes.
+`agent-policy.json` es la fuente común de los perfiles de la constelación:
+`defaults.max_concurrent_threads_per_session` vale 64 y `repositories` permite
+sobrescribirlo por dueño Git. El hub y los hijos nativos usan el mismo máximo,
+sin excepciones iniciales. Las instrucciones globales permiten decidir cuántos
+agentes hacen falta según la tarea.
 Son máximos de subagentes simultáneos, excluido el coordinador, no un objetivo de
 consumo. El cliente puede imponer un límite menor. Una sesión que coordina varios
 repositorios conserva un único límite de ejecución; no suma los presupuestos.

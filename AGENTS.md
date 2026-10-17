@@ -44,8 +44,10 @@ Para arquitectura QuantOS consulta [QUANTOS.md](QUANTOS.md); los cambios de
 investigación respetan el [contrato de promoción](.claude/contracts/promotion_gate.md)
 y las dependencias de tiers. Estas restricciones de dominio siguen vigentes.
 
-El agente principal resuelve el trabajo. Delega subtareas independientes cuando
-ahorren tiempo o aporten una revisión útil, con alcance y archivos claros.
+El agente principal resuelve el trabajo. Puede usar hasta 64 subagentes cuando
+subtareas independientes ahorren tiempo o aporten una revisión útil, con alcance
+y archivos claros. Decide cuántos necesita según la tarea; es capacidad máxima,
+no una cantidad que deba agotar.
 Consulta `.codex/agent_policy.py show` para el presupuesto por repositorio;
 el límite del cliente y de la sesión prevalece y se comparte entre sus tareas.
 No ocupes todos los agentes por obligación ni crees pools por repositorio dentro
