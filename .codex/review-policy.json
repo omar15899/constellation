@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "max_rounds": 3,
+  "modes": {
+    "quick": {"reviewers": 1, "focus": {"correctness": 1}},
+    "standard": {"reviewers": 1, "focus": {"correctness": 1}},
+    "deep": {"reviewers": 2, "focus": {"correctness": 1, "security": 1}}
+  },
+  "documentation_extensions": [".md", ".rst", ".txt"],
+  "documentation_names": ["LICENSE", "NOTICE"],
+  "deep_patterns": [
+    ".codex/**", ".github/**", "**/.codex/**", "**/.github/**",
+    "**/security/**", "**/auth/**", "**/credentials/**", "**/billing/**",
+    "**/install/**", "**/installer/**", "**/installers/**",
+    "security/**", "auth/**", "credentials/**", "billing/**",
+    "install/**", "installer/**", "installers/**",
+    "**/install.*", "install.*", "**/auth.*", "auth.*",
+    "**/security.*", "security.*", "**/billing.*", "billing.*",
+    "**/credentials.*", "credentials.*", "AGENTS.md", "**/AGENTS.md",
+    "REVIEW.md", "**/REVIEW.md", ".claude/**"
+  ]
+}

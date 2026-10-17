@@ -1,0 +1,424 @@
+"""Bounded, revision-specific independent review of declared artifacts.
+
+Reviewer identities are attestations, not cryptographic proof of independence.
+Only publishable engineering evidence belongs in reports: never conversation,
+prompt, command or captured-output text. This module does not spawn agents,
+grant human approval, or replace a repository's CI and deployment controls.
+"""
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+from typing import Any
+
+
+class ReviewError(ValueError):
+    """A review contract is invalid, incomplete or no longer current."""
+
+
+MODES = ("quick", "standard", "deep")
+FOCUS = {"correctness", "security"}
+SEVERITIES = {"critical", "high", "medium", "low"}
+
+
+def _hash(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False).encode()).hexdigest()
+
+
+def _text(value: Any, label: str, limit: int = 12000) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise ReviewError(f"{label} must be nonempty text of at most {limit} characters.")
+    return value.strip()
+
+
+def _integer(value: Any, label: str, low: int = 1, high: int = 64) -> int:
+    if type(value) is not int or not low <= value <= high:
+        raise ReviewError(f"{label} must be an integer from {low} to {high}.")
+    return value
+
+
+def _strings(value: Any, label: str, *, empty: bool = False) -> list[str]:
+    if not isinstance(value, list) or (not value and not empty):
+        raise ReviewError(f"{label} must be a list{' (which may be empty)' if empty else ' with entries'}.")
+    for item in value:
+        _text(item, label, 1000)
+    # A path's whitespace is part of its identity. Validation must never redirect
+    # evidence to another file by normalizing an otherwise legal filename.
+    result = list(value)
+    if len(result) != len(set(result)):
+        raise ReviewError(f"{label} cannot contain duplicates.")
+    return result
+
+
+def _object(value: Any, label: str, required: set[str], optional: set[str] = frozenset()) -> dict[str, Any]:
+    if not isinstance(value, dict) or not required <= value.keys() or value.keys() - required - optional:
+        raise ReviewError(f"{label} has missing or unknown fields.")
+    return value
+
+
+def _read_json(path: Path, label: str) -> Any:
+    if path.is_symlink() or not path.is_file():
+        raise ReviewError(f"{label} must exist as a regular local file: {path}")
+    try:
+        return json.loads(path.read_text())
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ReviewError(f"Cannot read {label}: {type(exc).__name__}.") from None
+
+
+def _validated_policy(value: Any) -> dict[str, Any]:
+    _object(value, "Review policy", {"schema_version", "max_rounds", "modes",
+                                    "documentation_extensions", "documentation_names", "deep_patterns"})
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+        raise ReviewError("Unsupported review policy schema_version.")
+    _integer(value["max_rounds"], "Maximum review rounds", high=10)
+    _object(value["modes"], "Review modes", set(MODES))
+    previous_count = 0
+    previous_focus: dict[str, int] = {}
+    for mode in MODES:
+        config = _object(value["modes"][mode], f"Mode {mode}", {"reviewers", "focus"})
+        count = _integer(config["reviewers"], f"{mode} reviewers")
+        focuses = config["focus"]
+        if not isinstance(focuses, dict) or not focuses or focuses.keys() - FOCUS or "correctness" not in focuses:
+            raise ReviewError(f"Mode {mode} requires correctness focus and only supported focus names.")
+        for name, required in focuses.items():
+            _integer(required, f"{mode}/{name} reviewers", high=count)
+        if count < previous_count or any(focuses.get(name, 0) < required for name, required in previous_focus.items()):
+            raise ReviewError("Higher risk modes cannot reduce reviewer requirements.")
+        previous_count, previous_focus = count, focuses
+    if "security" not in value["modes"]["deep"]["focus"]:
+        raise ReviewError("Deep review requires security focus.")
+    for key in ("documentation_extensions", "documentation_names", "deep_patterns"):
+        _strings(value[key], key, empty=key != "deep_patterns")
+    if any(not extension.startswith(".") or "/" in extension for extension in value["documentation_extensions"]):
+        raise ReviewError("Documentation extensions must be filename suffixes beginning with a dot.")
+    return value
+
+
+def _policy_floor(policy: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
+    """Configuration changes may strengthen an active task, never weaken it."""
+    if previous is None:
+        return {**policy, **{name: sorted(policy[name]) for name in
+                            ("documentation_extensions", "documentation_names", "deep_patterns")}}
+    _validated_policy(previous)
+    result = {**policy, "max_rounds": min(policy["max_rounds"], previous["max_rounds"]), "modes": {}}
+    for mode in MODES:
+        current, old = policy["modes"][mode], previous["modes"][mode]
+        result["modes"][mode] = {"reviewers": max(current["reviewers"], old["reviewers"]),
+                                 "focus": {focus: max(current["focus"].get(focus, 0), old["focus"].get(focus, 0))
+                                           for focus in current["focus"].keys() | old["focus"].keys()}}
+    for name in ("documentation_extensions", "documentation_names"):
+        result[name] = sorted(set(policy[name]) & set(previous[name]))
+    result["deep_patterns"] = sorted(set(policy["deep_patterns"]) | set(previous["deep_patterns"]))
+    return _validated_policy(result)
+
+
+def policy_for(root: Path, *, policy_path: Path | None = None) -> dict[str, Any] | None:
+    """Load central policy for registered native Git owners; inject a path in tests.
+
+    Missing or invalid installed configuration fails closed. Repositories outside
+    this hub, unregistered children and external repositories keep their own rules.
+    """
+    root = root.resolve()
+    if policy_path is not None:
+        return _validated_policy(_read_json(Path(policy_path), "review policy"))
+    hub = Path(__file__).resolve().parents[1]
+    try:
+        name = root.relative_to(hub).as_posix()
+    except ValueError:
+        return None
+    registry = _read_json(hub / ".codex/repositories.json", "repository registry")
+    if not isinstance(registry, dict) or not isinstance(registry.get("repositories"), list):
+        raise ReviewError("Invalid repository registry.")
+    matching = [entry for entry in registry["repositories"]
+                if isinstance(entry, dict) and entry.get("path") == name]
+    if not matching:
+        return None
+    if len(matching) != 1 or matching[0].get("management") not in {"native", "external"}:
+        raise ReviewError("Invalid or duplicate repository registration.")
+    if matching[0]["management"] == "external":
+        return None
+    try:
+        actual = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root,
+                                capture_output=True, text=True, timeout=25, check=True)
+    except (OSError, subprocess.SubprocessError):
+        raise ReviewError("Cannot verify the registered native repository owner.") from None
+    if Path(actual.stdout.strip()).resolve() != root:
+        raise ReviewError("The registered native path is not its actual Git repository root.")
+    return _validated_policy(_read_json(hub / ".codex/review-policy.json", "review policy"))
+
+
+def _path(root: Path, name: str) -> Path:
+    path = Path(name)
+    parts = path.parts
+    lower = name.lower()
+    if (not parts or path.is_absolute() or ".." in parts or path.as_posix() != name
+            or any(part.lower() in {".git", ".ssh", "secrets", "conversations", "rollouts",
+                                   "archived_sessions", "turn_states", ".sync_state", ".codex_notuse"}
+                   for part in parts)
+            or any(part.lower() == ".env" or part.lower().startswith(".env.") for part in parts)
+            or "conversation_archive" in lower or "_conversations/" in lower or "_daemon." in lower
+            or lower.startswith((".codex/sessions/", ".codex/log/", ".codex/state/", ".codex/cache/",
+                                 ".claude/cache/", ".claude/run/", "docs/sk_runs/"))
+            or path.name.lower().startswith("rollout-")
+            or path.name.lower() in {"auth.json", "credentials.json", "secrets.json", ".netrc", "id_rsa", "id_ed25519"}
+            or lower.endswith((".pem", ".key", ".p12", ".pfx", ".jsonl"))):
+        raise ReviewError(f"Invalid or private review path: {name}")
+    target = root / path
+    if any((root / parent).is_symlink() for parent in path.parents) or not target.parent.resolve().is_relative_to(root):
+        raise ReviewError(f"Review path traverses a symlink or escapes its repository: {name}")
+    return target
+
+
+def _artifacts(root: Path, paths: list[str], deletions: list[str]) -> dict[str, Any]:
+    result = {}
+    for name in sorted(paths):
+        target = _path(root, name)
+        try:
+            info = target.lstat()
+        except FileNotFoundError:
+            result[name] = None
+            continue
+        if stat.S_ISLNK(info.st_mode):
+            if name not in deletions:
+                raise ReviewError(f"Review artifact is a symlink: {name}")
+            result[name] = {"sha256": hashlib.sha256(os.readlink(target).encode()).hexdigest(), "mode": "120000"}
+        elif stat.S_ISREG(info.st_mode):
+            result[name] = {"sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                            "mode": "100755" if info.st_mode & 0o100 else "100644"}
+        else:
+            raise ReviewError(f"Review artifact must be a regular file: {name}")
+    return result
+
+
+def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = None) -> dict[str, Any]:
+    """Return the exact context required for the next independent review."""
+    policy = policy_for(root, policy_path=policy_path)
+    if policy is None:
+        if state.get("review_gate"):
+            raise ReviewError("An active review cannot be disabled by changing repository registration.")
+        return {"enabled": False}
+    policy_hash = _hash(policy)
+    ledger = state.get("review_gate")
+    policy = _policy_floor(policy, ledger.get("policy_floor") if isinstance(ledger, dict) else None)
+    root = root.resolve()
+    requirements = _strings(state.get("requirements"), "Requirements")
+    paths = _strings(state.get("paths"), "Review paths", empty=True)
+    deletions = _strings(state.get("deletions", []), "Review deletions", empty=True)
+    if not set(deletions) <= set(paths):
+        raise ReviewError("Review deletions must be a subset of review paths.")
+    if not paths:
+        if ledger:
+            raise ReviewError("An active review cannot become read-only by withdrawing its entire scope.")
+        return {"enabled": False, "reason": "read-only scope"}
+    artifacts = _artifacts(root, paths, deletions)
+    deep = any(fnmatch.fnmatchcase(path.lower(), pattern.lower())
+               for path in paths for pattern in policy["deep_patterns"])
+    docs_only = all(Path(path).suffix.lower() in policy["documentation_extensions"]
+                    or Path(path).name in policy["documentation_names"] for path in paths)
+    mode = "deep" if deep else "quick" if docs_only else "standard"
+    risk_floor = state.get("review_risk", "quick")
+    previous_mode = ledger.get("mode_floor", "quick") if isinstance(ledger, dict) else "quick"
+    if risk_floor not in MODES or previous_mode not in MODES:
+        raise ReviewError("Review risk must be quick, standard or deep.")
+    mode = max((mode, risk_floor, previous_mode), key=MODES.index)
+    token = _hash({"repository": str(root), "author": state.get("author"),
+                   "task_started": state.get("started"), "initial_head": state.get("initial_head"),
+                   "policy": policy_hash, "policy_floor": _hash(policy), "mode": mode,
+                   "requirements": requirements, "paths": sorted(paths),
+                   "deletions": sorted(deletions), "artifacts": artifacts})
+    return {"enabled": True, "token": token, "mode": mode, "policy_sha256": policy_hash,
+            "policy_floor": policy,
+            "required_reviewers": policy["modes"][mode]["reviewers"],
+            "required_focus": policy["modes"][mode]["focus"], "max_rounds": policy["max_rounds"],
+            "paths": paths, "deletions": deletions, "artifacts": artifacts,
+            "identity_assurance": "declared identities; not cryptographically authenticated"}
+
+
+def _ledger(state: dict[str, Any], context: dict[str, Any], *, allow_policy_change: bool = False) -> dict[str, Any]:
+    ledger = state.get("review_gate")
+    if not isinstance(ledger, dict) or ledger.get("schema_version") != 1 or not isinstance(ledger.get("rounds"), list) or not isinstance(ledger.get("findings"), dict):
+        raise ReviewError("Start an independent review before submitting evidence or publishing.")
+    if not allow_policy_change and ledger.get("policy_sha256") != context["policy_sha256"]:
+        raise ReviewError("Review policy changed during this task; start a fresh round under its retained policy floor.")
+    return ledger
+
+
+def _current(state: dict[str, Any], context: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    ledger = _ledger(state, context)
+    if not ledger["rounds"] or ledger["rounds"][-1]["token"] != context["token"]:
+        raise ReviewError("Independent review is missing or stale; start a round for the current artifacts.")
+    return ledger, ledger["rounds"][-1]
+
+
+def _author(state: dict[str, Any]) -> str:
+    return _text(state.get("author"), "Task author identity", 128)
+
+
+def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None) -> dict[str, Any]:
+    context = prepare(root, state, policy_path=policy_path)
+    if not context["enabled"]:
+        return context
+    author = _author(state)
+    for path, artifact in context["artifacts"].items():
+        if (path in context["deletions"]) != (artifact is None):
+            raise ReviewError(f"Complete the declared artifact or deletion before review: {path}")
+    ledger = state.get("review_gate")
+    if ledger is None:
+        ledger = {"schema_version": 1, "policy_sha256": context["policy_sha256"],
+                  "policy_floor": context["policy_floor"], "mode_floor": context["mode"],
+                  "author": author, "rounds": [], "findings": {}}
+    else:
+        ledger = _ledger(state, context, allow_policy_change=True)
+    if ledger["author"] != author:
+        raise ReviewError("Task author identity changed during independent review.")
+    if ledger["rounds"] and ledger["rounds"][-1]["token"] == context["token"]:
+        return {**context, "round": ledger["rounds"][-1]["number"], "unchanged": True}
+    if len(ledger["rounds"]) >= context["max_rounds"]:
+        raise ReviewError("Independent review round limit reached; reconsider the approach and report the unresolved blocker.")
+    for finding in ledger["findings"].values():
+        if finding["status"] != "open" and finding["resolution"]["artifact"] != context["artifacts"].get(finding["path"]):
+            finding["status"] = "open"
+    number = len(ledger["rounds"]) + 1
+    ledger.update(policy_sha256=context["policy_sha256"], policy_floor=context["policy_floor"], mode_floor=context["mode"])
+    ledger["rounds"].append({"number": number, "token": context["token"], "mode": context["mode"], "reports": {}})
+    state["review_gate"] = ledger
+    state["review"] = None
+    state["finished"] = None
+    return {**context, "round": number, "unchanged": False}
+
+
+def _finding(value: Any, paths: list[str]) -> dict[str, Any]:
+    required = {"id", "path", "line", "severity", "origin", "scenario", "consequence", "evidence"}
+    _object(value, "Finding", required)
+    finding = {key: _text(value[key], f"Finding {key}", 96 if key == "id" else 12000)
+               for key in required - {"line", "path"}}
+    _text(value["path"], "Finding path", 1000)
+    finding["path"] = value["path"]
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", finding["id"]):
+        raise ReviewError("Finding ID must be a stable identifier containing letters, numbers, dots, colons, underscores or dashes.")
+    finding["line"] = _integer(value["line"], "Finding line", high=10000000)
+    if finding["path"] not in paths:
+        raise ReviewError("Finding path must be a declared review artifact.")
+    if finding["severity"] not in SEVERITIES:
+        raise ReviewError("Finding severity must describe an actionable bug; style and nit findings are excluded.")
+    if finding["origin"] not in {"introduced", "preexisting"}:
+        raise ReviewError("Finding origin must be introduced or preexisting.")
+    return finding
+
+
+def report(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy_path: Path | None = None) -> dict[str, Any]:
+    context = prepare(root, state, policy_path=policy_path)
+    if not context["enabled"]:
+        raise ReviewError("Independent review policy is not enabled for this repository.")
+    ledger, current = _current(state, context)
+    _object(payload, "Review report", {"token", "reviewer", "role", "focus", "paths", "summary", "evidence", "findings"})
+    reviewer = _text(payload["reviewer"], "Reviewer identity", 128)
+    if reviewer == _author(state) or ledger["author"] != _author(state):
+        raise ReviewError("Independent reviewer must differ from the frozen task author.")
+    if payload["token"] != context["token"]:
+        raise ReviewError("Report revision token is stale.")
+    if payload["role"] != "reviewer":
+        raise ReviewError("Review report role must be reviewer.")
+    focus = _strings(payload["focus"], "Review focus")
+    if set(focus) - FOCUS:
+        raise ReviewError("Unsupported review focus.")
+    paths = _strings(payload["paths"], "Reviewed paths", empty=not context["paths"])
+    if not set(paths) <= set(context["paths"]):
+        raise ReviewError("Reviewed paths must belong to this review's declared scope.")
+    if not isinstance(payload["findings"], list):
+        raise ReviewError("Report findings must be a list.")
+    findings = [_finding(value, paths) for value in payload["findings"]]
+    if len({finding["id"] for finding in findings}) != len(findings):
+        raise ReviewError("A report cannot duplicate finding IDs.")
+    normalized = {"token": context["token"], "reviewer": reviewer, "role": "reviewer",
+                  "focus": sorted(focus), "paths": sorted(paths),
+                  "summary": _text(payload["summary"], "Review summary"),
+                  "evidence": _text(payload["evidence"], "Review evidence"), "findings": findings}
+    existing_report = current["reports"].get(reviewer)
+    if existing_report is not None:
+        if existing_report != normalized:
+            raise ReviewError("A reviewer already submitted a different report for this revision.")
+        return {"accepted": True, "unchanged": True, "round": current["number"]}
+    for finding in findings:
+        existing = ledger["findings"].get(finding["id"])
+        if existing and (existing["path"] != finding["path"] or existing["origin"] != finding["origin"]):
+            raise ReviewError("A stable finding ID cannot be reassigned to another path or origin.")
+        if existing and existing["status"] != "open":
+            raise ReviewError("Do not repeat a resolved finding; use a new ID for a distinct regression.")
+    # Validate the entire payload before changing state: malformed reports cannot
+    # leave partial findings or consume a reviewer slot.
+    for finding in findings:
+        existing = ledger["findings"].get(finding["id"])
+        if existing:
+            existing["discoverers"] = sorted(set(existing["discoverers"]) | {reviewer})
+        else:
+            ledger["findings"][finding["id"]] = {**finding, "discoverers": [reviewer],
+                                                     "status": "open", "first_token": context["token"],
+                                                     "resolution": None, "resolutions": []}
+    current["reports"][reviewer] = normalized
+    state["review"] = None
+    state["finished"] = None
+    return {"accepted": True, "unchanged": False, "round": current["number"], "findings": len(findings)}
+
+
+def resolve(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy_path: Path | None = None) -> dict[str, Any]:
+    context = prepare(root, state, policy_path=policy_path)
+    if not context["enabled"]:
+        raise ReviewError("Independent review policy is not enabled for this repository.")
+    ledger, current = _current(state, context)
+    _object(payload, "Finding resolution", {"token", "id", "verifier", "disposition", "evidence"})
+    if payload["token"] != context["token"]:
+        raise ReviewError("Resolution revision token is stale.")
+    identifier = _text(payload["id"], "Finding ID", 96)
+    finding = ledger["findings"].get(identifier)
+    if finding is None:
+        raise ReviewError("Cannot resolve an unknown finding.")
+    verifier = _text(payload["verifier"], "Verifier identity", 128)
+    if verifier in finding["discoverers"] or verifier == _author(state) or ledger["author"] != _author(state):
+        raise ReviewError("Resolution needs a verifier distinct from the author and every finding discoverer.")
+    if payload["disposition"] not in {"fixed", "dismissed"}:
+        raise ReviewError("Resolution disposition must be fixed or dismissed.")
+    evidence = _text(payload["evidence"], "Resolution evidence")
+    resolution = {"token": context["token"], "verifier": verifier, "disposition": payload["disposition"],
+                  "evidence": evidence, "artifact": context["artifacts"].get(finding["path"]), "round": current["number"]}
+    if finding["status"] != "open":
+        if finding["resolution"] == resolution:
+            return {"resolved": identifier, "unchanged": True}
+        raise ReviewError("Finding already has a different resolution.")
+    finding["status"] = payload["disposition"]
+    finding["resolution"] = resolution
+    finding["resolutions"].append(resolution)
+    state["review"] = None
+    state["finished"] = None
+    return {"resolved": identifier, "unchanged": False}
+
+
+def validate(root: Path, state: dict[str, Any], *, policy_path: Path | None = None) -> None:
+    context = prepare(root, state, policy_path=policy_path)
+    if not context["enabled"]:
+        return
+    ledger, current = _current(state, context)
+    if ledger["author"] != _author(state):
+        raise ReviewError("Task author identity changed during independent review.")
+    reports = current["reports"]
+    if len(reports) < context["required_reviewers"]:
+        raise ReviewError(f"Independent {context['mode']} review needs {context['required_reviewers']} distinct reviewers.")
+    for focus, required in context["required_focus"].items():
+        if sum(focus in item["focus"] for item in reports.values()) < required:
+            raise ReviewError(f"Independent review needs {required} distinct reviewers with {focus} focus.")
+        covered_focus = {path for item in reports.values() if focus in item["focus"] for path in item["paths"]}
+        if covered_focus != set(context["paths"]):
+            raise ReviewError(f"Independent {focus} reports do not cover every declared review artifact.")
+    covered = {path for item in reports.values() for path in item["paths"]}
+    if covered != set(context["paths"]):
+        raise ReviewError("Independent reports do not cover every declared review artifact.")
+    opened = sorted(identifier for identifier, finding in ledger["findings"].items() if finding["status"] == "open")
+    if opened:
+        raise ReviewError(f"Unresolved independent review findings: {', '.join(opened)}")

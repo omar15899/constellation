@@ -120,6 +120,152 @@ class GitFixture(unittest.TestCase):
         with self.assertRaisesRegex(w.Blocked, "passing check"):
             self.flow.review({"works": "old evidence"})
 
+    def test_configuration_and_javascript_require_checks(self):
+        for name in ("settings.toml", "app.ts", "schema.sql"):
+            with self.subTest(path=name):
+                self.flow.begin("config")
+                self.flow.plan({"requirements": ["works"], "paths": [name]})
+                (self.root / name).write_text("fixture\n")
+                with self.assertRaisesRegex(w.Blocked, "passing check"):
+                    self.flow.review({"works": "Read the configuration."})
+
+    def test_later_check_failure_supersedes_success_on_identical_artifacts(self):
+        import sys
+        self.flow.begin("checks")
+        self.flow.plan({"requirements": ["works"], "paths": ["app.py"]})
+        (self.root / "app.py").write_text("pass\n")
+        flag = self.base / "flag"
+        command = [sys.executable, "-c", "import pathlib,sys;sys.exit(pathlib.Path(sys.argv[1]).exists())", str(flag)]
+        with patch("sys.stdout", new=io.StringIO()):
+            self.flow.check(command)
+            flag.touch()
+            with self.assertRaisesRegex(w.Blocked, "Check failed"):
+                self.flow.check(command)
+            with self.assertRaisesRegex(w.Blocked, "still failing"):
+                self.flow.review({"works": "Old success must not count."})
+            flag.unlink()
+            self.flow.check(command)
+        self.flow.review({"works": "The same check now passes."})
+
+    def test_unlaunchable_check_is_recorded_as_failure(self):
+        self.flow.begin("launch")
+        self.flow.plan({"requirements": ["works"], "paths": ["app.py"]})
+        (self.root / "app.py").write_text("pass\n")
+        with patch("sys.stderr", new=io.StringIO()):
+            with self.assertRaisesRegex(w.Blocked, "Check failed"):
+                self.flow.check([str(self.base / "missing-executable")])
+        self.assertEqual(self.flow.load()["checks"][-1]["exit_code"], -1)
+
+    def test_check_timeout_is_bounded_and_recorded(self):
+        self.flow.begin("bounded checks")
+        self.flow.plan({"requirements": ["works"], "paths": []})
+        for timeout in (0, 3601, True):
+            with self.assertRaisesRegex(w.Blocked, "timeout must"):
+                self.flow.check(["git", "diff", "--check"], timeout=timeout)
+        with patch("sys.stdout", new=io.StringIO()):
+            record = self.flow.check(["git", "diff", "--check"], timeout=10)
+        self.assertEqual(record["timeout_seconds"], 10)
+
+    def test_non_utf8_failure_cannot_reuse_previous_success(self):
+        import sys
+        self.flow.begin("binary output")
+        self.flow.plan({"requirements": ["works"], "paths": ["app.py"]})
+        (self.root / "app.py").write_text("pass\n")
+        flag = self.base / "binary-failure"
+        command = [sys.executable, "-c",
+                   "import pathlib,sys; fail=pathlib.Path(sys.argv[1]).exists(); "
+                   "sys.stdout.buffer.write(bytes([255]) if fail else b'ok'); sys.exit(int(fail))", str(flag)]
+        with patch("sys.stdout", new=io.StringIO()):
+            self.flow.check(command)
+            self.flow.review({"works": "The check passed."})
+            flag.touch()
+            with self.assertRaisesRegex(w.Blocked, "Check failed"):
+                self.flow.check(command)
+        state = self.flow.load()
+        self.assertIsNone(state["review"])
+        self.assertEqual(state["checks"][-1]["exit_code"], 1)
+        self.assertEqual(state["checks"][-1]["output_sha256"], w.digest(bytes([255])))
+        with self.assertRaisesRegex(w.Blocked, "still failing"):
+            self.flow.review({"works": "Old success is not valid."})
+
+    def test_unsafe_artifact_after_check_cannot_revive_previous_success(self):
+        import sys
+        self.flow.begin("unsafe output")
+        self.flow.plan({"requirements": ["works"], "paths": ["app.py"]})
+        path = self.root / "app.py"
+        path.write_text("pass\n")
+        flag = self.base / "unsafe-failure"
+        command = [sys.executable, "-c",
+                   "import pathlib,sys; p=pathlib.Path('app.py'); fail=pathlib.Path(sys.argv[1]).exists(); "
+                   "p.unlink() if fail else None; p.symlink_to(sys.argv[1]) if fail else None; sys.exit(int(fail))",
+                   str(flag)]
+        with patch("sys.stdout", new=io.StringIO()):
+            self.flow.check(command)
+            self.flow.review({"works": "Check passed."})
+            flag.touch()
+            with self.assertRaisesRegex(w.Blocked, "Check failed"):
+                self.flow.check(command)
+        path.unlink()
+        path.write_text("pass\n")
+        self.assertTrue(self.flow.load()["checks"][-1]["changed_during_check"])
+        with self.assertRaisesRegex(w.Blocked, "still failing"):
+            self.flow.review({"works": "Restored bytes do not revive a failed run."})
+
+    def test_snapshot_executable_mode_matches_git_owner_bit(self):
+        self.flow.begin("git modes")
+        self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+        path = self.root / "answer.md"
+        path.write_text("answer\n")
+        for mode in (0o654, 0o744):
+            path.chmod(mode)
+            w.git(self.root, "add", "answer.md")
+            self.assertEqual(w.snapshot(self.root, ["answer.md"]), w.stored_snapshot(self.root, ["answer.md"]))
+
+    def test_permission_change_invalidates_review(self):
+        self.task()
+        (self.root / "answer.md").chmod(0o755)
+        with self.assertRaisesRegex(w.Blocked, "stale review"):
+            self.flow.commit(["answer.md"], "Change reviewed permissions")
+
+    def test_independent_gate_blocks_review_and_publication(self):
+        engine = w.review_engine()
+        self.flow.begin("independent")
+        self.flow.plan({"requirements": ["answer is present"], "paths": ["answer.md"]})
+        (self.root / "answer.md").write_text("answer\n")
+        with patch.object(engine, "validate", side_effect=engine.ReviewError("Open independent finding")):
+            with self.assertRaisesRegex(w.Blocked, "Open independent"):
+                self.flow.review({"answer is present": "Read it."})
+        self.flow.review({"answer is present": "Read it."})
+        head = w.git(self.root, "rev-parse", "HEAD")
+        with patch.object(engine, "validate", side_effect=engine.ReviewError("Stale independent review")):
+            with self.assertRaisesRegex(w.Blocked, "Stale independent"):
+                self.flow.commit(["answer.md"], "Add answer")
+        self.assertEqual(w.git(self.root, "rev-parse", "HEAD"), head)
+
+    def test_primary_session_cannot_review_or_verify_its_own_task(self):
+        engine = w.review_engine()
+        policy = json.loads((MODULE.parent / "review-policy.json").read_text())
+        self.flow.begin("identities")
+        self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+        (self.root / "answer.md").write_text("answer\n")
+        with patch.object(engine, "policy_for", return_value=policy):
+            context = self.flow.review_operation("start")
+            report = {"token": context["token"], "reviewer": "test-session", "role": "reviewer",
+                      "focus": ["correctness"], "paths": ["answer.md"],
+                      "summary": "0 findings", "evidence": "Inspected the declared answer.", "findings": []}
+            self.assertEqual(self.flow.load()["author"], "test-session")
+            with self.assertRaisesRegex(w.Blocked, "differ.*author"):
+                self.flow.review_operation("report", report)
+            report["reviewer"] = "independent-reviewer"
+            report["findings"] = [{"id": "answer-defect", "path": "answer.md", "line": 1,
+                                   "severity": "medium", "origin": "introduced", "scenario": "Empty answer.",
+                                   "consequence": "Missing requested content.", "evidence": "Inspected first line."}]
+            self.flow.review_operation("report", report)
+            with self.assertRaisesRegex(w.Blocked, "distinct.*author"):
+                self.flow.review_operation("resolve", {"token": context["token"], "id": "answer-defect",
+                                                       "verifier": "test-session", "disposition": "dismissed",
+                                                       "evidence": "The author cannot verify this."})
+
     def test_unrelated_staged_work_is_preserved(self):
         self.task()
         (self.root / "other.md").write_text("not ours\n")
@@ -359,6 +505,8 @@ class GitFixture(unittest.TestCase):
         with self.assertRaisesRegex(w.Blocked, "still exists"):
             self.flow.review({"remove legacy link": "not yet removed"})
         (self.root / "legacy").unlink()
+        with patch("sys.stdout", new=io.StringIO()):
+            self.flow.check(["git", "diff", "--check"])
         self.flow.review({"remove legacy link": "Only the tracked symlink was removed."})
         self.flow.commit(["legacy"], "Remove old link")
         self.assertTrue(self.flow.finish()["completed"])

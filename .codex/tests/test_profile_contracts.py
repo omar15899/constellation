@@ -3,13 +3,17 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import unittest
 
 HUB = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(HUB / '.codex'))
+from agent_policy import AgentPolicy, KEY
 
 
 class ProfileContracts(unittest.TestCase):
     def test_installed_profiles(self):
+        policy = AgentPolicy(HUB, 'profile-contract-read-only')
         registry = json.loads((HUB / '.codex/repositories.json').read_text())
         self.assertEqual(registry['schema_version'], 1)
         entries = registry['repositories']
@@ -32,8 +36,10 @@ class ProfileContracts(unittest.TestCase):
                 self.assertIn('workspace.py', agents)
                 if entry['path'] != '.':
                     config = (root / '.codex/config.toml').read_text()
-                    self.assertFalse([line for line in config.splitlines()
-                                      if line.strip() and not line.lstrip().startswith('#')])
+                    active_lines = [line.strip() for line in config.splitlines()
+                                    if line.strip() and not line.lstrip().startswith('#')]
+                    expected = policy.policy['repositories'].get(entry['path'], policy.policy['defaults'])[KEY]
+                    self.assertEqual(active_lines, ['[agents]', f'{KEY} = {expected}'])
                     self.assertIn('Invariantes', (root / '.codex/PROJECT.md').read_text())
                     for obsolete in ('hooks.json', 'hook_shim.py', 'MANIFEST.json'):
                         self.assertFalse((root / '.codex' / obsolete).exists())
@@ -47,6 +53,7 @@ class ProfileContracts(unittest.TestCase):
                         if '://' not in link and not link.startswith('#'):
                             self.assertTrue((source.parent / link.split('#', 1)[0]).exists(),
                                             f'{source}: missing {link}')
+        self.assertTrue(policy.inspect()['matches'], 'Native concurrency configs drifted from agent-policy.json')
 
 
 if __name__ == '__main__':

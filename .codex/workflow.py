@@ -11,6 +11,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,23 @@ from typing import Any, Iterator
 
 class Blocked(RuntimeError):
     """A condition requiring correction before publication or completion."""
+
+
+def review_engine():
+    """Load the sibling engine also when this module is loaded by file path."""
+    name = "constellation_review_gate"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("review_gate.py"))
+        if spec is None or spec.loader is None:
+            raise Blocked("Independent review engine is unavailable.")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(name, None)
+            raise
+    return sys.modules[name]
 
 
 def run(root: Path, *args: str, timeout: int = 25, extra_env: dict[str, str] | None = None) -> str:
@@ -108,7 +126,8 @@ def snapshot(root: Path, paths: list[str], deletions: list[str] = ()) -> dict[st
         if target.is_symlink():
             result[p] = "symlink:" + digest(os.readlink(target).encode())
         else:
-            result[p] = digest(target.read_bytes()) if target.is_file() else None
+            mode = "100755:" if target.is_file() and target.stat().st_mode & 0o100 else "100644:"
+            result[p] = mode + digest(target.read_bytes()) if target.is_file() else None
     return result
 
 
@@ -193,7 +212,7 @@ def stored_snapshot(root: Path, paths: list[str], revision: str | None = None) -
                               capture_output=True, timeout=25)
         if blob.returncode:
             raise Blocked("Could not verify a selected Git blob against the review.")
-        result[name] = ("symlink:" if mode == "120000" else "") + digest(blob.stdout)
+        result[name] = ("symlink:" if mode == "120000" else mode + ":") + digest(blob.stdout)
     return result
 
 
@@ -218,6 +237,7 @@ def outgoing_gate(root: Path, local: str, remote_sha: str) -> None:
 class Workflow:
     def __init__(self, root: Path, session: str):
         self.root = root.resolve()
+        self.session = session
         self.home = Path(git(root, "rev-parse", "--path-format=absolute", "--git-path", "constellation"))
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.key = digest(session.encode())[:24]
@@ -251,7 +271,8 @@ class Workflow:
             (history / f"{self.key}-{digest(old)[:16]}.json").write_bytes(old)
         state: dict[str, Any] = {"turn": turn, "started": now(), "initial_head": git(self.root, "rev-parse", "HEAD"),
                                  "baseline_dirty": sorted(changed(self.root)), "requirements": [],
-                                 "paths": [], "checks": [], "commits": [], "stop_attempts": 0}
+                                 "paths": [], "checks": [], "commits": [], "stop_attempts": 0,
+                                 "author": self.session}
         try:
             state["target"] = publication_target(self.root)
             state["sync"] = sync(self.root)
@@ -278,6 +299,7 @@ class Workflow:
 
     def plan(self, spec: dict[str, Any]) -> dict[str, Any]:
         state = self.load()
+        self.identify_author(state)
         requirements = spec.get("requirements")
         if not isinstance(requirements, list) or not requirements or not all(isinstance(r, str) and r.strip() for r in requirements):
             raise Blocked("Plan requires a nonempty list of observable requirements.")
@@ -324,22 +346,79 @@ class Workflow:
         self.log("plan", requirements=len(requirements), paths=paths)
         return state
 
-    def check(self, command: list[str]) -> dict[str, Any]:
+    def check(self, command: list[str], *, timeout: int = 300) -> dict[str, Any]:
         state = self.load()
+        if not command:
+            raise Blocked("check needs a command after --.")
+        if type(timeout) is not int or not 1 <= timeout <= 3600:
+            raise Blocked("Check timeout must be an integer between 1 and 3600 seconds.")
         before = snapshot(self.root, state["paths"], state.get("deletions", []))
-        result = subprocess.run(command, cwd=self.root, capture_output=True, text=True, timeout=300)
-        after = snapshot(self.root, state["paths"], state.get("deletions", []))
-        record = {"command_sha256": digest(json.dumps(command).encode()), "exit_code": result.returncode, "at": now(),
-                  "snapshot": before, "changed_during_check": before != after,
-                  "output_sha256": digest((result.stdout + result.stderr).encode())}
+        record = {"command_sha256": digest(json.dumps(command).encode()), "exit_code": -1, "at": now(),
+                  "timeout_seconds": timeout, "snapshot": before, "changed_during_check": False,
+                  "output_sha256": digest(b""), "completed": False}
+        # Persist a failing attempt before execution. Interruption or failure to
+        # inspect a mutated artifact can never revive an earlier successful run.
         state["checks"].append(record)
         state["review"] = None
+        state["finished"] = None
         self.save(state)
-        print(result.stdout, end="")
-        print(result.stderr, end="", file=sys.stderr)
+        try:
+            result = subprocess.run(command, cwd=self.root, capture_output=True, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            # An unlaunchable or timed-out check must supersede its old success.
+            result = subprocess.CompletedProcess(command, -1, b"", type(exc).__name__.encode())
+        try:
+            after = snapshot(self.root, state["paths"], state.get("deletions", []))
+        except (Blocked, OSError):
+            after = None
+        record.update(exit_code=result.returncode, changed_during_check=before != after,
+                      output_sha256=digest(result.stdout + result.stderr), completed=True)
+        self.save(state)
+        print(result.stdout.decode("utf-8", errors="replace"), end="")
+        print(result.stderr.decode("utf-8", errors="replace"), end="", file=sys.stderr)
         if result.returncode or before != after:
             raise Blocked("Check failed or modified a declared artifact; correct and rerun it.")
         return record
+
+    def review_operation(self, operation: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        if operation not in {"prepare", "start", "report", "resolve"}:
+            raise Blocked("Unknown independent review operation.")
+        state = self.load()
+        self.identify_author(state)
+        self.ensure_target(state)
+        engine = review_engine()
+        try:
+            if operation == "start" and payload and payload.get("risk"):
+                levels = ("quick", "standard", "deep")
+                risk = payload["risk"]
+                if risk not in levels:
+                    raise Blocked("Risk must be quick, standard or deep.")
+                previous = state.get("review_risk", "quick")
+                if levels.index(risk) < levels.index(previous):
+                    raise Blocked("The risk floor cannot be lowered during an active task.")
+                state["review_risk"] = risk
+            function = getattr(engine, operation)
+            result = function(self.root, state, payload) if operation in {"report", "resolve"} else function(self.root, state)
+        except engine.ReviewError as exc:
+            raise Blocked(str(exc)) from exc
+        if operation != "prepare":
+            state.update(review=None, finished=None)
+            self.save(state)
+            self.log("independent_review_" + operation)
+        return result
+
+    def identify_author(self, state: dict[str, Any]) -> None:
+        # Session IDs and reviewer IDs use the same declared representation.
+        # Upgrade earlier, not-yet-reviewed contracts without touching a ledger.
+        if not state.get("review_gate") and state.get("author") in {None, self.key}:
+            state["author"] = self.session
+
+    def independent_reviewed(self, state: dict[str, Any]) -> None:
+        engine = review_engine()
+        try:
+            engine.validate(self.root, state)
+        except engine.ReviewError as exc:
+            raise Blocked(str(exc)) from exc
 
     def review(self, evidence: dict[str, Any]) -> dict[str, Any]:
         state = self.load()
@@ -358,10 +437,17 @@ class Workflow:
             errors = validate_blob(self.root, p, (self.root / p).read_bytes())
             if errors:
                 raise Blocked("\n".join(errors))
-        code = [p for p in state["paths"] if p.endswith((".py", ".sh")) or p.startswith(".codex/git-hooks/")]
-        if code and not any(c["exit_code"] == 0 and not c["changed_during_check"]
-                            and all(c["snapshot"].get(p) == current[p] for p in code) for c in state["checks"]):
+        # Each command's latest result supersedes its older success, including
+        # a failure on identical bytes. A changed artifact requires a fresh run.
+        latest = {c["command_sha256"]: c for c in state["checks"]}
+        required = [p for p in state["paths"] if not p.endswith((".md", ".rst", ".txt"))]
+        passing = [c for c in latest.values() if c["exit_code"] == 0 and not c["changed_during_check"]
+                   and all(c["snapshot"].get(p) == current[p] for p in required)]
+        if any(c["exit_code"] != 0 or c["changed_during_check"] for c in latest.values()):
+            raise Blocked("A check is still failing; rerun that check successfully before review.")
+        if required and not passing:
             raise Blocked("Code changes need a passing check recorded against the current artifacts.")
+        self.independent_reviewed(state)
         state["review"] = {"at": now(), "evidence": evidence, "snapshot": current,
                            "kind": "model_semantic_review_with_mechanical_validation"}
         state["finished"] = None
@@ -372,6 +458,7 @@ class Workflow:
     def reviewed(self, state: dict[str, Any]) -> None:
         if not state.get("review") or state["review"]["snapshot"] != snapshot(self.root, state["paths"], state.get("deletions", [])):
             raise Blocked("Missing or stale review. Compare the actual result with every requirement.")
+        self.independent_reviewed(state)
 
     def guard_patch(self, payload: dict[str, Any], cwd: Path) -> None:
         state = self.load()
@@ -611,10 +698,16 @@ def main() -> int:
     sub.add_parser("begin").add_argument("--turn", default="manual")
     sub.add_parser("plan")
     sub.add_parser("review")
+    for name in ("review-context", "review-start", "review-report", "review-resolve"):
+        command = sub.add_parser(name)
+        if name == "review-start":
+            command.add_argument("--risk", choices=("quick", "standard", "deep"))
     sub.add_parser("status")
     sub.add_parser("finish")
     sub.add_parser("recover").add_argument("expected_head")
-    sub.add_parser("check").add_argument("argv", nargs=argparse.REMAINDER)
+    check = sub.add_parser("check")
+    check.add_argument("--timeout", type=int, default=300)
+    check.add_argument("argv", nargs=argparse.REMAINDER)
     commit = sub.add_parser("commit")
     commit.add_argument("-m", "--message", required=True)
     commit.add_argument("--preserve-index", action="store_true")
@@ -622,7 +715,7 @@ def main() -> int:
     sub.add_parser("hook").add_argument("event", choices=["prompt", "pre-tool", "stop"])
     sub.add_parser("git-hook").add_argument("event", choices=["pre-commit", "post-commit", "pre-push"])
     args = parser.parse_args()
-    payload = json.load(sys.stdin) if args.command in {"plan", "review", "hook"} else {}
+    payload = json.load(sys.stdin) if args.command in {"plan", "review", "hook", "review-report", "review-resolve"} else {}
     cwd = Path(payload.get("cwd", args.root)).absolute()
     root = Path(git(cwd, "rev-parse", "--show-toplevel"))
     if args.command == "hook":
@@ -652,10 +745,15 @@ def main() -> int:
             result = workflow.plan(payload)
         elif args.command == "review":
             result = workflow.review(payload)
+        elif args.command.startswith("review-"):
+            operation = args.command.removeprefix("review-")
+            if operation == "start":
+                payload = {"risk": args.risk}
+            result = workflow.review_operation("prepare" if operation == "context" else operation, payload)
         elif args.command == "status":
             result = workflow.load()
         elif args.command == "check":
-            result = workflow.check(args.argv[1:] if args.argv[:1] == ["--"] else args.argv)
+            result = workflow.check(args.argv[1:] if args.argv[:1] == ["--"] else args.argv, timeout=args.timeout)
         elif args.command == "commit":
             result = workflow.commit(args.paths, args.message, preserve_index=args.preserve_index)
         elif args.command == "finish":

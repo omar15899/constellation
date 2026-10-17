@@ -14,6 +14,8 @@
 !/AGENTS.md
 !/QUANTOS.md
 !/README.md
+!/REVIEW.md
+!/.github/
 !/.gitignore
 
 # 3. Drop junk that lives inside the re-included .claude/ subtree.

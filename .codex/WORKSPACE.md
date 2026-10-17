@@ -57,7 +57,10 @@ python3 ~/GitHub/.codex/workspace.py --session ejemplo check --repo PricingLab -
 ```
 
 Para código, sustituye esas comprobaciones por las pruebas del comportamiento
-modificado. La revisión recibe un objeto por repositorio, con cada requisito
+modificado. `check --timeout 1200 -- COMANDO` permite pruebas largas; el valor
+por defecto es 300 segundos y el máximo 3600. Los timeouts y fallos de lanzamiento
+quedan registrados como fallos y exigen repetir con éxito el mismo comando.
+La revisión recibe un objeto por repositorio, con cada requisito
 exacto como clave y evidencia concreta como valor:
 
 ```sh
@@ -110,6 +113,103 @@ el inicio. `recover` no mueve ramas, no modifica archivos ni índices y no hace
 push. Solo retira el bloqueo cuando esa evidencia vuelve a ser válida.
 
 ## Instrucciones y agentes
+
+### Presupuesto por repositorio
+
+`agent-policy.json` es la fuente común. `defaults.max_concurrent_threads_per_session`
+vale 6 y `repositories` permite sobrescribirlo por dueño Git; el hub usa 8.
+Son máximos de subagentes simultáneos, excluido el coordinador, no un objetivo de
+consumo. El cliente puede imponer un límite menor. Una sesión que coordina varios
+repositorios conserva un único límite de ejecución; no suma los presupuestos.
+Al delegar aplica también el presupuesto del repositorio afectado. La política
+no puede cambiar el límite de una sesión ya iniciada.
+
+```sh
+python3 .codex/agent_policy.py show
+python3 .codex/agent_policy.py check --repo Shared
+python3 .codex/agent_policy.py --session ejemplo apply --repo Shared
+```
+
+Para cambiar el límite, declara la política y los `.codex/config.toml` afectados
+en un plan, edita el JSON y aplica los repositorios seleccionados explícitamente.
+`check` detecta desvíos. `apply` conserva los demás ajustes y rechaza configuración
+ambigua, destinos externos y rutas sin declarar. Reinicia Codex o abre una sesión
+nueva para cargar el resultado. El registro de repositorios y Git delimitan
+destinos; no se modifica `~/.codex/config.toml`. La clave nativa documentada es
+`agents.max_concurrent_threads_per_session`.
+
+### Revisión independiente
+
+La política [review-policy.json](review-policy.json) selecciona Quick para
+documentación, Standard para cambios ordinarios y Deep para rutas sensibles,
+incluidos el motor y CI. El coordinador puede elevar el riesgo semántico con
+`review-start --risk deep`; no puede reducir el mínimo durante la tarea.
+Quick y Standard exigen un revisor independiente de corrección. Deep exige dos
+revisores distintos y cobertura de seguridad. Se pueden ejecutar sucesivamente
+cuando no haya capacidad paralela. Consulta [REVIEW.md](../REVIEW.md) y las
+invariantes locales antes de revisar.
+
+```sh
+python3 .codex/workspace.py --session ejemplo review-context --repo Shared
+python3 .codex/workspace.py --session ejemplo review-start --repo Shared
+```
+
+`review-context` no abre una ronda. `review-start` devuelve un token de los
+requisitos, alcance, política y contenido/permisos actuales. Entrega ese token
+y el diff al revisor. Tras inspeccionar realmente los archivos, registra su
+informe mediante `review-report --repo Shared`, con JSON por stdin:
+
+```json
+{
+  "token": "TOKEN_DEVUELTO_POR_REVIEW_START",
+  "reviewer": "identificador-real-del-subagente",
+  "role": "reviewer",
+  "focus": ["correctness"],
+  "paths": ["README.md"],
+  "summary": "0 hallazgos accionables.",
+  "evidence": "Comprobado el ejemplo contra la interfaz y las pruebas del proyecto.",
+  "findings": []
+}
+```
+
+Usa las rutas reales del contrato; cada foco obligatorio debe cubrirlas todas,
+individualmente o entre sus revisores.
+Para Deep añade un informe de otro agente con `focus: ["security"]`. Los IDs
+son declaraciones verificables por el coordinador, no identidades autenticadas
+por este programa. Nunca inventes un revisor ni copies su conversación al estado.
+
+Cada hallazgo incluye `id` estable, `path`, `line`, `severity` (critical, high,
+medium, low), `origin` (introduced, preexisting), `scenario`, `consequence` y
+`evidence`. Todos los hallazgos abiertos bloquean. Para corregir, modifica y
+prueba los archivos, abre la siguiente ronda y consigue una verificación distinta
+del autor y del descubridor. `review-resolve --repo Shared` recibe:
+
+```json
+{
+  "token": "TOKEN_ACTUAL",
+  "id": "identificador-del-hallazgo",
+  "verifier": "identificador-real-del-verificador",
+  "disposition": "fixed",
+  "evidence": "La reproducción ahora pasa y el caso adverso queda cubierto."
+}
+```
+
+`dismissed` requiere igualmente evidencia independiente para un falso positivo
+o comportamiento deliberado. Omitir un hallazgo en el siguiente informe no lo
+resuelve. Una modificación posterior exige revalidar su cierre. Replanificar
+conserva el contador y los hallazgos. Abrir la misma versión es idempotente;
+hay un máximo de tres versiones revisadas por tarea. Si no converge, replantea
+el enfoque con Omar; no borres el registro ni finjas aprobación.
+
+Cambiar la política invalida la evidencia: abre otra ronda, conservando los
+hallazgos y los mínimos más estrictos de la tarea. Un cambio de política nunca
+reduce su revisión vigente ni amplía retroactivamente el máximo de rondas.
+
+Después registra la evidencia de cada requisito con `review` y publica con el
+flujo habitual. `commit` y `finish` comprueban también esta puerta. Los comandos
+equivalentes de `workflow.py` no necesitan `--repo`. Una consulta con `paths: []`
+no requiere subagentes. Esta puerta es local: la CI del hub prueba los controles,
+pero GitHub sólo los exige para fusionar si sus reglas remotas lo configuran.
 
 El hub mantiene el motor; cada proyecto nativo mantiene una entrada breve y sus
 reglas técnicas en `.codex/PROJECT.md`. Claude conserva su sistema. Codex hereda

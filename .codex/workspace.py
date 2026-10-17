@@ -362,7 +362,7 @@ class Workspace:
             if self.signature(flow.load()) != state["contracts"][name]:
                 raise Blocked(f"Contract changed outside this workspace plan: {name}; reconcile using plan.")
 
-    def check(self, repo: str, command: list[str]) -> dict[str, Any]:
+    def check(self, repo: str, command: list[str], *, timeout: int = 300) -> dict[str, Any]:
         if not command:
             raise Blocked("check needs a command after --.")
         with self.lock():
@@ -374,7 +374,7 @@ class Workspace:
                 state.update(finished=None, operation="check")
                 self.save(state)
                 try:
-                    result = flows[repo].check(command)
+                    result = flows[repo].check(command, timeout=timeout)
                     state["progress"][repo] = {"operation": "check", "at": now()}
                     self.save(state)
                     return result
@@ -401,6 +401,20 @@ class Workspace:
                         self.failed(state, name, exc)
                         raise
                 return results
+
+    def review_operation(self, repo: str, operation: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        with self.lock():
+            state = self.load()
+            if repo not in state["roots"]:
+                raise Blocked(f"Repository does not participate in the plan: {repo}")
+            with self.flows(state["roots"]) as flows:
+                self.validate(state, flows)
+                result = flows[repo].review_operation(operation, payload)
+                if operation != "prepare":
+                    state.update(finished=None, operation="review-" + operation)
+                    state["progress"][repo] = {"operation": state["operation"], "at": now()}
+                    self.save(state)
+                return result
 
     def _preflight(self, state: dict[str, Any], flows: dict[str, Workflow],
                    selected: dict[str, list[str]] | None, *, preserve_index: bool = False) -> None:
@@ -521,8 +535,14 @@ def main() -> int:
     sub.add_parser("route").add_argument("paths", nargs="+")
     for name in ("plan", "review", "status", "finish"):
         sub.add_parser(name)
+    for name in ("review-context", "review-start", "review-report", "review-resolve"):
+        command = sub.add_parser(name)
+        command.add_argument("--repo", required=True)
+        if name == "review-start":
+            command.add_argument("--risk", choices=("quick", "standard", "deep"))
     check = sub.add_parser("check")
     check.add_argument("--repo", required=True)
+    check.add_argument("--timeout", type=int, default=300)
     check.add_argument("argv", nargs=argparse.REMAINDER)
     commit = sub.add_parser("commit")
     commit.add_argument("-m", "--message", required=True)
@@ -539,7 +559,13 @@ def main() -> int:
             raise Blocked("Expected a JSON object.")
         result = getattr(workspace, args.command)(payload)
     elif args.command == "check":
-        result = workspace.check(args.repo, args.argv[1:] if args.argv[:1] == ["--"] else args.argv)
+        result = workspace.check(args.repo, args.argv[1:] if args.argv[:1] == ["--"] else args.argv, timeout=args.timeout)
+    elif args.command.startswith("review-"):
+        payload = json.load(sys.stdin) if args.command in {"review-report", "review-resolve"} else None
+        operation = args.command.removeprefix("review-")
+        if operation == "start":
+            payload = {"risk": args.risk}
+        result = workspace.review_operation(args.repo, "prepare" if operation == "context" else operation, payload)
     elif args.command == "commit":
         result = workspace.commit(args.paths, args.message, preserve_index=args.preserve_index)
     else:

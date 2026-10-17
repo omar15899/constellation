@@ -17,7 +17,7 @@ esfuerzo y permisos se heredan de los ajustes del usuario.
 | Agentes especializados | 3 | 0 |
 | Skills del hub cargadas | 14 | 0; herramientas y skills generales disponibles según la tarea |
 | Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 3 comandos en 3 eventos |
-| Verificación | Hooks dispersos y evidencia de ejecución | Prueba real, revisión vigente y publicación comprobada |
+| Verificación | Hooks dispersos y evidencia de ejecución | Prueba real, revisión independiente vigente y publicación comprobada |
 | Dependencias del flujo | Adaptador y scripts de Claude | Python estándar 3.9+ y Git |
 
 La [guía oficial de modelos](https://developers.openai.com/api/docs/guides/latest-model),
@@ -53,9 +53,14 @@ del subcomando. No compartas la sesión `manual` entre trabajos concurrentes.
    incluye los archivos también en `deletions`; deben estar versionados.
 3. `check -- COMANDO ARGUMENTOS` ejecuta una prueba pertinente y registra su
    resultado y hashes. Rechaza una prueba fallida o que cambie entregables.
-4. `review` recibe un objeto cuya clave es cada requisito exacto y cuyo valor
+4. `review-context` clasifica el alcance; `review-start` abre una ronda y devuelve
+   el token que los revisores deben usar en `review-report`. `review-resolve`
+   registra la verificación independiente de una corrección o falso positivo.
+   Lee [WORKSPACE.md](WORKSPACE.md) y [REVIEW.md](../REVIEW.md) para el protocolo.
+   `review` recibe un objeto cuya clave es cada requisito exacto y cuyo valor
    explica la evidencia comprobada. Modificar un archivo invalida la revisión;
-   el código exige una prueba vigente. Las retiradas deben haberse completado.
+   el código y configuración exigen una prueba vigente. Un fallo posterior
+   invalida el éxito anterior de ese comando. Las retiradas deben completarse.
 5. `commit -m 'Mensaje humano' ruta1 ruta2` prepara solo esas rutas, comprueba
    el contenido del índice, hace commit, push normal y verifica el hash remoto.
    Si el índice ya contiene trabajo, se conserva y se informa del impedimento.
@@ -105,6 +110,22 @@ de esa confianza. No edites hashes de confianza ni uses opciones para eludirla.
 [Documentación oficial de hooks](https://learn.chatgpt.com/docs/hooks).
 
 ## Alcance y límites
+
+La concurrencia se define en [agent-policy.json](agent-policy.json): seis
+subagentes por defecto y ocho en el hub. El primario no cuenta. El comando
+`python3 .codex/agent_policy.py show` muestra la política efectiva;
+`check` detecta divergencias y `apply --repo RUTA` actualiza únicamente las rutas
+de configuración declaradas en el plan. Reinicia la sesión para cargar cambios.
+No modifica modelo, esfuerzo, permisos, confianza ni configuración global.
+[OpenAI Docs: subagentes](https://learn.chatgpt.com/docs/agent-configuration/subagents).
+
+La revisión independiente se aplica a los repositorios nativos registrados
+que usan este motor. Comprueba identidad declarada, cobertura, huellas y estados;
+no autentica la identidad del proceso revisor ni demuestra la verdad del informe.
+La política clasifica rutas, no comprende por sí sola el riesgo semántico: el
+coordinador debe aumentar la revisión cuando el comportamiento lo requiera.
+Las pruebas CI del hub ejercitan el motor en clones y remotos locales desechables.
+No se instala un servicio de revisión AI en GitHub ni se cambian sus protecciones.
 
 Los datos operativos viven en `git rev-parse --git-path constellation`, separados
 por sesión y protegidos con un bloqueo. Se registran estados, hashes y evidencia

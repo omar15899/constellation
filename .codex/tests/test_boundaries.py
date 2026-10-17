@@ -450,7 +450,7 @@ class RepositoryBoundaries(unittest.TestCase):
     def native_workspace(self, *, include_hub=False):
         runtime = self.root / ".codex"
         runtime.mkdir()
-        for filename in ("workflow.py", "workspace.py"):
+        for filename in ("workflow.py", "workspace.py", "review_gate.py", "review-policy.json"):
             shutil.copyfile(fixture.MODULE.parent / filename, runtime / filename)
         (runtime / "profile.json").write_text('{"mode":"native"}\n')
         (runtime / "repositories.json").write_text(json.dumps({"schema_version": 1, "repositories": [
@@ -501,6 +501,14 @@ class RepositoryBoundaries(unittest.TestCase):
     def test_native_workspace_completion_and_next_prompt_start_new_lifecycle(self):
         child = self.native_workspace()
         (child / "answer.md").write_text("reviewed answer\n")
+        result = self.workspace_command("review-start", "--repo", "child")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        token = json.loads(result.stdout)["token"]
+        result = self.workspace_command("review-report", "--repo", "child", payload={
+            "token": token, "reviewer": "independent-fixture-agent", "role": "reviewer",
+            "focus": ["correctness"], "paths": ["answer.md"], "summary": "0 findings",
+            "evidence": "Inspected the fixture answer.", "findings": []})
+        self.assertEqual(result.returncode, 0, result.stderr)
         for args, payload in [(("review",), {"child": {"workspace answer": "Read and reviewed answer."}}),
                               (("commit", "-m", "Add answer", "child/answer.md"), None),
                               (("finish",), None)]:

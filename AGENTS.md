@@ -44,11 +44,20 @@ Para arquitectura QuantOS consulta [QUANTOS.md](QUANTOS.md); los cambios de
 investigación respetan el [contrato de promoción](.claude/contracts/promotion_gate.md)
 y las dependencias de tiers. Estas restricciones de dominio siguen vigentes.
 
-El agente principal resuelve el trabajo. Delega solo una subtarea independiente
-cuando ahorre tiempo o aporte una revisión útil, con alcance y archivos claros.
-No se exige una secuencia de agentes, auditorías recursivas, puntuaciones
-semánticas ni procesos persistentes. Hereda el modelo y esfuerzo elegidos por
-Omar; no fuerces otro modelo para compensar instrucciones innecesarias.
+El agente principal resuelve el trabajo. Delega subtareas independientes cuando
+ahorren tiempo o aporten una revisión útil, con alcance y archivos claros.
+Consulta `.codex/agent_policy.py show` para el presupuesto por repositorio;
+el límite del cliente y de la sesión prevalece y se comparte entre sus tareas.
+No ocupes todos los agentes por obligación ni crees pools por repositorio dentro
+de una misma sesión. Hereda modelo y esfuerzo; el coordinador integra y publica.
+
+Antes de publicar, aplica [REVIEW.md](REVIEW.md) y la revisión independiente del
+motor común. Abre una ronda con `workspace.py review-start --repo RUTA`, entrega
+su token y el diff a revisores distintos del autor, registra sus informes y
+resuelve cada hallazgo con evidencia independiente. Quick y Standard requieren
+un revisor; Deep requiere dos, incluyendo seguridad. El máximo son tres rondas;
+replanificar no borra hallazgos ni reinicia el contador. Una revisión de agente
+no sustituye una aprobación humana exigida por el proyecto o el servidor.
 
 ## Ejecución y evidencia
 

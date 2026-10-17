@@ -75,6 +75,33 @@ class WorkspaceFixture(unittest.TestCase):
         self.assertFalse((self.root / "Shared/.git/constellation").exists())
         self.assertNotIn(str(self.base / "Shared.git"), json.dumps(routes))
 
+    def test_review_operations_require_participant_and_preserve_contract(self):
+        self.plan(["Shared/answer.md"])
+        (self.root / "Shared/answer.md").write_text("answer\n")
+        before = self.workspace.load()["contracts"]
+        with self.assertRaisesRegex(ws.Blocked, "does not participate"):
+            self.workspace.review_operation("Sibling", "start")
+        self.assertEqual(self.workspace.review_operation("Shared", "prepare"), {"enabled": False})
+        self.workspace.review_operation("Shared", "start", {"risk": "deep"})
+        self.assertEqual(self.workspace.load()["contracts"], before)
+        with self.assertRaisesRegex(ws.Blocked, "cannot be lowered"):
+            self.workspace.review_operation("Shared", "start", {"risk": "standard"})
+
+    def test_second_repository_review_failure_prevents_first_publication(self):
+        self.plan(["answer.md", "Shared/answer.md"])
+        self.write_and_review(["answer.md", "Shared/answer.md"])
+        first_head = ws.git(self.root, "rev-parse", "HEAD")
+        original = ws.Workflow.independent_reviewed
+        def reject_second(flow, state):
+            if flow.root == self.root / "Shared":
+                raise ws.Blocked("Independent finding remains open")
+            return original(flow, state)
+        with patch.object(ws.Workflow, "independent_reviewed", reject_second):
+            with self.assertRaisesRegex(ws.Blocked, "finding remains"):
+                self.workspace.commit(["answer.md", "Shared/answer.md"], "Publish reviewed files")
+        self.assertEqual(ws.git(self.root, "rev-parse", "HEAD"), first_head)
+        self.assertEqual(ws.git(self.remotes["."], "rev-parse", "refs/heads/main"), first_head)
+
     def test_instruction_chain_includes_parent_and_deepest_override(self):
         folder = self.root / "Shared/nested"
         folder.mkdir()
