@@ -17,6 +17,13 @@ assert spec and spec.loader
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 DEFAULT_POLICY = json.loads(MODULE.with_name("review-policy.json").read_text())
+# Minimal quorums isolate each engine invariant; shipped quorums have dedicated
+# end-to-end cases below and remain independent of these small fixtures.
+MINIMAL_POLICY = {**DEFAULT_POLICY, "modes": {
+    "quick": {"reviewers": 1, "focus": {"correctness": 1}},
+    "standard": {"reviewers": 1, "focus": {"correctness": 1}},
+    "deep": {"reviewers": 2, "focus": {"correctness": 1, "security": 1}},
+}}
 
 
 class ReviewFixture(unittest.TestCase):
@@ -26,7 +33,7 @@ class ReviewFixture(unittest.TestCase):
         self.root = self.base / "repo"
         self.root.mkdir()
         self.policy_path = self.base / "policy.json"
-        self.policy_path.write_text(json.dumps(DEFAULT_POLICY))
+        self.policy_path.write_text(json.dumps(MINIMAL_POLICY))
         self.state = {"requirements": ["The requested behavior works"], "paths": ["tool.py"],
                       "deletions": [], "author": "author-session", "started": "task-start"}
         (self.root / "tool.py").write_text("print('works')\n")
@@ -285,6 +292,117 @@ class ReviewFixture(unittest.TestCase):
         with self.assertRaisesRegex(gate.ReviewError, "every finding discoverer"):
             self.call("resolve", self.resolution(verifier="reviewer-b"))
 
+    def test_conflicting_finding_content_rejected_atomically(self):
+        self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        for field in ["scenario", "consequence", "evidence", "severity"]:
+            with self.subTest(field=field):
+                value = "critical" if field == "severity" else "A distinct defect in the same artifact."
+                before = deepcopy(self.state)
+                with self.assertRaisesRegex(gate.ReviewError, "conflicting semantic content"):
+                    self.call("report", self.payload("reviewer-b", findings=[
+                        self.finding("another-finding"), self.finding(**{field: value})]))
+                self.assertEqual(self.state, before)
+
+    def test_finding_line_moves_only_between_review_revisions(self):
+        self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "line can move only"):
+            self.call("report", self.payload("reviewer-b", findings=[self.finding(line=2)]))
+        self.assertEqual(self.state, before)
+        (self.root / "tool.py").write_text("# New preamble\nprint('works')\n")
+        self.start()
+        self.call("report", self.payload("reviewer-b", findings=[self.finding(line=2)]))
+        finding = self.state["review_gate"]["findings"]["empty-input"]
+        self.assertEqual(finding["line"], 2)
+        self.assertEqual(finding["discoverers"], ["reviewer-a", "reviewer-b"])
+        self.call("report", self.payload("reviewer-c", findings=[self.finding(line=2)]))
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "line can move only"):
+            self.call("report", self.payload("reviewer-d", findings=[self.finding(line=3)]))
+        self.assertEqual(self.state, before)
+
+    def test_author_registration_is_cumulative_idempotent_and_revision_bound(self):
+        self.state["paths"].append("other.py")
+        (self.root / "other.py").write_text("pass\n")
+        self.complete()
+        old_token = self.call("prepare")["token"]
+        ledger = deepcopy(self.state["review_gate"])
+        self.state.update(review={"complete": True}, finished="done")
+        result = self.call("author", {"author": "implementer", "paths": ["tool.py"]})
+        self.assertFalse(result["unchanged"])
+        self.assertIsNone(self.state["review"])
+        self.assertIsNone(self.state["finished"])
+        self.assertEqual(self.state["review_gate"], ledger)
+        context = self.call("prepare")
+        self.assertNotEqual(context["token"], old_token)
+        self.assertEqual(context["requirements"], self.state["requirements"])
+        self.assertEqual(context["author"], "author-session")
+        self.assertEqual(context["review_authors"], {"implementer": ["tool.py"]})
+        with self.assertRaisesRegex(gate.ReviewError, "stale"):
+            self.call("validate")
+        before = deepcopy(self.state)
+        self.assertTrue(self.call("author", {"author": "implementer", "paths": ["tool.py"]})["unchanged"])
+        self.assertEqual(self.state, before)
+        self.call("author", {"author": "implementer", "paths": ["other.py"]})
+        self.assertEqual(self.state["review_authors"], {"implementer": ["other.py", "tool.py"]})
+        self.state["paths"] = ["other.py"]
+        self.assertTrue(self.call("author", {"author": "implementer", "paths": ["other.py"]})["unchanged"])
+        self.assertEqual(self.state["review_authors"], {"implementer": ["other.py", "tool.py"]})
+        self.assertEqual(self.start()["round"], 2)
+
+    def test_invalid_author_registration_is_atomic(self):
+        self.start()
+        for payload in [{"author": "", "paths": ["tool.py"]},
+                        {"author": "implementer", "paths": []},
+                        {"author": "implementer", "paths": ["tool.py", "tool.py"]},
+                        {"author": "implementer", "paths": ["undeclared.py"]},
+                        {"author": "implementer", "paths": ["tool.py"], "remove": True}]:
+            with self.subTest(payload=payload):
+                before = deepcopy(self.state)
+                with self.assertRaises(gate.ReviewError):
+                    self.call("author", payload)
+                self.assertEqual(self.state, before)
+
+    def test_contributing_author_can_review_only_disjoint_artifacts(self):
+        self.state["paths"].append("other.py")
+        (self.root / "other.py").write_text("pass\n")
+        self.call("author", {"author": "implementer", "paths": ["tool.py"]})
+        self.start()
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "artifacts they contributed"):
+            self.call("report", self.payload("implementer"))
+        self.assertEqual(self.state, before)
+        self.call("report", self.payload("implementer", paths=["other.py"]))
+        self.call("report", self.payload("reviewer-b", paths=["tool.py"]))
+        self.call("validate")
+
+    def test_later_fix_author_cannot_resolve_their_own_finding(self):
+        self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        self.call("author", {"author": "fixer", "paths": ["tool.py"]})
+        self.assertEqual(self.start()["round"], 2)
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "cannot independently resolve"):
+            self.call("resolve", self.resolution(verifier="fixer"))
+        self.assertEqual(self.state, before)
+        self.call("resolve", self.resolution())
+        self.call("report", self.payload("independent-reviewer"))
+        self.call("validate")
+
+    def test_later_authorship_reopens_prior_self_resolution(self):
+        self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        self.call("resolve", self.resolution())
+        self.call("author", {"author": "verifier-c", "paths": ["tool.py"]})
+        self.start()
+        self.call("report", self.payload("independent-reviewer"))
+        with self.assertRaisesRegex(gate.ReviewError, "Unresolved"):
+            self.call("validate")
+        self.call("resolve", self.resolution(verifier="verifier-d"))
+        self.call("validate")
+
     def test_fixed_finding_reopens_if_its_file_changes(self):
         self.start()
         self.call("report", self.payload(findings=[self.finding()]))
@@ -363,7 +481,7 @@ class ReviewFixture(unittest.TestCase):
 
     def test_policy_change_during_review_fails_closed(self):
         self.complete()
-        policy = deepcopy(DEFAULT_POLICY)
+        policy = deepcopy(MINIMAL_POLICY)
         policy["modes"]["standard"]["reviewers"] = 2
         policy["modes"]["deep"]["reviewers"] = 3
         self.policy_path.write_text(json.dumps(policy))
@@ -377,7 +495,7 @@ class ReviewFixture(unittest.TestCase):
         self.call("validate")
 
     def test_policy_downgrade_cannot_weaken_active_task_or_reset_findings(self):
-        policy = deepcopy(DEFAULT_POLICY)
+        policy = deepcopy(MINIMAL_POLICY)
         policy["modes"]["standard"]["reviewers"] = 2
         self.policy_path.write_text(json.dumps(policy))
         self.start()
@@ -407,7 +525,7 @@ class ReviewFixture(unittest.TestCase):
         no_security = deepcopy(DEFAULT_POLICY)
         no_security["modes"]["deep"]["focus"] = {"correctness": 1}
         cases.append(no_security)
-        lower_count = deepcopy(DEFAULT_POLICY)
+        lower_count = deepcopy(MINIMAL_POLICY)
         lower_count["modes"]["standard"]["reviewers"] = 3
         cases.append(lower_count)
         for value in cases:
@@ -420,7 +538,7 @@ class ReviewFixture(unittest.TestCase):
             self.call("prepare")
 
     def test_focus_quorum_counts_distinct_agents(self):
-        policy = deepcopy(DEFAULT_POLICY)
+        policy = deepcopy(MINIMAL_POLICY)
         policy["modes"]["standard"] = {"reviewers": 2, "focus": {"correctness": 2}}
         policy["modes"]["deep"]["focus"]["correctness"] = 2
         self.policy_path.write_text(json.dumps(policy))
@@ -430,6 +548,69 @@ class ReviewFixture(unittest.TestCase):
         with self.assertRaisesRegex(gate.ReviewError, "2 distinct reviewers with correctness"):
             self.call("validate")
         self.call("report", self.payload("reviewer-c"))
+        self.call("validate")
+
+    def test_focus_quorum_applies_to_each_artifact(self):
+        policy = deepcopy(MINIMAL_POLICY)
+        policy["modes"]["standard"] = {"reviewers": 2, "focus": {"correctness": 2}}
+        policy["modes"]["deep"]["focus"]["correctness"] = 2
+        self.policy_path.write_text(json.dumps(policy))
+        self.state["paths"].append("other.py")
+        (self.root / "other.py").write_text("pass\n")
+        self.start()
+        self.call("report", self.payload(paths=["tool.py"]))
+        self.call("report", self.payload("reviewer-b", paths=["other.py"]))
+        with self.assertRaisesRegex(gate.ReviewError, "2 distinct reviewers per artifact"):
+            self.call("validate")
+        self.call("report", self.payload("reviewer-c", paths=["tool.py"]))
+        with self.assertRaisesRegex(gate.ReviewError, "per artifact: other.py"):
+            self.call("validate")
+        self.call("report", self.payload("reviewer-d", paths=["other.py"]))
+        self.call("validate")
+
+    def test_shipped_policy_requires_three_correctness_reviews(self):
+        self.policy_path.write_text(json.dumps(DEFAULT_POLICY))
+        context = self.start()
+        self.assertEqual(context["required_reviewers"], 3)
+        self.assertEqual(context["required_focus"], {"correctness": 3})
+        for reviewer in ["reviewer-a", "reviewer-b"]:
+            self.call("report", self.payload(reviewer))
+            with self.assertRaisesRegex(gate.ReviewError, "3 distinct reviewers"):
+                self.call("validate")
+        self.call("report", self.payload("reviewer-c"))
+        self.call("validate")
+
+    def test_shipped_deep_policy_requires_security_quorum_per_artifact(self):
+        self.policy_path.write_text(json.dumps(DEFAULT_POLICY))
+        self.state["review_risk"] = "deep"
+        self.state["paths"].append("other.py")
+        (self.root / "other.py").write_text("pass\n")
+        context = self.start()
+        self.assertEqual(context["required_reviewers"], 5)
+        self.assertEqual(context["required_focus"], {"correctness": 3, "security": 2})
+        for reviewer in ["reviewer-a", "reviewer-b", "reviewer-c"]:
+            self.call("report", self.payload(reviewer))
+        self.call("report", self.payload("security-a", focus=["security"], paths=["tool.py"]))
+        self.call("report", self.payload("security-b", focus=["security"], paths=["other.py"]))
+        with self.assertRaisesRegex(gate.ReviewError, "2 distinct reviewers per artifact"):
+            self.call("validate")
+        self.call("report", self.payload("security-c", focus=["security"]))
+        self.call("validate")
+
+    def test_shipped_deep_policy_counts_distinct_reviewers_per_artifact(self):
+        self.policy_path.write_text(json.dumps(DEFAULT_POLICY))
+        self.state["review_risk"] = "deep"
+        self.state["paths"].append("other.py")
+        (self.root / "other.py").write_text("pass\n")
+        self.start()
+        for reviewer in ["reviewer-a", "reviewer-b", "reviewer-c"]:
+            self.call("report", self.payload(reviewer, focus=["correctness", "security"]))
+        for reviewer in ["other-reviewer-d", "other-reviewer-e"]:
+            self.call("report", self.payload(reviewer, paths=["other.py"]))
+        with self.assertRaisesRegex(gate.ReviewError, "5 distinct reviewers per artifact: tool.py"):
+            self.call("validate")
+        for reviewer in ["tool-reviewer-d", "tool-reviewer-e"]:
+            self.call("report", self.payload(reviewer, paths=["tool.py"]))
         self.call("validate")
 
     def test_outside_repository_has_no_implicit_policy(self):

@@ -1,12 +1,12 @@
 {
-  "description": "Constellation: check upstream, guard declared patches, require reviewed and published closure.",
+  "description": "Constellation: check upstream, guide native workers, guard declared patches, require reviewed and published closure.",
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh -c 'repo_root=\"$(git rev-parse --show-toplevel)\" || exit 2; [ -f \"$repo_root/.codex/profile.json\" ] && [ -f \"$repo_root/.codex/workflow.py\" ] || exit 0; exec python3 \"$repo_root/.codex/workflow.py\" hook prompt'",
+            "command": "/bin/sh -c 'exec python3 \"$HOME/GitHub/.codex/workflow.py\" hook prompt'",
             "timeout": 60
           }
         ]
@@ -17,11 +17,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh -c 'repo_root=\"$(git rev-parse --show-toplevel)\" || exit 2; [ -f \"$repo_root/.codex/profile.json\" ] && [ -f \"$repo_root/.codex/workflow.py\" ] || exit 0; exec python3 \"$repo_root/.codex/workflow.py\" hook pre-tool'",
+            "command": "/bin/sh -c 'exec python3 \"$HOME/GitHub/.codex/workflow.py\" hook pre-tool'",
             "timeout": 10
           }
         ],
-        "matcher": "^apply_patch$"
+        "matcher": "^(?:[A-Za-z0-9_]+[.:])*apply_patch$"
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh -c 'exec python3 \"$HOME/GitHub/.codex/workflow.py\" hook subagent-start'",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [
@@ -29,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh -c 'repo_root=\"$(git rev-parse --show-toplevel)\" || exit 2; [ -f \"$repo_root/.codex/profile.json\" ] && [ -f \"$repo_root/.codex/workflow.py\" ] || exit 0; exec python3 \"$repo_root/.codex/workflow.py\" hook stop'",
+            "command": "/bin/sh -c 'exec python3 \"$HOME/GitHub/.codex/workflow.py\" hook stop'",
             "timeout": 10
           }
         ]

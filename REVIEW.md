@@ -5,6 +5,12 @@ trabajo, publicación equivocada, evidencia caducada, fugas de datos privados,
 dependencias invertidas o contratos que mienten. No exige preferencias de estilo
 ni refactors que no solucionen el problema del encargo.
 
+El reparto `workspace.py dispatch` asigna revisores por dueño Git y riesgo.
+Quick requiere uno de corrección; Standard, tres de corrección; Deep, tres de
+corrección y dos de seguridad. La cuota se aplica a cada archivo: revisar otro
+archivo no completa su cobertura. Las identidades son las devueltas por las
+herramientas de agentes, nunca nombres inventados para llenar un quórum.
+
 Lee el diff, los requisitos, los AGENTS.md aplicables y las invariantes del dueño
 Git. Revisa también los consumidores necesarios para probar un fallo; un nombre
 de archivo no es evidencia. Para cada hallazgo indica ruta y línea, escenario
@@ -15,7 +21,9 @@ El coordinador ejecuta las comprobaciones pertinentes y entrega el diff a un
 agente independiente con contexto suficiente. El informe cubre corrección y
 regresiones; una segunda revisión de seguridad es obligatoria para las rutas
 sensibles de `.codex/review-policy.json`. El revisor no edita su propio objeto de
-revisión. Un tercer agente puede verificar hallazgos discutidos o corregidos.
+revisión. Registra todos los implementadores mediante `review-author` con sus
+rutas: tampoco pueden revisar o resolver hallazgos de sus propios archivos.
+Otro agente puede verificar hallazgos discutidos o corregidos.
 No uses una votación como sustituto de una reproducción o un argumento técnico.
 
 La revisión inicial examina todo el cambio. Las posteriores se concentran en el

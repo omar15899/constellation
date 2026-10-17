@@ -381,7 +381,7 @@ class Workflow:
         return record
 
     def review_operation(self, operation: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        if operation not in {"prepare", "start", "report", "resolve"}:
+        if operation not in {"prepare", "start", "report", "resolve", "author"}:
             raise Blocked("Unknown independent review operation.")
         state = self.load()
         self.identify_author(state)
@@ -398,7 +398,7 @@ class Workflow:
                     raise Blocked("The risk floor cannot be lowered during an active task.")
                 state["review_risk"] = risk
             function = getattr(engine, operation)
-            result = function(self.root, state, payload) if operation in {"report", "resolve"} else function(self.root, state)
+            result = function(self.root, state, payload) if operation in {"report", "resolve", "author"} else function(self.root, state)
         except engine.ReviewError as exc:
             raise Blocked(str(exc)) from exc
         if operation != "prepare":
@@ -655,6 +655,29 @@ class Workflow:
             return {"decision": "block", "reason": f"[CONSTELLATION-CONTINUE:{self.key}] {exc} Follow .codex/README.md. Report any real blocker; never claim completion without evidence."}
 
 
+def coordination_context(session: str) -> str:
+    """Keep prompt guidance aligned with the explicit native coordinator API."""
+    return (f"For parallel work, run python3 .codex/workspace.py --session {session!r} dispatch --capacity N "
+            "with N bounded by available session capacity, then assign its deterministic tasks to real native subagents. "
+            "Read .codex/RESEARCH.md for research. Before independent review, register every contributing author "
+            "with review-author using {author, paths} and actual native agent IDs. "
+            "The coordinator alone integrates and publishes through check, review, commit and finish for each Git owner. ")
+
+
+def subagent_context(session: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Return worker instructions without creating or consulting lifecycle state."""
+    context = (f"Constellation worker {payload.get('agent_id', 'unknown')!r}; parent session is {session!r}. "
+               f"Use --session {session!r} when referring to the coordinator's contract. "
+               "Read the root AGENTS.md, .codex/WORKSPACE.md and the assigned repositories' AGENTS.md, "
+               ".codex/PROJECT.md and applicable directory instructions. For research read .codex/RESEARCH.md. "
+               "Work only on your assigned exact files; preserve other agents' changes. "
+               "Do not begin, reset or replace the parent's contract. Do not commit or push; the coordinator publishes. "
+               "Report your actual native agent ID, edited paths, results and verification evidence to the coordinator "
+               "for review-author registration before independent review. Do not fabricate agent identities or reports. "
+               "Do not inspect or manage worktree counts. Never persist prompts or transcripts in reports or artifacts.")
+    return {"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": context}}
+
+
 def workspace_hook(workflow: Workflow, event: str, payload: dict[str, Any], cwd: Path) -> dict[str, Any] | None:
     """Dispatch before taking a repository lock; the coordinator owns lock order."""
     manifest = workflow.home / f"workspace-{workflow.key}.json"
@@ -686,6 +709,7 @@ def workspace_hook(workflow: Workflow, event: str, payload: dict[str, Any], cwd:
                    "Read .codex/WORKSPACE.md. The unfinished workspace contract and its repository ownership were preserved. "
                    "Incorporate corrections with workspace.py plan; use its check, review, commit and finish commands for all participating repositories. "
                    "No new hub task or upstream synchronization was started by this prompt. "
+                   + coordination_context(workspace.session) +
                    "Do not inspect or manage worktree counts. Prompt/transcript content is never logged.")
         return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
 
@@ -698,7 +722,7 @@ def main() -> int:
     sub.add_parser("begin").add_argument("--turn", default="manual")
     sub.add_parser("plan")
     sub.add_parser("review")
-    for name in ("review-context", "review-start", "review-report", "review-resolve"):
+    for name in ("review-context", "review-start", "review-report", "review-resolve", "review-author"):
         command = sub.add_parser(name)
         if name == "review-start":
             command.add_argument("--risk", choices=("quick", "standard", "deep"))
@@ -712,10 +736,10 @@ def main() -> int:
     commit.add_argument("-m", "--message", required=True)
     commit.add_argument("--preserve-index", action="store_true")
     commit.add_argument("paths", nargs="+")
-    sub.add_parser("hook").add_argument("event", choices=["prompt", "pre-tool", "stop"])
+    sub.add_parser("hook").add_argument("event", choices=["prompt", "pre-tool", "stop", "subagent-start"])
     sub.add_parser("git-hook").add_argument("event", choices=["pre-commit", "post-commit", "pre-push"])
     args = parser.parse_args()
-    payload = json.load(sys.stdin) if args.command in {"plan", "review", "hook", "review-report", "review-resolve"} else {}
+    payload = json.load(sys.stdin) if args.command in {"plan", "review", "hook", "review-report", "review-resolve", "review-author"} else {}
     cwd = Path(payload.get("cwd", args.root)).absolute()
     root = Path(git(cwd, "rev-parse", "--show-toplevel"))
     if args.command == "hook":
@@ -730,6 +754,11 @@ def main() -> int:
         profile = json.loads(marker.read_text())
         if not isinstance(profile, dict) or profile.get("mode") != "native":
             raise Blocked("Native profile marker must declare mode native.")
+        if args.event == "subagent-start":
+            # Starting a worker must not create, reset or archive its parent's
+            # contract, acquire a lifecycle lock, or synchronize an upstream.
+            print(json.dumps(subagent_context(payload.get("session_id", args.session), payload), ensure_ascii=False))
+            return 0
     workflow = Workflow(root, payload.get("session_id", args.session))
     if args.command == "hook":
         result = workspace_hook(workflow, args.event, {**payload, "session_id": payload.get("session_id", args.session)}, cwd)
@@ -792,6 +821,7 @@ def main() -> int:
                 state = workflow.begin(str(payload.get("turn_id", "unknown")))
             context = (f"Constellation lifecycle active. Use --session {payload.get('session_id', args.session)!r}. "
                        "Read .codex/README.md; declare requirements with plan, execute, review each requirement, commit only declared files and finish (push + remote verification). "
+                       + coordination_context(workflow.session) +
                        "Do not inspect or manage worktree counts. Prompt/transcript content is never logged. ")
             if state["requirements"]:
                 context += "An unfinished contract was preserved; incorporate the new message. Use begin only if the user explicitly replaces or cancels that objective. "

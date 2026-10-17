@@ -5,6 +5,8 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +18,17 @@ spec = importlib.util.spec_from_file_location("workflow", MODULE)
 assert spec and spec.loader
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
+
+
+def native_hook_command(event: str, runtime: Path) -> list[str]:
+    """Substitute only the trusted runtime location; never change HOME or trust."""
+    manifest = json.loads((MODULE.parent / "hooks.json").read_text())
+    command = shlex.split(manifest["hooks"][event][0]["hooks"][0]["command"])
+    anchor = '"$HOME/GitHub/.codex/workflow.py"'
+    if len(command) != 3 or command[:2] != ["/bin/sh", "-c"] or command[2].count(anchor) != 1:
+        raise AssertionError("Native hook must select the trusted hub runtime explicitly.")
+    command[2] = command[2].replace(anchor, shlex.quote(str(runtime)))
+    return command
 
 
 class GitFixture(unittest.TestCase):
@@ -266,6 +279,33 @@ class GitFixture(unittest.TestCase):
                                                        "verifier": "test-session", "disposition": "dismissed",
                                                        "evidence": "The author cannot verify this."})
 
+    def test_review_author_cli_forwards_payload_and_invalidates_review(self):
+        self.task()
+        state = self.flow.load()
+        state["finished"] = {"head": w.git(self.root, "rev-parse", "HEAD")}
+        self.flow.save(state)
+        engine = w.review_engine()
+        payload = {"author": "native-worker-id", "paths": ["answer.md"]}
+        argv = [str(MODULE), "--root", str(self.root), "--session", "test-session", "review-author"]
+        with patch.object(engine, "author", return_value={"registered": True}, create=True) as register, \
+                patch("sys.argv", argv), patch("sys.stdin", io.StringIO(json.dumps(payload))), \
+                patch("sys.stdout", new=io.StringIO()) as output:
+            self.assertEqual(w.main(), 0)
+        self.assertEqual(json.loads(output.getvalue()), {"registered": True})
+        self.assertEqual(register.call_args.args[0], self.root.resolve())
+        self.assertEqual(register.call_args.args[2], payload)
+        self.assertIsNone(self.flow.load()["review"])
+        self.assertIsNone(self.flow.load()["finished"])
+
+    def test_review_author_rejection_preserves_existing_contract(self):
+        self.task()
+        before = self.flow.path.read_bytes()
+        engine = w.review_engine()
+        with patch.object(engine, "author", side_effect=engine.ReviewError("Undeclared author path"), create=True):
+            with self.assertRaisesRegex(w.Blocked, "Undeclared author path"):
+                self.flow.review_operation("author", {"author": "worker", "paths": ["other.md"]})
+        self.assertEqual(self.flow.path.read_bytes(), before)
+
     def test_unrelated_staged_work_is_preserved(self):
         self.task()
         (self.root / "other.md").write_text("not ours\n")
@@ -361,14 +401,12 @@ class GitFixture(unittest.TestCase):
             self.flow.reviewed(self.flow.load())
 
     def native_hook(self, event, payload, cwd=None):
-        """Execute the exact installed shell definition, with realistic stdin."""
+        """Execute the installed definition with its trusted runtime in a fixture."""
         runtime = self.root / ".codex/workflow.py"
         runtime.parent.mkdir(exist_ok=True)
         shutil.copyfile(MODULE, runtime)
         (runtime.parent / "profile.json").write_text('{"mode":"native"}\n')
-        manifest = json.loads((MODULE.parent / "hooks.json").read_text())
-        command = manifest["hooks"][event][0]["hooks"][0]["command"]
-        return subprocess.run(command, shell=True, cwd=cwd or self.root,
+        return subprocess.run(native_hook_command(event, runtime), cwd=cwd or self.root,
                               input=json.dumps(payload), capture_output=True,
                               text=True, timeout=15)
 
@@ -384,7 +422,11 @@ class GitFixture(unittest.TestCase):
                    "prompt": "SYNTHETIC_PRIVATE_PROMPT"}
         result = self.native_hook("UserPromptSubmit", payload, cwd=runtime.parent)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Upstream checked", json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Upstream checked", context)
+        self.assertIn("--session 'native' dispatch --capacity N", context)
+        self.assertIn(".codex/RESEARCH.md", context)
+        self.assertIn("review-author", context)
         self.assertEqual((self.root / "remote.md").read_text(), "new cloud data\n")
 
     def test_installed_patch_resolves_paths_against_payload_cwd(self):
@@ -400,6 +442,63 @@ class GitFixture(unittest.TestCase):
         result = self.native_hook("PreToolUse", payload, cwd=folder)
         self.assertEqual(result.returncode, 2)
         self.assertIn("Undeclared patch path", result.stderr)
+
+    def test_patch_matcher_routes_qualified_tool_names_to_the_guard(self):
+        self.flow.begin("qualified patches")
+        self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+        matcher = json.loads((MODULE.parent / "hooks.json").read_text())["hooks"]["PreToolUse"][0]["matcher"]
+        for tool_name in ("apply_patch", "functions.apply_patch", "tools.apply_patch", "functions:apply_patch",
+                          "native_tools.functions.apply_patch"):
+            with self.subTest(tool_name=tool_name):
+                self.assertIsNotNone(re.fullmatch(matcher, tool_name))
+                payload = {"session_id": "test-session", "cwd": str(self.root), "tool_name": tool_name,
+                           "tool_input": {"input": "*** Begin Patch\n*** Add File: answer.md\n+answer\n*** End Patch"}}
+                self.assertEqual(self.native_hook("PreToolUse", payload).returncode, 0)
+                payload["tool_input"]["input"] = payload["tool_input"]["input"].replace("answer.md", "other.md")
+                rejected = self.native_hook("PreToolUse", payload)
+                self.assertEqual(rejected.returncode, 2, rejected.stderr)
+                self.assertIn("Undeclared patch path", rejected.stderr)
+        for tool_name in ("exec", "functions.exec", "functions.exec_command", "apply_patch_extra", "tools/apply_patch"):
+            with self.subTest(unrelated_tool=tool_name):
+                self.assertIsNone(re.fullmatch(matcher, tool_name))
+
+    def test_subagent_start_without_parent_contract_creates_no_state(self):
+        self.flow.home.rmdir()  # Empty temporary fixture directory, not user state.
+        payload = {"session_id": "parent-session", "agent_id": "native-child-id", "cwd": str(self.root),
+                   "prompt": "SYNTHETIC_PRIVATE_WORKER_PROMPT", "transcript_path": "/private/worker-transcript"}
+        result = self.native_hook("SubagentStart", payload)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "SubagentStart")
+        self.assertIn("parent session is 'parent-session'", output["additionalContext"])
+        self.assertIn("native-child-id", output["additionalContext"])
+        self.assertIn("Do not commit or push", output["additionalContext"])
+        self.assertIn("review-author", output["additionalContext"])
+        self.assertNotIn(payload["prompt"], result.stdout)
+        self.assertNotIn(payload["transcript_path"], result.stdout)
+        self.assertFalse(self.flow.home.exists())
+
+    def test_subagent_start_preserves_finished_parent_and_workspace_bytes(self):
+        self.flow.begin("parent")
+        self.flow.plan({"requirements": ["parent answer"], "paths": ["answer.md"]})
+        state = self.flow.load()
+        state["finished"] = {"head": w.git(self.root, "rev-parse", "HEAD")}
+        self.flow.save(state)
+        manifest = self.flow.home / f"workspace-{self.flow.key}.json"
+        manifest.write_text('{"finished":{"at":"fixture"},"opaque":"preserve"}\n')
+        before = {path.name: path.read_bytes() for path in self.flow.home.iterdir()}
+        result = self.native_hook("SubagentStart", {"session_id": "test-session", "agent_id": "worker", "cwd": str(self.root)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = {path.name: path.read_bytes() for path in self.flow.home.iterdir()}
+        self.assertEqual(before, after)
+        self.assertFalse((self.flow.home / "workflow.lock").exists())
+        self.assertFalse((self.flow.home / "history").exists())
+
+    def test_subagent_start_cannot_redirect_lifecycle_to_neighbor(self):
+        result = self.native_hook("SubagentStart", {"session_id": "parent", "agent_id": "worker", "cwd": str(self.other)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+        self.assertFalse((self.other / ".git/constellation").exists())
 
     def test_patch_rejects_symlink_parent_added_after_plan(self):
         self.flow.begin("t1")
@@ -541,11 +640,35 @@ class GitFixture(unittest.TestCase):
         self.assertIn("Undeclared", result.stderr)
 
     def test_hook_ignores_neighbor_without_native_profile(self):
-        command = json.loads((MODULE.parent / "hooks.json").read_text())["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
-        result = subprocess.run(command, shell=True, cwd=self.other, input="{}", text=True, capture_output=True)
+        result = self.native_hook("UserPromptSubmit", {}, cwd=self.other)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "")
+        self.assertEqual(json.loads(result.stdout), {})
         self.assertFalse((self.other / ".git/constellation").exists())
+
+    def test_all_hooks_ignore_hostile_runtime_in_neighbor_cwd(self):
+        hostile = self.other / ".codex"
+        hostile.mkdir()
+        (hostile / "workflow.py").write_text(
+            "from pathlib import Path\n"
+            "Path(__file__).with_name('executed').write_text('UNTRUSTED_RUNTIME_EXECUTED')\n"
+            "print('UNTRUSTED_RUNTIME_EXECUTED')\n")
+        nested = self.other / "nested folder"
+        nested.mkdir()
+        for mode in ("external", "native"):
+            (hostile / "profile.json").write_text(json.dumps({"mode": mode}))
+            for event in ("UserPromptSubmit", "PreToolUse", "SubagentStart", "Stop"):
+                for explicit_cwd in (False, True):
+                    with self.subTest(mode=mode, event=event, explicit_cwd=explicit_cwd):
+                        payload = {"session_id": "hostile-neighbor", "agent_id": "worker"}
+                        if explicit_cwd:
+                            payload["cwd"] = str(nested)
+                        result = self.native_hook(event, payload, cwd=nested)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertNotIn("UNTRUSTED_RUNTIME_EXECUTED", result.stdout + result.stderr)
+                        self.assertEqual(json.loads(result.stdout), {})
+                        self.assertFalse((hostile / "executed").exists())
+                        self.assertFalse((self.other / ".git/constellation").exists())
+        self.assertEqual(list(self.flow.home.iterdir()), [])
 
     def test_private_archive_and_execution_records_cannot_be_published(self):
         for path in [".codex_NOTUSE/MANIFEST.json", ".claude/run/fixture.json", ".codex/sessions/fixture.json", "conversations/manifest.json", "rollout-fixture.json"]:

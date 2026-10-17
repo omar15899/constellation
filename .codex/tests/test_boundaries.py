@@ -468,7 +468,10 @@ class RepositoryBoundaries(unittest.TestCase):
 
     def native_event(self, event, **fields):
         payload = {"session_id": "hook-workspace", "cwd": str(self.root), **fields}
-        return subprocess.run([sys.executable, str(self.root / ".codex/workflow.py"), "hook", event],
+        hook_name = {"prompt": "UserPromptSubmit", "pre-tool": "PreToolUse",
+                     "subagent-start": "SubagentStart", "stop": "Stop"}[event]
+        command = fixture.native_hook_command(hook_name, self.root / ".codex/workflow.py")
+        return subprocess.run(command,
                               cwd=self.root, input=json.dumps(payload), capture_output=True,
                               text=True, timeout=10)
 

@@ -13,6 +13,9 @@ import subprocess
 import sys
 from typing import Any, Iterator
 
+# Inspection commands must not create incidental cache artifacts.
+sys.dont_write_bytecode = True
+
 from workflow import Blocked, Workflow, changed, digest, git, now, private_path, safe_path, staged_gate, staged_paths
 
 
@@ -67,24 +70,29 @@ class Workspace:
         self.key = digest(session.encode())[:24]
         self.home = Path(git(self.root, "rev-parse", "--path-format=absolute", "--git-path", "constellation"))
         self.path = self.home / f"workspace-{self.key}.json"
+        self.repositories = self.read_repositories()
+
+    def read_repositories(self) -> dict[str, str]:
+        """Read and validate current registry semantics without changing cached ownership."""
         registry = self._target(".codex/repositories.json")
         if registry.is_symlink() or not registry.is_file():
             raise Blocked("A regular .codex/repositories.json registry is required.")
         data = json.loads(registry.read_text())
         if not isinstance(data, dict) or data.get("schema_version") != 1 or not isinstance(data.get("repositories"), list):
             raise Blocked("Unsupported repositories.json schema; expected schema_version 1 and repositories.")
-        self.repositories: dict[str, str] = {}
+        repositories: dict[str, str] = {}
         for entry in data["repositories"]:
             if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
                 raise Blocked("Each registered repository needs a relative path.")
             name = relative(entry["path"], root=True)
             management = entry.get("management")
-            if name in self.repositories or management not in {"native", "external"}:
+            if name in repositories or management not in {"native", "external"}:
                 raise Blocked("Registered repository paths must be unique with native or external management.")
             self._target(name)
-            self.repositories[name] = management
-        if self.repositories.get(".") != "native":
+            repositories[name] = management
+        if repositories.get(".") != "native":
             raise Blocked("The workspace registry must include '.' with native management.")
+        return repositories
 
     def _target(self, name: str) -> Path:
         target = self.root / name
@@ -186,6 +194,10 @@ class Workspace:
         state = self.load()
         return {**state, "repositories": {name: Workflow(self.root / name, self.session).load()
                                          for name in state["roots"]}}
+
+    def dispatch(self, capacity: int | None = None) -> dict[str, Any]:
+        from dispatch import build
+        return build(self, capacity)
 
     def guard_patch(self, payload: dict[str, Any], cwd: Path) -> None:
         inputs = payload.get("tool_input", {})
@@ -425,7 +437,7 @@ class Workspace:
             flow.ensure_target(contract)
             if selected is None or name in selected:
                 flow.reviewed(contract)
-                if selected is None:
+                if selected is None or not selected[name]:
                     flow.checked_scope(contract)
                 elif not set(selected[name]) <= set(contract["paths"]):
                     raise Blocked(f"Undeclared commit paths in {name}.")
@@ -465,13 +477,18 @@ class Workspace:
     def finish(self) -> dict[str, Any]:
         return self._publish(None, None)
 
+    def publish(self, repo: str) -> dict[str, Any]:
+        """Verify a reviewed repository's current HEAD without creating a commit."""
+        return self._publish({repo: []}, None)
+
     def _publish(self, selected: dict[str, list[str]] | None, message: str | None,
                  *, preserve_index: bool = False) -> dict[str, Any]:
         with self.lock():
             state = self.load()
             if selected is not None and set(selected) - set(state["roots"]):
-                raise Blocked("Commit includes repositories outside the plan.")
-            state.update(finished=None, operation="finish" if selected is None else "commit", progress={})
+                raise Blocked("Publication includes repositories outside the plan.")
+            operation = "finish" if selected is None else "commit" if any(selected.values()) else "publish"
+            state.update(finished=None, operation=operation, progress={})
             state.pop("error", None)
             self.save(state)
             with self.flows(state["roots"]) as flows:
@@ -500,6 +517,8 @@ class Workspace:
                             contract = flow.load()
                             publication = flow.publish()
                             flow.reviewed(contract)
+                            if not selected[current]:
+                                flow.checked_scope(contract)
                             contract["publication"] = publication
                             flow.save(contract)
                             result = {**publication, "unchanged": True}
@@ -533,9 +552,13 @@ def main() -> int:
     parser.add_argument("--session", default=os.environ.get("CODEX_THREAD_ID", "manual"))
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("route").add_argument("paths", nargs="+")
+    dispatch = sub.add_parser("dispatch", help="Print a deterministic read-only native-agent execution plan.")
+    dispatch.add_argument("--capacity", type=int, help="Current client subagent capacity, from 1 to 64.")
     for name in ("plan", "review", "status", "finish"):
         sub.add_parser(name)
-    for name in ("review-context", "review-start", "review-report", "review-resolve"):
+    publish = sub.add_parser("publish", help="Publish and verify current HEAD without creating a commit.")
+    publish.add_argument("--repo", required=True)
+    for name in ("review-context", "review-start", "review-report", "review-resolve", "review-author"):
         command = sub.add_parser(name)
         command.add_argument("--repo", required=True)
         if name == "review-start":
@@ -553,6 +576,10 @@ def main() -> int:
     workspace = Workspace(args.root, args.session)
     if args.command == "route":
         result = workspace.route(args.paths)
+    elif args.command == "dispatch":
+        result = workspace.dispatch(args.capacity)
+    elif args.command == "publish":
+        result = workspace.publish(args.repo)
     elif args.command in {"plan", "review"}:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
@@ -561,7 +588,7 @@ def main() -> int:
     elif args.command == "check":
         result = workspace.check(args.repo, args.argv[1:] if args.argv[:1] == ["--"] else args.argv, timeout=args.timeout)
     elif args.command.startswith("review-"):
-        payload = json.load(sys.stdin) if args.command in {"review-report", "review-resolve"} else None
+        payload = json.load(sys.stdin) if args.command in {"review-report", "review-resolve", "review-author"} else None
         operation = args.command.removeprefix("review-")
         if operation == "start":
             payload = {"risk": args.risk}

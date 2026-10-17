@@ -228,7 +228,9 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
     if risk_floor not in MODES or previous_mode not in MODES:
         raise ReviewError("Review risk must be quick, standard or deep.")
     mode = max((mode, risk_floor, previous_mode), key=MODES.index)
+    authors = _authors(root, state)
     token = _hash({"repository": str(root), "author": state.get("author"),
+                   "review_authors": authors,
                    "task_started": state.get("started"), "initial_head": state.get("initial_head"),
                    "policy": policy_hash, "policy_floor": _hash(policy), "mode": mode,
                    "requirements": requirements, "paths": sorted(paths),
@@ -237,6 +239,7 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
             "policy_floor": policy,
             "required_reviewers": policy["modes"][mode]["reviewers"],
             "required_focus": policy["modes"][mode]["focus"], "max_rounds": policy["max_rounds"],
+            "requirements": requirements, "author": _author(state), "review_authors": authors,
             "paths": paths, "deletions": deletions, "artifacts": artifacts,
             "identity_assurance": "declared identities; not cryptographically authenticated"}
 
@@ -261,6 +264,42 @@ def _author(state: dict[str, Any]) -> str:
     return _text(state.get("author"), "Task author identity", 128)
 
 
+def _authors(root: Path, state: dict[str, Any]) -> dict[str, list[str]]:
+    """Preserve attribution even when a later plan withdraws an artifact."""
+    authors = state.get("review_authors", {})
+    if not isinstance(authors, dict):
+        raise ReviewError("Contributing authors must map identities to artifact paths.")
+    normalized = {}
+    for identity, paths in authors.items():
+        if _text(identity, "Contributing author identity", 128) != identity:
+            raise ReviewError("Contributing author identities cannot have surrounding whitespace.")
+        entries = _strings(paths, "Contributing author paths")
+        for name in entries:
+            _path(root, name)
+        normalized[identity] = sorted(entries)
+    return dict(sorted(normalized.items()))
+
+
+def author(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy_path: Path | None = None) -> dict[str, Any]:
+    """Register cumulative, declared authorship before assigning independent review."""
+    context = prepare(root, state, policy_path=policy_path)
+    if not context["enabled"]:
+        raise ReviewError("Independent review policy is not enabled for this repository.")
+    _object(payload, "Contributing author", {"author", "paths"})
+    identity = _text(payload["author"], "Contributing author identity", 128)
+    paths = _strings(payload["paths"], "Contributing author paths")
+    if not set(paths) <= set(context["paths"]):
+        raise ReviewError("Contributing author paths must belong to the declared review scope.")
+    authors = context["review_authors"]
+    combined = sorted(set(authors.get(identity, [])) | set(paths))
+    if combined == authors.get(identity):
+        return {"registered": identity, "paths": combined, "unchanged": True}
+    state["review_authors"] = dict(sorted({**authors, identity: combined}.items()))
+    state["review"] = None
+    state["finished"] = None
+    return {"registered": identity, "paths": combined, "unchanged": False}
+
+
 def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None) -> dict[str, Any]:
     context = prepare(root, state, policy_path=policy_path)
     if not context["enabled"]:
@@ -283,8 +322,11 @@ def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None)
     if len(ledger["rounds"]) >= context["max_rounds"]:
         raise ReviewError("Independent review round limit reached; reconsider the approach and report the unresolved blocker.")
     for finding in ledger["findings"].values():
-        if finding["status"] != "open" and finding["resolution"]["artifact"] != context["artifacts"].get(finding["path"]):
-            finding["status"] = "open"
+        if finding["status"] != "open":
+            resolution = finding["resolution"]
+            if (resolution["artifact"] != context["artifacts"].get(finding["path"])
+                    or finding["path"] in context["review_authors"].get(resolution["verifier"], [])):
+                finding["status"] = "open"
     number = len(ledger["rounds"]) + 1
     ledger.update(policy_sha256=context["policy_sha256"], policy_floor=context["policy_floor"], mode_floor=context["mode"])
     ledger["rounds"].append({"number": number, "token": context["token"], "mode": context["mode"], "reports": {}})
@@ -332,6 +374,8 @@ def report(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy
     paths = _strings(payload["paths"], "Reviewed paths", empty=not context["paths"])
     if not set(paths) <= set(context["paths"]):
         raise ReviewError("Reviewed paths must belong to this review's declared scope.")
+    if set(paths) & set(context["review_authors"].get(reviewer, [])):
+        raise ReviewError("An independent reviewer cannot review artifacts they contributed to.")
     if not isinstance(payload["findings"], list):
         raise ReviewError("Report findings must be a list.")
     findings = [_finding(value, paths) for value in payload["findings"]]
@@ -352,15 +396,24 @@ def report(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy
             raise ReviewError("A stable finding ID cannot be reassigned to another path or origin.")
         if existing and existing["status"] != "open":
             raise ReviewError("Do not repeat a resolved finding; use a new ID for a distinct regression.")
+        if existing and any(existing[key] != value for key, value in finding.items() if key != "line"):
+            raise ReviewError("A stable finding ID cannot have conflicting semantic content.")
+        if (existing and existing["line"] != finding["line"]
+                and existing.get("last_token", existing["first_token"]) == context["token"]):
+            raise ReviewError("A stable finding's line can move only in a new review revision.")
     # Validate the entire payload before changing state: malformed reports cannot
     # leave partial findings or consume a reviewer slot.
     for finding in findings:
         existing = ledger["findings"].get(finding["id"])
         if existing:
             existing["discoverers"] = sorted(set(existing["discoverers"]) | {reviewer})
+            # Relocations across revisions preserve the issue identity; within a
+            # revision, every discoverer must agree on its canonical definition.
+            existing.update(line=finding["line"], last_token=context["token"])
         else:
             ledger["findings"][finding["id"]] = {**finding, "discoverers": [reviewer],
                                                      "status": "open", "first_token": context["token"],
+                                                     "last_token": context["token"],
                                                      "resolution": None, "resolutions": []}
     current["reports"][reviewer] = normalized
     state["review"] = None
@@ -383,6 +436,8 @@ def resolve(root: Path, state: dict[str, Any], payload: dict[str, Any], *, polic
     verifier = _text(payload["verifier"], "Verifier identity", 128)
     if verifier in finding["discoverers"] or verifier == _author(state) or ledger["author"] != _author(state):
         raise ReviewError("Resolution needs a verifier distinct from the author and every finding discoverer.")
+    if finding["path"] in context["review_authors"].get(verifier, []):
+        raise ReviewError("A contributing author cannot independently resolve a finding on their artifact.")
     if payload["disposition"] not in {"fixed", "dismissed"}:
         raise ReviewError("Resolution disposition must be fixed or dismissed.")
     evidence = _text(payload["evidence"], "Resolution evidence")
@@ -416,9 +471,18 @@ def validate(root: Path, state: dict[str, Any], *, policy_path: Path | None = No
         covered_focus = {path for item in reports.values() if focus in item["focus"] for path in item["paths"]}
         if covered_focus != set(context["paths"]):
             raise ReviewError(f"Independent {focus} reports do not cover every declared review artifact.")
+        insufficient = sorted(path for path in context["paths"]
+                              if sum(focus in item["focus"] and path in item["paths"]
+                                     for item in reports.values()) < required)
+        if insufficient:
+            raise ReviewError(f"Independent {focus} review needs {required} distinct reviewers per artifact: {', '.join(insufficient)}")
     covered = {path for item in reports.values() for path in item["paths"]}
     if covered != set(context["paths"]):
         raise ReviewError("Independent reports do not cover every declared review artifact.")
+    insufficient = sorted(path for path in context["paths"]
+                          if sum(path in item["paths"] for item in reports.values()) < context["required_reviewers"])
+    if insufficient:
+        raise ReviewError(f"Independent {context['mode']} review needs {context['required_reviewers']} distinct reviewers per artifact: {', '.join(insufficient)}")
     opened = sorted(identifier for identifier, finding in ledger["findings"].items() if finding["status"] == "open")
     if opened:
         raise ReviewError(f"Unresolved independent review findings: {', '.join(opened)}")

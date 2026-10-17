@@ -47,6 +47,51 @@ sus requisitos. Los ciclos de dependencias y los repositorios no registrados
 se rechazan. `external_repositories` debe enumerar los externos expresamente
 incluidos en una tarea; clasificarlos no autoriza modificarlos.
 
+## Distribuir el trabajo
+
+Tras el plan, `workspace.py --session ID dispatch --capacity N` devuelve un
+grafo de tareas y oleadas estables para los participantes. Respeta `depends_on`,
+el presupuesto común y los límites por repositorio. Elige N según la capacidad
+real disponible del cliente, descontando agentes ya activos. El comando no
+inicia procesos, no contacta remotos ni altera el estado del ciclo.
+
+Los paquetes incluyen requisitos, contratos, rutas, destino congelado sin URL
+y cobertura de revisión. Sólo implementación recibe rutas de escritura. El
+coordinador lanza agentes nativos para las tareas de agentes y ejecuta los checks
+y la integración. Los perfiles de `agents/` conservan modelo y esfuerzo; si la
+superficie no los carga, usa sus instrucciones con los agentes disponibles.
+Consulta [RESEARCH.md](RESEARCH.md) para hipótesis, fuentes, refutación y handoffs.
+
+El token de reparto identifica sus entradas; no es un informe de ejecución ni
+el token de `review-start`. Regenera el reparto si cambia el contrato o su
+contenido, y abre la revisión sólo después de implementar y comprobar.
+Registra los autores reales antes de revisar:
+
+```sh
+python3 .codex/workspace.py --session ejemplo review-author --repo Shared <<'JSON'
+{"author":"ID_REAL_DEL_SUBAGENTE","paths":["README.md"]}
+JSON
+```
+
+Este registro se aplica cuando hay archivos y revisión nativa habilitada; las
+consultas y los repositorios externos no invocan una puerta nativa deshabilitada.
+La implementación consumidora espera los checks de sus proveedores. La integración
+espera la revisión de todo el conjunto, publica en orden y reserva `finish` para
+después de todos los commits; así no crea una espera circular entre implementación
+del consumidor y publicación del proveedor.
+Si un participante no tiene cambios propios que comprometer, usa
+`workspace.py --session ID publish --repo RUTA`: verifica y publica su HEAD
+actual sin crear un commit. También sirve para un proveedor con `paths: []`.
+Esta comprobación establece la publicación que necesita su consumidor; omitirla
+dejaría la dependencia pendiente. Se rechaza si hay entregables propios sin commit,
+revisión incompleta, destino cambiado o un proveedor todavía sin publicar.
+
+Las contribuciones se acumulan y no pueden retirarse para habilitar autorrevisión.
+Otro autor o ruta invalida la revisión previa sin borrar hallazgos ni rondas.
+Un ID de tarea del reparto no sustituye la identidad real de la herramienta.
+Los trabajadores entregan resultados al coordinador, que realiza las operaciones
+de publicación. Las tareas de reparación se abren sólo ante hallazgos reales.
+
 ## Verificar y publicar
 
 Tras implementar, registra comprobaciones pertinentes con el cwd del dueño:
@@ -148,8 +193,10 @@ La política [review-policy.json](review-policy.json) selecciona Quick para
 documentación, Standard para cambios ordinarios y Deep para rutas sensibles,
 incluidos el motor y CI. El coordinador puede elevar el riesgo semántico con
 `review-start --risk deep`; no puede reducir el mínimo durante la tarea.
-Quick y Standard exigen un revisor independiente de corrección. Deep exige dos
-revisores distintos y cobertura de seguridad. Se pueden ejecutar sucesivamente
+Quick exige un revisor independiente de corrección; Standard exige tres.
+Deep exige cinco: tres de corrección y dos de seguridad. Cada archivo necesita
+el número exigido de revisores por foco y el total de personas distintas del modo.
+Se pueden ejecutar sucesivamente
 cuando no haya capacidad paralela. Consulta [REVIEW.md](../REVIEW.md) y las
 invariantes locales antes de revisar.
 
@@ -176,9 +223,10 @@ informe mediante `review-report --repo Shared`, con JSON por stdin:
 }
 ```
 
-Usa las rutas reales del contrato; cada foco obligatorio debe cubrirlas todas,
-individualmente o entre sus revisores.
-Para Deep añade un informe de otro agente con `focus: ["security"]`. Los IDs
+Usa las rutas reales del contrato; cada foco obligatorio debe cubrirlas todas
+con su cuota por archivo. La unión de rutas sin esa multiplicidad no basta.
+Para Standard registra tres informes de corrección; para Deep añade dos informes
+de agentes de seguridad distintos con `focus: ["security"]`. Los IDs
 son declaraciones verificables por el coordinador, no identidades autenticadas
 por este programa. Nunca inventes un revisor ni copies su conversación al estado.
 
@@ -218,7 +266,8 @@ pero GitHub sólo los exige para fusionar si sus reglas remotas lo configuran.
 El hub mantiene el motor; cada proyecto nativo mantiene una entrada breve y sus
 reglas técnicas en `.codex/PROJECT.md`. Claude conserva su sistema. Codex hereda
 modelo, esfuerzo, entorno y permisos del usuario, salvo los ajustes expresamente
-conservados en el hub. No necesita una cadena fija de agentes. Una delegación
+conservados en el hub. El reparto fija fases y dependencias para la tarea; no
+inicia una infraestructura paralela de agentes. Una delegación
 útil tiene repositorio, archivos, resultado y verificación definidos; el agente
 principal coordina los commits para evitar competencia sobre un mismo índice.
 
@@ -228,8 +277,10 @@ eso una sesión iniciada en el hub debe leer los contratos hijos al seleccionarl
 La configuración local y la confianza son conceptos distintos; no se editan
 hashes de confianza. [OpenAI Docs: configuración de proyecto](https://learn.chatgpt.com/docs/config-file/config-advanced).
 
-Los hooks del hub, cuando están confiados, usan el contrato de workspace para
-comprobar patches y cierre de todos sus participantes. Las sesiones sin esos
+Los hooks del hub, cuando están confiados y se ejecutan desde él, usan el contrato
+de workspace para comprobar patches y cierre de todos sus participantes.
+`SubagentStart` transmite las reglas del trabajo delegado sin cambiar el estado.
+Las sesiones sin esos
 hooks ejecutan el mismo CLI explícitamente. Los hijos no reciben nuevos hooks
 Codex; sus hooks Git siguen aplicándose. El guarda de patches no cubre todas
 las escrituras de shell o MCP y no sustituye los permisos del cliente.

@@ -53,11 +53,20 @@ el límite del cliente y de la sesión prevalece y se comparte entre sus tareas.
 No ocupes todos los agentes por obligación ni crees pools por repositorio dentro
 de una misma sesión. Hereda modelo y esfuerzo; el coordinador integra y publica.
 
+Tras declarar el plan, usa `workspace.py dispatch --capacity N` para obtener
+paquetes y oleadas por dueño Git. Ejecuta los paquetes con agentes nativos,
+descuenta los agentes ya ocupados y conserva archivos exclusivos por escritor.
+Para investigar aplica [.codex/RESEARCH.md](.codex/RESEARCH.md): hipótesis,
+fuentes, contraejemplos y evidencia reproducible. Registra los implementadores
+reales con `review-author` y sus rutas antes de revisar; un ID de tarea no es
+una identidad. El reparto no ejecuta ni certifica tareas por sí mismo.
+
 Antes de publicar, aplica [REVIEW.md](REVIEW.md) y la revisión independiente del
 motor común. Abre una ronda con `workspace.py review-start --repo RUTA`, entrega
 su token y el diff a revisores distintos del autor, registra sus informes y
-resuelve cada hallazgo con evidencia independiente. Quick y Standard requieren
-un revisor; Deep requiere dos, incluyendo seguridad. El máximo son tres rondas;
+resuelve cada hallazgo con evidencia independiente. Quick requiere un revisor;
+Standard, tres de corrección; Deep, tres de corrección y dos de seguridad.
+Cada archivo necesita esa cobertura por foco. El máximo son tres rondas;
 replanificar no borra hallazgos ni reinicia el contador. Una revisión de agente
 no sustituye una aprobación humana exigida por el proyecto o el servidor.
 

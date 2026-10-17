@@ -1,4 +1,4 @@
-# Codex nativo: pequeño y verificable
+# Codex nativo: coordinación y publicación verificables
 
 Para coordinar proyectos desde `~/GitHub` o desde cualquier hijo, empieza en
 [WORKSPACE.md](WORKSPACE.md). `workspace.py` distribuye rutas y ejecuta este
@@ -8,15 +8,23 @@ La sección de uso siguiente documenta el motor de **un solo repositorio**.
 
 El perfil mantiene instrucciones breves y un único programa de ejecución,
 adaptado de OmarOS. Codex trabaja directamente; no necesita proyectar Claude,
-cargar agentes especializados ni recorrer una cadena de skills. El modelo,
+cargar el sistema de agentes de Claude ni recorrer una cadena de skills. El modelo,
 esfuerzo y permisos se heredan de los ajustes del usuario.
+
+El reparto nativo se genera con `workspace.py dispatch`: tareas de mapa,
+investigación, implementación, checks y revisión, ordenadas por dependencias y
+capacidad compartida. [RESEARCH.md](RESEARCH.md) explica la ejecución y el
+handoff de evidencia. Seis perfiles nativos en `agents/` dan instrucciones a los
+trabajadores; el coordinador los inicia con las herramientas del cliente.
+Un participante sin cambios se publica y verifica con `workspace.py publish
+--repo RUTA`, conservando la dependencia del consumidor sin crear commits vacíos.
 
 | Aspecto | Proyección anterior | Perfil nativo |
 | --- | --- | --- |
 | Contrato de Codex | Entrada → kernel Claude → contratos y roles | `AGENTS.md` propio |
-| Agentes especializados | 3 | 0 |
+| Agentes especializados | 3 | 6 perfiles nativos que heredan modelo y esfuerzo |
 | Skills del hub cargadas | 14 | 0; herramientas y skills generales disponibles según la tarea |
-| Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 3 comandos en 3 eventos |
+| Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 4 comandos en 4 eventos |
 | Verificación | Hooks dispersos y evidencia de ejecución | Prueba real, revisión independiente vigente y publicación comprobada |
 | Dependencias del flujo | Adaptador y scripts de Claude | Python estándar 3.9+ y Git |
 
@@ -97,14 +105,20 @@ solo si no sustituye hooks ajenos. Guarda el valor anterior en el directorio
 privado de Git. No cambia la configuración global de Codex ni su confianza.
 
 Los hooks de Codex están en `hooks.json`: `UserPromptSubmit` comprueba el remoto;
-`PreToolUse` valida las rutas de `apply_patch`; `Stop` exige cierre verificado.
+`PreToolUse` valida las rutas de `apply_patch`, también con nombres cualificados;
+`SubagentStart` comunica sesión, alcance y publicación centralizada sin crear
+estado; `Stop` exige cierre verificado.
+Las cuatro definiciones ejecutan el motor fijo de `$HOME/GitHub/.codex/workflow.py`.
+El cwd de un vecino nunca selecciona otro script. Si instalas el hub en otra
+ubicación, cambia ese destino explícitamente y revisa de nuevo la confianza;
+los comandos de `workspace.py` siguen admitiendo otras ubicaciones.
 Los dos intentos de continuación de Stop son acotados; después informa
 `INCOMPLETE` y no finge que el trabajo terminó. Los scripts no crean agentes,
 procesos residentes ni commits dentro de Stop.
 
 Para activar las definiciones nuevas, revísalas en `/hooks` y confía cada una
 mediante la interfaz nativa. Reabre la sesión para cargar el perfil. Comprueba
-que `hooks/list` muestra las tres definiciones del proyecto como `trusted`.
+que `hooks/list` muestra las cuatro definiciones del proyecto como `trusted`.
 `enabled: true`, instalar los hooks de Git y pasar los tests son hechos distintos
 de esa confianza. No edites hashes de confianza ni uses opciones para eludirla.
 [Documentación oficial de hooks](https://learn.chatgpt.com/docs/hooks).
@@ -131,6 +145,13 @@ La política clasifica rutas, no comprende por sí sola el riesgo semántico: el
 coordinador debe aumentar la revisión cuando el comportamiento lo requiera.
 Las pruebas CI del hub ejercitan el motor en clones y remotos locales desechables.
 No se instala un servicio de revisión AI en GitHub ni se cambian sus protecciones.
+
+Quick exige un revisor; Standard, tres de corrección; Deep, tres de corrección
+y dos de seguridad. Cada archivo necesita también el total de identidades
+distintas de su modo, aunque un informe cubra ambos focos. `review-author`
+registra contribuyentes por rutas e impide su autorrevisión; sus identidades
+siguen siendo declaraciones. Los IDs ambiguos de hallazgos se rechazan sin
+fusionar problemas distintos. El máximo de tres rondas permanece vigente.
 
 Los datos operativos viven en `git rev-parse --git-path constellation`, separados
 por sesión y protegidos con un bloqueo. Se registran estados, hashes y evidencia

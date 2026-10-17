@@ -1,4 +1,5 @@
 """Validate installed native contracts, without mutating repos or using network."""
+import ast
 import json
 from pathlib import Path
 import re
@@ -8,10 +9,31 @@ import unittest
 
 HUB = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(HUB / '.codex'))
-from agent_policy import AgentPolicy, KEY
+from agent_policy import AgentPolicy, KEY, _assignment, _statements
 
 
 class ProfileContracts(unittest.TestCase):
+    def test_native_roles_inherit_execution_settings(self):
+        expected = {'repo_mapper', 'researcher', 'implementer', 'reviewer',
+                    'security_reviewer', 'finding_verifier'}
+        actual = set()
+        for profile in sorted((HUB / '.codex/agents').glob('*.toml')):
+            # These profiles deliberately use only string assignments. Refuse
+            # execution overrides or tables, including on Python without tomllib.
+            fields = {}
+            for _, _, statement in _statements(profile.read_text()):
+                if not statement:
+                    continue
+                keys, value = _assignment(statement)
+                self.assertEqual(len(keys), 1, profile)
+                self.assertNotIn(keys[0], fields, profile)
+                fields[keys[0]] = ast.literal_eval(value)
+            self.assertEqual(set(fields), {'name', 'description', 'developer_instructions'}, profile)
+            self.assertTrue(all(isinstance(value, str) and value.strip() for value in fields.values()), profile)
+            self.assertNotIn(fields['name'], actual)
+            actual.add(fields['name'])
+        self.assertEqual(actual, expected)
+
     def test_installed_profiles(self):
         policy = AgentPolicy(HUB, 'profile-contract-read-only')
         registry = json.loads((HUB / '.codex/repositories.json').read_text())
