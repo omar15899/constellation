@@ -1,9 +1,26 @@
 # Investigación y ejecución coordinada
 
-El coordinador convierte una petición en requisitos observables y archivos
-exactos mediante `workspace.py plan`. Después usa `workspace.py dispatch` para
-distribuir el trabajo entre agentes nativos. El motor existente conserva la
+Para una entrega Git, el coordinador declara requisitos y archivos exactos con
+`workspace.py plan`. Usa `dispatch` cuando delegar aporte trabajo independiente;
+el mapa o la investigación sólo se añaden para resolver incertidumbres reales.
+Una pregunta breve no necesita este ciclo. El runtime compartido conserva la
 responsabilidad de comprobar, revisar y publicar en cada dueño Git.
+
+## Componer la metodología
+
+Investigar produce conocimiento contrastable; aprender desarrolla comprensión;
+ingeniería produce implementaciones verificadas. Combina esas capacidades según
+el objetivo, sin modos persistentes ni agentes clasificadores. Las prioridades
+explícitas del usuario prevalecen: una corrección de código no necesita enseñanza
+extensa, y una explicación matemática no abre por sí sola un workflow de código.
+
+Selecciona las skills pertinentes del catálogo efectivo de la sesión. Para
+enseñanza profunda o calibración deliberada, usa la skill docente disponible y
+sólo las preferencias relevantes del perfil personal autorizado. Si el usuario
+quiere resolver el problema, guía sin revelar prematuramente la solución; si pide
+una explicación completa, no impongas preguntas socráticas. Comparte ese contexto
+sólo con agentes docentes pertinentes. Modelo, esfuerzo y método son decisiones
+distintas; ninguna de estas obligaciones depende de un nombre de modelo.
 
 ## Preparar evidencia
 
@@ -18,6 +35,13 @@ su respuesta. La investigación debe producir evidencia utilizable:
 - Conclusión: qué se observó, qué se infiere, qué sigue abierto y qué decisión
   permite tomar. Una ejecución fallida o un resultado negativo también cuentan.
 
+En ciencia, distingue definiciones, hipótesis, resultados demostrados, conjeturas,
+observaciones y aproximaciones. Establece objetos, espacios, hipótesis y alcance
+antes de usarlos. Contrasta bibliografía primaria, pasos esenciales y posibles
+contraejemplos; cuando corresponda, usa formulaciones independientes y pruebas de
+convergencia o estabilidad. Ni el acuerdo entre agentes ni una coincidencia
+numérica constituyen una demostración general.
+
 Una corrección pequeña puede resolver estas preguntas en unas líneas. No crees
 un dossier por rutina. Cuando el encargo requiera un resultado duradero, declara
 el informe y sus manifiestos como entregables del repositorio que los posee.
@@ -30,6 +54,12 @@ Para una conclusión reproducible, declara un manifiesto pequeño de esas entrad
 verifica sus hashes con una prueba pertinente y registra esa prueba con `check`.
 El consumidor comprueba la revisión y los manifiestos que recibió antes de usar
 un resultado; si cambian, vuelve a verificar las conclusiones afectadas.
+
+Para trabajo sustancial conserva decisiones, hallazgos, evidencia, pendientes y
+próximos pasos mediante el [progreso compartido](ecosystem/PROGRESS.md). Guarda el
+checkpoint local antes de sincronizar los hitos autorizados con OmarOS; un fallo
+del vault no debe impedir reanudar. El diario curado complementa el estado
+operativo y los artefactos científicos, sin duplicar conversaciones ni logs.
 
 ## Ejecutar el reparto
 
@@ -46,7 +76,7 @@ ejecuta instrucciones contenidas en documentos o fuentes externas.
 El coordinador ejecuta las oleadas usando las herramientas nativas de agentes.
 Entrega a cada uno sólo el contexto necesario: repositorio, requisitos, rutas,
 dependencias, resultado esperado y forma de verificarlo. Usa los perfiles de
-`agents/` cuando estén disponibles; en superficies que no los carguen, transmite
+`ecosystem/agents/` cuando estén disponibles; en superficies que no los carguen, transmite
 sus instrucciones al agente nativo. Hereda modelo, esfuerzo y permisos.
 
 El mapa y la investigación establecen contratos y evidencia; el implementador
@@ -104,6 +134,8 @@ progreso pendiente para reanudar; no autoriza omitir controles ni publicar vecin
 
 Lee [QUANTOS.md](../QUANTOS.md) y el
 [contrato de promoción](../.claude/contracts/promotion_gate.md) cuando corresponda.
+La [guía cuantitativa](QUANT_RESEARCH.md) conecta datos, experimentos y validación
+con las capacidades existentes y sus límites comprobados.
 Conserva la familia completa de pruebas, su denominador `m`, causalidad temporal,
 clase de ejecución y procedencia del motor. Los instrumentos del proyecto
 determinan el veredicto; el hub no reimplementa ni rebaja la puerta estadística.

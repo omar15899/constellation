@@ -68,10 +68,8 @@ class FixtureCase(unittest.TestCase):
             destination = runtime / ".codex-plugin/plugin.json"
             destination.parent.mkdir(parents=True)
         shutil.copyfile(manifest, destination)
-        for directory in ("references", "agents"):
+        for directory in ("references", "agents", "runtime"):
             shutil.copytree(SOURCE_DIR / directory, package / directory)
-        for name in ("review_gate.py", "review-policy.json"):
-            shutil.copyfile(CODEX_DIR / name, runtime / name)
         for profile in profiles:
             for name in ("SKILL.md", "agents/openai.yaml", "references/workflow.md"):
                 destination = runtime / "skills" / profile / name
@@ -97,6 +95,91 @@ class FixtureCase(unittest.TestCase):
 
 
 class CoreTests(FixtureCase):
+    def test_quick_code_embedded_api_respects_current_receiver_consent(self):
+        for consent in ("absent", False, "tightened-after-report"):
+            with self.subTest(consent=consent):
+                scenario = self.scenario()
+                (scenario.root / "result.py").write_text("def answer(): return 42\n")
+                scenario.plan(requirements=[requirement(path="result.py", acceptance="behavior")],
+                              deliverables=[{"path": "result.py", "profiles": [DEFAULT_PROFILE]}])
+                scenario.check()
+                reason = "Only the constant return value changes; the declared check passes."
+                policy = json.loads((SOURCE_DIR / "runtime/review-policy.json").read_text())
+                config = scenario.root / ".codex"
+                config.mkdir()
+                if consent == "tightened-after-report":
+                    original = scenario.call("review-start", quick_code_reason=reason)
+                    scenario.report()
+                if consent == "absent":
+                    policy.pop("allow_quick_code", None)
+                else:
+                    policy["allow_quick_code"] = False
+                (config / "review-policy.json").write_text(json.dumps(policy))
+                with self.assertRaises(Error):
+                    scenario.call("review-start", quick_code_reason=reason)
+                if consent == "tightened-after-report":
+                    current = scenario.call("review-context")
+                    self.assertNotEqual(current["token"], original["token"])
+                    self.assertEqual(current["mode"], "standard")
+                    self.rejected_close(scenario)
+
+    def test_quick_code_declaration_is_forwarded_and_remains_version_bound(self):
+        scenario = self.scenario()
+        (scenario.root / "result.py").write_text("def answer(): return 42\n")
+        scenario.argv = [PYTHON, "-I", "-B", "-c", "from pathlib import Path; assert '42' in Path('result.py').read_text()"]
+        scenario.plan(requirements=[requirement(path="result.py", acceptance="behavior")],
+                      deliverables=[{"path": "result.py", "profiles": [DEFAULT_PROFILE]}],
+                      checks=[check_definition("c1", scenario.argv, "behavior")])
+        scenario.check()
+        reason = "Only the constant return value changes; the declared boundary check passes."
+        with self.assertRaises(Error):
+            scenario.call("review-start", actor=WORKER, quick_code_reason=reason)
+        for malformed in ("", " ", True, 42, "a" * 1001):
+            with self.assertRaises(Error):
+                scenario.call("review-start", quick_code_reason=malformed)
+        context = scenario.call("review-start", quick_code_reason=reason)
+        self.assertEqual((context["mode"], context["required_reviewers"]), ("quick", 1))
+        self.assertEqual(context["quick_code_reason"], reason)
+        self.assertTrue(scenario.call("review-start", quick_code_reason=reason)["unchanged"])
+        scenario.report()
+        self.assertEqual(scenario.close()["status"], "complete")
+        scenario.plan()
+        (scenario.root / "result.py").write_text("def answer(): return 42 + 1\n")
+        scenario.check()
+        self.assertEqual(scenario.call("review-context")["mode"], "standard")
+        with self.assertRaises(Error):
+            scenario.call("review-start", quick_code_reason=reason)
+        self.assertEqual(scenario.start()["required_reviewers"], 3)
+        scenario.report()
+        self.rejected_close(scenario)
+
+    def test_quick_code_embedded_api_retains_receiver_quorum_and_sensitive_paths(self):
+        for sensitive in (False, True):
+            with self.subTest(sensitive=sensitive):
+                scenario = self.scenario()
+                (scenario.root / "result.py").write_text("def answer(): return 42\n")
+                scenario.plan(requirements=[requirement(path="result.py", acceptance="behavior")],
+                              deliverables=[{"path": "result.py", "profiles": [DEFAULT_PROFILE]}])
+                scenario.check()
+                policy = json.loads((SOURCE_DIR / "runtime/review-policy.json").read_text())
+                policy["modes"]["quick"] = {"reviewers": 2, "focus": {"correctness": 2}}
+                if sensitive:
+                    policy["deep_patterns"].append("result.py")
+                config = scenario.root / ".codex"
+                config.mkdir()
+                (config / "review-policy.json").write_text(json.dumps(policy))
+                reason = "Only the constant return value changes; the declared check passes."
+                if sensitive:
+                    with self.assertRaises(Error):
+                        scenario.call("review-start", quick_code_reason=reason)
+                else:
+                    context = scenario.call("review-start", quick_code_reason=reason)
+                    self.assertEqual((context["mode"], context["required_reviewers"]), ("quick", 2))
+                    scenario.report()
+                    self.rejected_close(scenario)
+                    scenario.report(1)
+                    self.assertEqual(scenario.close()["status"], "complete")
+
     def test_complete_workflow_runs_with_git_unavailable(self):
         with patch.dict(os.environ, {"PATH": ""}):
             scenario = self.ready()
@@ -546,7 +629,7 @@ class CoreTests(FixtureCase):
         for number in (1, 2):
             scenario.check()
             self.assertEqual(scenario.start()["round"], number)
-        policy_path = runtime / "review-policy.json"
+        policy_path = runtime / "ecosystem/runtime/review-policy.json"
         policy = json.loads(policy_path.read_text())
         policy["max_rounds"] = 10
         policy["modes"]["standard"] = {"reviewers": 1, "focus": {"correctness": 1}}

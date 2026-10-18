@@ -1,6 +1,6 @@
 # AGENTS.md — constellation en Codex
 
-Este repositorio mantiene las herramientas compartidas de `~/GitHub/`.
+Este repositorio mantiene la fuente de Constellation y el registro de `~/GitHub/`.
 Las carpetas hijas son repositorios independientes, con sus propios contratos,
 historias y pruebas. El hub no tiene un tier de QuantOS. Abrir Codex en esta
 raíz permite coordinar todos los proyectos registrados sin mezclar sus índices.
@@ -16,6 +16,15 @@ autorización. Una corrección o pregunta de estado conserva el objetivo vigente
 La petición actual del usuario prevalece sobre las guías locales. Si una regla
 obliga a detenerte, cita su archivo e instrucción exactos. Respeta los permisos,
 las revisiones de aprobación y la confianza de hooks del cliente.
+
+Codex ejecuta modelos, herramientas, sesiones, permisos, skills y agentes.
+Constellation coordina contratos, dependencias, evidencia y publicación mediante
+su [runtime compartido](.codex/ecosystem/ARCHITECTURE.md). No reconstruyas esas
+capacidades nativas. Usa el catálogo de la sesión para seleccionar skills por
+su pertinencia y lee sus instrucciones sólo cuando hagan falta; el usuario no
+necesita recordar sus nombres. Una definición o consulta breve no abre un ciclo
+de publicación. Una tarea Git ordinaria usa un único contrato del receptor;
+las obligaciones matemáticas o editoriales conservan su validación específica.
 
 Codex usa este contrato y el perfil nativo de [.codex/README.md](.codex/README.md).
 `.claude/` mantiene el sistema de Claude; sus routers, agentes, comandos y loops
@@ -53,8 +62,9 @@ el límite del cliente y de la sesión prevalece y se comparte entre sus tareas.
 No ocupes todos los agentes por obligación ni crees pools por repositorio dentro
 de una misma sesión. Hereda modelo y esfuerzo; el coordinador integra y publica.
 
-Tras declarar el plan, usa `workspace.py dispatch --capacity N` para obtener
-paquetes y oleadas por dueño Git. Ejecuta los paquetes con agentes nativos,
+Cuando delegar aporte trabajo independiente útil, tras declarar el plan usa
+`workspace.py dispatch --capacity N` para obtener paquetes y oleadas por dueño
+Git. Ejecuta los paquetes pertinentes con agentes nativos,
 descuenta los agentes ya ocupados y conserva archivos exclusivos por escritor.
 Para investigar aplica [.codex/RESEARCH.md](.codex/RESEARCH.md): hipótesis,
 fuentes, contraejemplos y evidencia reproducible. Registra los implementadores
@@ -85,7 +95,7 @@ resultado, commits granulares y cierre con remoto verificado. Las consultas
 usan `paths: []`. Los perfiles nativos hijos usan el motor común y conservan
 su doctrina y hooks Git. No instales ni regeneres perfiles incidentalmente.
 
-Python estándar es suficiente para el flujo nativo (3.9+). Las utilidades de
+El runtime compartido y el paquete portable requieren Python 3.11+. Las utilidades de
 proyección de Claude requieren Python 3.12+. Reutiliza el código existente y
 prueba comportamiento real, incluidos rechazos cuando cambies un control.
 No añadas pruebas que reproduzcan una edición trivial. Tras pasar las pruebas

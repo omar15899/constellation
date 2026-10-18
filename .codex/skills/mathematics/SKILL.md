@@ -5,42 +5,46 @@ description: "Investigate mathematics and mathematical physics, solve substantiv
 
 # Mathematics
 
-Establece qué se quiere demostrar, calcular o refutar antes de elegir una técnica.
-Trabaja con rigor de MSc/PhD cuando el problema lo requiera; adapta la exposición
-al usuario. Introduce cada fórmula en prosa y explica qué permite concluir.
+Establece qué se quiere demostrar, calcular o refutar. Antes de usarlos, fija
+objetos, espacios, tipos, hipótesis y cuantificadores. Trabaja con rigor de
+MSc/PhD cuando corresponda y adapta la exposición al usuario: introduce cada
+fórmula en prosa y explica qué permite concluir.
 
-Antes de que sostengan un argumento, fija objetos, espacios, tipos, hipótesis,
-cuantificadores y objetivo. Aplica la [ontología compartida](../../ecosystem/references/ontology.md):
-separa objetos de representaciones, explicita mapas y estructuras preservadas,
-y comprueba invariantes. Una biyección no establece equivalencia geométrica;
-una expresión en coordenadas no proporciona coordenadas globales. Consulta los
-[ejemplos ontológicos](../../ecosystem/references/ontology-examples.md) cuando
-esa distinción determine la validez del razonamiento.
+Una definición o explicación breve se responde directamente; no exige agentes,
+contrato persistente ni publicación. Para investigación, problemas difíciles o
+auditoría de pruebas, consulta el [flujo matemático](references/workflow.md).
 
-Para investigación, problemas difíciles o auditoría de pruebas, lee el
-[flujo matemático](references/workflow.md). Distribuye vías matemáticamente
-distintas entre agentes cuando aporte valor: sus primeras tentativas deben ser
-independientes, sin ver las otras. Busca contraejemplos, casos degenerados e
-hipótesis insuficientes. La revisión independiente examina los pasos esenciales,
-sus dominios y las hipótesis de cada teorema; el consenso no es una prueba.
+Separa objetos de representaciones y explicita mapas, dominios e invariantes.
+Una biyección no establece equivalencia geométrica; una expresión en coordenadas
+no proporciona coordenadas globales. Consulta la
+[ontología compartida](../../ecosystem/references/ontology.md) y sus
+[ejemplos](../../ecosystem/references/ontology-examples.md) cuando esas
+distinciones necesiten desarrollo para resolver el argumento.
 
-Consulta fuentes primarias y sus enunciados exactos cuando el argumento dependa
-de resultados externos. Usa cálculo simbólico, experimentos numéricos o sistemas
-formales cuando resuelvan una incertidumbre concreta; conserva entradas y
-condiciones reproducibles. Los resultados numéricos no sustituyen una prueba.
+Distribuye vías matemáticamente distintas cuando aporte valor, manteniendo sus
+primeras tentativas independientes. Busca contraejemplos, casos degenerados e
+hipótesis insuficientes. La revisión independiente debe reconstruir los pasos
+esenciales y comprobar las hipótesis de cada teorema; el consenso no es prueba.
+Consulta fuentes primarias y enunciados exactos cuando dependas de resultados
+externos. Usa cálculo simbólico, numérico o formal para resolver incertidumbres
+concretas y conserva entradas y condiciones reproducibles. Una observación
+numérica no sustituye una demostración.
 
-Cada entrega significativa debe relacionar requisitos, artefactos, evidencia,
-autores reales y revisión independiente mediante el
-[protocolo nativo](../../ecosystem/references/protocol.md), cuyo motor requiere
-Python 3.11+. Aplica el perfil `mathematics` por entregable; combina `coding` o
-`writter` donde el resultado también lo necesite. Ajusta el esfuerzo a la
-dificultad: una cuenta básica no necesita un proceso de investigación. Para una
-entrega sustantiva en conversación, materializa solo un artefacto intencional si
-la puerta necesita archivos, nunca una transcripción. El motor admite trabajo
-sin Git; no crees un repositorio artificial.
+Cuando la entrega sustantiva requiera evidencia persistente, usa el
+[protocolo común](../../ecosystem/references/protocol.md) para relacionar
+requisitos, artefactos, autores reales, comprobaciones y revisión. El portátil
+admite trabajo sin Git; una modificación Git ordinaria conserva el contrato
+receptor. No dupliques ciclos por combinar skills. Si la publicación depende de
+una prueba, enlaza expresamente su evidencia vigente con la integración Git.
+Materializa resultados intencionales, nunca transcripciones.
+
+Combina `coding`, `writter` o una skill de formato disponible cuando el resultado
+requiera implementación, elaboración editorial o archivos con ese formato. Un
+solver con análisis e informe conserva esas obligaciones distintas; aplicar el
+perfil `mathematics` no acredita su ejecución ni sustituye las otras revisiones.
 
 Distingue prueba informal revisada, prueba formal ejecutada, evidencia
 experimental, resultado condicional, refutación y cuestión abierta. Una
 obligación esencial pendiente impide declarar `proved`. Entrega resultados
-parciales honestos con la obligación pendiente y la evidencia necesaria para
-reanudar. La puerta comprueba trazabilidad y vigencia, no verdad matemática.
+parciales con sus hipótesis, el impedimento y la evidencia necesaria para
+reanudar. La puerta verifica trazabilidad y vigencia, no verdad matemática.

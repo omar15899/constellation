@@ -4,7 +4,7 @@
 before it may be called CONFIRMED, and the vocabulary every verdict uses. This is
 the methodology Omar has already paid to discover — encoded so it is not
 re-derived or quietly relaxed each session. Planning decision: the bar is the
-user's; Claude may not lower it to make a result pass.*
+user's; no model or executor may lower it to make a result pass.*
 
 ## Why a gate exists
 
@@ -74,6 +74,18 @@ gate, not just the survivor. A cell CONFIRMED at m=5 is only **CAPPED** at m=35.
 Silently shrinking m to make a cell pass is relaxing a planning decision — it is
 forbidden. State m explicitly with every verdict.
 
+The CLI's `--glob` selects the cells loaded into the report; it does **not**
+define the trial denominator. `--n-trials-total` supplies that denominator;
+without it, `_search_trial_count()` estimates it from local outputs and the
+search registry. Verify that estimate against the actual search history. An
+explicit value is not independently authenticated by the CLI.
+
+An honest count alone is insufficient: retain the complete family's returns,
+per-bar Sharpe dispersion and selection history. DSR, PBO and Reality Check
+cannot recover omitted trials from a larger `m`. A report over a curated subset
+must disclose its missing family evidence and cannot support a family-wide
+CONFIRMED claim merely because its denominator was increased.
+
 ## Verdict vocabulary (canonical)
 
 | verdict          | meaning                                                                 |
@@ -105,8 +117,34 @@ instrument:
   — `promote()`, `pbo_cscv()`, `reality_check()`, `block_bootstrap_sharpe_ci()`,
   `benjamini_hochberg()`, `bonferroni()`, `expected_max_sharpe()`. numpy/pandas
   only; normal CDF via erfc, inverse-CDF via Acklam (no scipy).
-- `scripts/promotion_report.py --glob '<outputs glob>' [--ppy 252]` — loads each
-  cell's `pnl.csv`, treats the glob as the family m, writes `reports/promotion_*.json`.
+- `research_algorithms/learning_to_rank_cross_sectional/scripts/promotion_report.py`
+  — run from that subproject with `--glob '<outputs glob>' [--ppy 252]
+  [--n-trials-total M]`. Repeated globs select cells; the loader prefers
+  `pnl_backtestlab.csv` and otherwise reads `pnl.csv`. The default output is
+  `reports/promotion_report.json`; `--out` chooses another report path.
+- `research_algorithms/learning_to_rank_cross_sectional/src/ltr_cross_sectional/promotion/report.py`
+  — `build_promotion_report()` combines the four bars, PBO, Reality Check,
+  robust objective and engine/run-class restrictions. Consume this complete
+  report, not only the preliminary per-cell table.
+
+The CLI's automatic count is the maximum of the number of output directories
+containing `pnl.csv`, the combined nonempty-line counts of
+`reports/research_search_registry.jsonl` and its `.bak`, and one. It then takes
+at least the number of loaded candidates. This is a local estimate, not a
+deduplicated catalogue of every experiment. The CLI derives return matrices and
+Sharpe dispersion from the selected cells, so use the full relevant family and
+document missing or unusable trials rather than assuming autodetection supplies
+their statistical evidence. Direct `promote()` calls without `n_trials_total`
+still fall back to the candidate count with a warning; that fallback does not
+waive this contract.
+
+The current CLI sorts candidates by annualised Sharpe and builds the complete
+report only for that winner. It does not supply `costs`, `turnover` or
+`factor_exposure`: cost sensitivity is unavailable (NaN), and the latter two
+penalties contribute zero. This is a wiring limitation, not evidence of selection
+on the fully specified robust objective. Supply and verify those inputs through
+the existing report API when claiming that validation; do not treat missing
+cost sensitivity or a default penalty as a measured zero.
 
 > Memory citations are point-in-time; verify these paths exist in ResearchLab
 > before asserting. See [[ltr-promotion-gate]].

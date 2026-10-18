@@ -1,8 +1,16 @@
 # Investigación y auditoría matemática
 
+Para trabajo sustancial o prolongado, conserva decisiones, hallazgos, evidencia y
+siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/PROGRESS.md).
+Sincroniza hitos personales sólo cuando la política local lo autorice; no abras
+otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimiento.
+
 ## Precisar la obligación
 
 Formula una afirmación comprobable, con el alcance de sus cuantificadores.
+Una definición o explicación breve se resuelve sin activar este ciclo completo.
+Para una investigación sustantiva, carga solo las capacidades disponibles que
+aporten demostración, cálculo, implementación o presentación al resultado.
 Declara los objetos y sus espacios antes de operar: dominio y codominio de
 mapas, estructuras algebraicas o geométricas, regularidad, topologías y medidas
 solo donde intervengan. Distingue dato, definición, hipótesis, convención,
@@ -45,7 +53,9 @@ responsabilidad, leyendo los recursos pertinentes de
 perfil, transmite sus instrucciones al agente nativo disponible; no finjas que
 el perfil fue registrado o ejecutado. Hereda el modelo, el esfuerzo y los
 permisos de la sesión; no fijes Astra ni otro modelo por costumbre. Respeta la
-capacidad efectiva y asigna archivos exclusivos a quienes escriban.
+capacidad efectiva y asigna archivos exclusivos a quienes escriban. Cada agente
+comprueba sus herramientas y lee las skills que necesite desde una ubicación
+accesible; el catálogo del coordinador no demuestra disponibilidad en el trabajador.
 
 Después de las primeras tentativas, compara los argumentos por validez,
 generalidad, fuerza de sus hipótesis, claridad y utilidad para el objetivo.
@@ -102,11 +112,15 @@ conclusiones afectadas por cambios de hipótesis, fuentes o artefactos.
 ## Cierre proporcional y reanudable
 
 Para una entrega significativa, aplica el
-[protocolo nativo](../../../ecosystem/references/protocol.md). Allí viven la API,
-el CLI, los esquemas, los umbrales y las reglas de vigencia: usa su versión
-actual, sin inventar operaciones ni duplicar una puerta propia. El motor de
-Python 3.11+ funciona con una raíz y un estado local sin depender de Git.
-Dentro de un repositorio, conserva también sus controles de publicación.
+[protocolo común](../../../ecosystem/references/protocol.md) y elige el ciclo por
+su objetivo. Una prueba o informe sin publicación usa el CLI portátil de Python
+3.11+ con una raíz y estado local, sin depender de Git. Un cambio Git ordinario
+conserva el flujo receptor. Cuando la publicación dependa de una prueba, declara
+la obligación semántica en el portátil y entrega a la integración Git los
+artefactos revisados y la evidencia vigente. El flujo Git no evalúa automáticamente
+los veredictos de prueba ni los hashes de entradas y comandos del portátil:
+verifica esa dependencia expresamente. No registres dos veces el encargo completo
+ni conviertas una aprobación Git en prueba matemática.
 
 Relaciona cada requisito con los artefactos que lo satisfacen, comprobaciones
 pertinentes, autores reales y evaluación independiente. Elige perfiles por

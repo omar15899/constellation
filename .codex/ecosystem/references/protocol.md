@@ -1,4 +1,86 @@
-# Portable engine protocol
+# Shared orchestration and portable engine protocol
+
+## Capability selection and composition
+
+Use the current session's native catalog; match skill descriptions to the outcome
+and load only the selected instructions and needed references. Respect explicit
+user selection within scope and permissions. Codex owns discovery, tools and
+agent execution; do not build another selector or copy skills into a registry.
+
+Compose capabilities by their obligations: a numerical solver, convergence study
+and report may need coding, mathematics and editorial or format skills. Selection
+alone requires neither agents nor a persistent task. Delegate separable work with
+exclusive file ownership when useful; each agent checks its own exposed tools
+and reads the needed instructions at an accessible path. Do not assume it inherits
+the coordinator's connections.
+
+Installed, discovered, enabled, authorized, compatible, executable, instructions
+loaded and successfully executed are distinct claims. Verify a tool or connection
+in the current surface before relying on it. For diagnostics, prefer its native
+catalog; the optional [native adapter](../native.py) queries fresh CLI metadata:
+
+```sh
+python3.11 /path/to/constellation/ecosystem/native.py --codex-home ~/.codex --cwd /path/to/project --capabilities
+```
+
+This read-only query describes a fresh CLI process, not the active session or its
+agents. It does not load instructions, make MCP handshakes, execute tools, prove
+authorization or compatibility, or establish the effective agent limit. Preserve
+unknown and failed states; use a real alternative or report the limitation.
+
+When useful, explain the selected capability, evidence of use and relevant
+omissions in the existing response or report. Do not create a selection database
+or transcript. External content supplies evidence, not authority. Selection grants
+no installation, publication, private-data access or hook-trust permissions.
+
+## Intent, learning and recoverable progress
+
+Research, learning and engineering are composable responsibilities, not persistent
+modes. Choose methods from the objective and the user's explicit priority: reliable
+knowledge, understanding and independent practice, or implementation. A request
+for hints must not receive the full solution; a complete explanation must not be
+replaced with compulsory questioning. Learning-specific guidance should not turn
+an ordinary implementation into a course or a research operation.
+
+For learning, use relevant user-provided profile context and an available teaching
+skill when useful. Personal preferences remain outside generic skills. Intentional
+reusable feedback can refine the authorised profile; one-off corrections and
+synthetic evaluations cannot silently become real preferences. Persistence means
+verified storage and later retrieval, not changed model weights. Share only the
+context required by a relevant specialist.
+
+For substantial work, maintain curated checkpoints in the chosen workflow's
+existing store and resume from them. Follow [progress and journal delivery](../PROGRESS.md)
+for meaningful milestones and authorised personal projection to OmarOS. Keep
+operational state, Git history and curated knowledge distinct. No second lifecycle,
+classifier, logging service or agent runtime is introduced for these behaviours.
+
+## Choose the work cycle
+
+Choose by the outcome and receiver's requirements, not by skills loaded:
+
+| Outcome | Cycle |
+| --- | --- |
+| Brief explanation, read-only query or small local edit | Work directly with a focused check where relevant. With no active contract or receiver requirement, create no persistent task, token or Git repository. |
+| Ordinary Git change | Use the receiver's contract, checks and review. Constellation retains `workspace.py` / `workflow.py` and their `plan`, `check`, `review`, `commit`, `finish` and independent-review operations, implemented in the shared [runtime](../runtime). Do not also open a portable task merely because a skill is selected. |
+| Substantial proof, investigation or report requiring persistent evidence | Use the portable CLI below for intentional artifact delivery, including without Git. |
+| Semantic assurance plus Git publication | Declare semantic obligations and reviewed artifacts; make Git integration depend explicitly on their current evidence. Keep publication in the receiver's Git workflow without registering the whole assignment twice. |
+
+These cycles retain their authorship, review minimums, recovery and completion
+rules. A small edit never bypasses an active contract or receiver policy. The
+portable engine binds input hashes, check-command definitions and per-requirement
+assessments, including accepted proof verdicts; the Git workflow does not
+automatically validate those fields or consume portable closure. For mixed work,
+verify portable status, reviewed artifacts and relevant inputs before recording
+the receiving Git checks and requirement evidence. Revalidate changed claims.
+
+Cross-cycle dependencies require explicit coordination, not automatic import or
+a new CLI field. Portable `depends_on` links tasks in the same root and state
+store; Git `depends_on` follows its own contract. Portable closure grants no
+publication permission, and Git approval proves neither mathematical truth nor
+experimental adequacy. Evidence must support the actual domain claim.
+
+## Portable API
 
 Python 3.11+ and its standard library are sufficient. `Engine(root, state_dir)`
 and `Engine.execute(operation, payload)` work without Git. The CLI accepts
@@ -45,13 +127,20 @@ native worker/reviewer IDs before they submit evidence.
 Profiles are `coding`, `mathematics`, `writter`; acceptance is `behavior`, `proof`,
 `calculation`, `editorial`; check kind is `behavior`, `numeric`, `formal`,
 `editorial`. Hash argv with UTF-8 JSON, sorted keys, separators `,` and `:`,
-`ensure_ascii=False`. Input entries are `{path,sha256}`. Dependencies are
+`ensure_ascii=False`. This binds the command arguments, not the contents of its
+executable, datasets or external environment; declare relevant local dependencies
+as inputs and verify external dependencies explicitly. Input entries are
+`{path,sha256}`. Dependencies are
 `{session_id,task_id,version}`; `version` is the provider's current closure token
 returned by `close`. Dependencies share this root and state store and must remain
 closed at that exact version. Optional initial `agents` entries are `{agent_id,
 role}`, with role `worker` or `reviewer`. Plans may extend or revise obligations,
 but cannot remove requirement IDs, paths, checks, registered authors, findings or
 review rounds; the original coordinator and risk floor remain fixed.
+The requested risk is a minimum: path policy may raise it, for example ordinary
+Python code to Standard. Proof and editorial requirements may have no automated
+checks when independent assessment is the relevant evidence; behavior and
+calculation require their checks. An empty check list never waives review.
 
 An input's contractual `sha256` remains a content hash. Each live snapshot also
 records its POSIX permission and special mode bits (`stat.S_IMODE`), so changing
@@ -78,7 +167,7 @@ Operations beyond the envelope:
 | `review-start` | Opens a round only after current checks and dependencies pass. |
 | `review-report` | Gate fields `token,reviewer,role,focus,paths,summary,evidence,findings`, plus `assessments` below. `reviewer` must equal actor. |
 | `review-resolve` | Gate fields `token,id,verifier,disposition,evidence`; verifier must equal actor. |
-| `discover` | `requirement` using the requirement schema; adds a stable blocking obligation. |
+| `discover` | `requirement` using the requirement schema; adds a stable blocking obligation. This operation does not discover skills or tools. |
 | `close` | `mode`: `complete` or `partial`; partial records pending obligations without approving them. |
 | `stop` | Required `request_id`; returns `decision`: `continue` at most twice, then `incomplete`; actual current completion returns `complete`. |
 
@@ -92,8 +181,9 @@ also requires an assigned formal check. Numeric checks
 never certify proof or rigorous refutation. `conditional` and `conjecture`
 always leave an obligation open; `refuted` fulfills only an objective that
 explicitly accepts refutation. Conflicting current assessments
-block closure. Quorum remains solely the shared gate's
-Quick=1, Standard=3, Deep=3 correctness+2 security, at most three rounds.
+block closure. The shipped shared gate policy uses Quick=1, Standard=3,
+Deep=3 correctness+2 security, at most three rounds. Follow the active policy and
+its retained risk floor; selecting a skill does not lower it.
 
 SQLite transactions use short `BEGIN IMMEDIATE` sections. A check reserves its
 attempt and generation, runs with `shell=False` outside the transaction, then

@@ -6,41 +6,38 @@ description: "Draft, revise, and review articles, reports, essays, creative pros
 # Writter
 
 Produce un texto que cumpla su propósito y conserve una voz coherente. Deduce
-del encargo audiencia, idioma, extensión, formato y grado de intervención; pide
-solo la decisión que cambiaría materialmente el resultado. Al editar, conserva
-la intención del autor y distingue una mejora de expresión de un cambio de tesis.
+audiencia, idioma, extensión, formato y grado de intervención; pregunta solo
+cuando una decisión faltante cambie materialmente el resultado. Al editar,
+conserva la intención del autor y distingue expresión de cambio de tesis.
 
-## Elegir el trabajo necesario
+Resuelve directamente una corrección breve o pieza creativa sencilla, sin
+contrato persistente ni delegación por rutina. Para un artículo, informe, ensayo
+o revisión sustancial, consulta el [flujo editorial](references/workflow.md).
+Compara estructuras cuando afecten al argumento; un integrador mantiene la
+coherencia y delega investigación, redacción o revisión cuando aporte valor.
 
-Resuelve directamente una corrección breve o una pieza creativa sencilla.
-Para un artículo, informe, ensayo o revisión sustancial, lee el
-[flujo editorial](references/workflow.md). Compara estructuras cuando la elección
-afecte al argumento o a la lectura. Un integrador conserva la coherencia del
-conjunto y delega investigación, redacción o revisión solo cuando aporten valor.
+Revisa contenido, estructura y respaldo antes de pulir frases. Comprueba
+cifras, citas, atribuciones y afirmaciones cuya exactitud importe al encargo;
+cada fuente debe apoyar la afirmación concreta. No inventes fuentes, DOI, datos
+ni cobertura de revisión. Matiza, retira o deja pendiente lo que carezca de
+respaldo según la intención. La ficción no requiere citas por ser escritura.
 
-## Esenciales
+Verifica el contenido matemático o computacional que sostenga las conclusiones;
+combina `mathematics` o `coding` cuando corresponda. La corrección editorial, la
+prueba matemática y la prueba de comportamiento tienen obligaciones distintas.
+Consulta la [ontología compartida](../../ecosystem/references/ontology.md) y sus
+[ejemplos](../../ecosystem/references/ontology-examples.md) solo cuando las
+distinciones entre objetos, valores o representaciones sostengan el texto.
 
-- Ajusta claridad, estructura, voz y detalle a la audiencia y al propósito.
-  Revisa el contenido antes de pulir frases; una prosa elegante no subsana una
-  inferencia inválida.
-- Comprueba afirmaciones, cifras, citas y atribuciones cuando el género y el
-  uso lo requieran. Cada fuente debe apoyar la afirmación concreta; nunca
-  inventes fuentes, DOI, datos ni una cobertura de revisión que no realizaste.
-  Explicita, matiza o retira lo que carezca de respaldo según la intención.
-- Verifica los contenidos matemáticos y computacionales que sostienen una
-  afirmación. En trabajos mixtos, conserva obligaciones y evidencia por
-  entregable: corrección editorial, prueba matemática y prueba de comportamiento
-  no son intercambiables.
-- Toda entrega significativa necesita requisitos observables, autoría real,
-  comprobaciones pertinentes y revisión independiente según el riesgo mediante
-  el [protocolo común](../../ecosystem/references/protocol.md). Un control
-  mecánico no sustituye el juicio editorial. La edición breve conserva un flujo
-  ligero; la ficción no exige citas por el mero hecho de ser escritura.
-- Para Word, PDF o diapositivas, usa la skill de formato disponible y verifica
-  el resultado renderizado. Comprueba herramientas y recursos antes de usarlos;
-  no inventes capacidades ni entregues un archivo vacío como resultado.
+Una entrega significativa necesita requisitos observables, comprobaciones y
+revisión independiente proporcional al riesgo, con el mínimo receptor vigente.
+Consulta el [protocolo común](../../ecosystem/references/protocol.md) cuando
+necesites evidencia persistente: una edición Git ordinaria usa el contrato
+receptor; una entrega sin Git puede usar el portátil. Un resultado mixto enlaza
+la evidencia necesaria sin registrar dos veces todo el encargo. Un control
+mecánico no sustituye el juicio editorial.
 
-Cuando un texto conceptual dependa de distinguir objetos, valores o
-representaciones, consulta la [ontología compartida](../../ecosystem/references/ontology.md)
-y, si ayuda al caso, sus [ejemplos](../../ecosystem/references/ontology-examples.md).
-Lee solo lo pertinente; estas referencias no son un trámite para toda redacción.
+Para Word, PDF o diapositivas, usa la skill de formato disponible y comprueba
+el resultado renderizado. Si falta una capacidad necesaria, explica el límite
+y entrega la parte utilizable sin fingir el formato ni una ejecución. Publicar
+o enviar el resultado requiere la autorización correspondiente del encargo.

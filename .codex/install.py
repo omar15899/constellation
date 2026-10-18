@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 
 def git(root: Path, *args: str) -> str:
@@ -14,6 +15,8 @@ def git(root: Path, *args: str) -> str:
 
 
 def install(root: Path) -> dict[str, str]:
+    if sys.version_info < (3, 11):
+        raise ValueError('Constellation Git guards require Python 3.11 or newer.')
     root = root.resolve()
     if Path(git(root, 'rev-parse', '--show-toplevel')).resolve() != root:
         raise ValueError('Install from the repository root, not a parent or child repository.')

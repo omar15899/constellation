@@ -6,8 +6,8 @@ ciclo por cada dueño Git. El registro operativo está en `repositories.json`;
 los proyectos propios usan perfiles nativos y `ruflo` conserva su perfil externo.
 La sección de uso siguiente documenta el motor de **un solo repositorio**.
 
-El perfil mantiene instrucciones breves y un motor compartido de publicación,
-adaptado de OmarOS. Codex trabaja directamente; no necesita proyectar Claude,
+El perfil mantiene instrucciones breves y entradas al runtime compartido de
+[Constellation](ecosystem/ARCHITECTURE.md). Codex trabaja directamente; no necesita proyectar Claude,
 cargar el sistema de agentes de Claude ni recorrer una cadena de skills. El modelo,
 esfuerzo y permisos se heredan de los ajustes del usuario.
 
@@ -19,10 +19,12 @@ exclusión explícita de fuentes por ruta descrita en su guía para evitar dos
 copias activas. El paquete conserva este flujo como autoridad de publicación:
 su `close` no hace commits, push ni sustituye los controles del proyecto.
 
-El reparto nativo se genera con `workspace.py dispatch`: tareas de mapa,
-investigación, implementación, checks y revisión, ordenadas por dependencias y
-capacidad compartida. [RESEARCH.md](RESEARCH.md) explica la ejecución y el
-handoff de evidencia. Seis perfiles nativos en `agents/` dan instrucciones a los
+Cuando la tarea se beneficia de delegación, `workspace.py dispatch` propone
+implementación, checks y revisión ordenados por dependencias y capacidad. Una
+implementación con un solo dueño puede quedar en el coordinador; mapa e
+investigación se añaden cuando resuelven una incertidumbre real.
+[RESEARCH.md](RESEARCH.md) explica la ejecución y el
+handoff de evidencia. Ocho perfiles compartidos en `ecosystem/agents/` dan instrucciones a los
 trabajadores; el coordinador los inicia con las herramientas del cliente.
 Un participante sin cambios se publica y verifica con `workspace.py publish
 --repo RUTA`, conservando la dependencia del consumidor sin crear commits vacíos.
@@ -30,30 +32,30 @@ Un participante sin cambios se publica y verifica con `workspace.py publish
 | Aspecto | Proyección anterior | Perfil nativo |
 | --- | --- | --- |
 | Contrato de Codex | Entrada → kernel Claude → contratos y roles | `AGENTS.md` propio |
-| Agentes especializados | 3 | 6 perfiles nativos que heredan modelo y esfuerzo |
+| Agentes especializados | 3 | 8 perfiles compartidos que heredan modelo y esfuerzo |
 | Skills del hub cargadas | 14 | 3 módulos mediante el plugin portable; exclusión nativa explícita de fuentes para evitar duplicados |
-| Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 4 comandos del hub y 5 opcionales del plugin, con confianza independiente |
+| Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 5 eventos del plugin; definiciones duplicadas del hub retiradas |
 | Verificación | Hooks dispersos y evidencia de ejecución | Prueba real, revisión independiente vigente y publicación comprobada |
-| Dependencias del flujo | Adaptador y scripts de Claude | Python estándar 3.9+ y Git |
+| Dependencias del flujo | Adaptador y scripts de Claude | Python estándar y Git; paquete portable y gateway requieren Python 3.11+ |
 
 La [guía oficial de modelos](https://developers.openai.com/api/docs/guides/latest-model),
 consultada el 2026-09-09, orienta las decisiones sobre autonomía, conflictos entre
 instrucciones, delegación selectiva, claridad y pruebas proporcionales. Aplicar
 esa guía a las instrucciones no requiere cambiar el modelo que Omar elija.
 
-## Contexto de un millón de tokens
+## Modelo, contexto y permisos
 
-El `config.toml` de este proyecto establece `model_context_window = 1000000`
-y `model_auto_compact_token_limit = 900000`. Se conserva el modelo del usuario;
-GPT-6 Astra y GPT-5.6 Sol documentan ventanas de 1.050.000 tokens. El ajuste se
-aplica al hub y no cambia el archivo global `~/.codex/config.toml`.
+El hub hereda la configuración nativa del usuario. No fija modelo, esfuerzo,
+ventana de contexto ni umbral de compactación: Codex resuelve sus defaults según
+el modelo y la superficie. Se retiró el archivo local que imponía un millón de
+tokens y 900.000 para compactar, además de repetir hooks y capacidad ya globales.
+Cambiar entre modelos compatibles no exige editar proyectos ni skills.
 
-Reabre Codex e inicia una tarea nueva en GitHub para cargarlo. La compactación
-puede resumir el historial al alcanzar el umbral; no recupera detalle ya
-resumido ni aumenta la cuota de uso. Si eliges un modelo de menor ventana,
-retira estos dos overrides o ajústalos a su capacidad documentada. Un contexto
-más largo puede aumentar consumo y latencia.
-[Referencia de configuración](https://learn.chatgpt.com/docs/config-file/config-reference).
+Consulta `model/list` y la configuración efectiva del cliente para disponibilidad
+y esfuerzos. La ventana anunciada por una API no sustituye al presupuesto de
+contexto del cliente instalado. Las pruebas con modelos concretos constan en
+[compatibilidad](ecosystem/COMPATIBILITY.md); no prueban modelos futuros.
+[Configuración nativa](https://learn.chatgpt.com/docs/config-file/config-reference).
 
 ## Uso
 
@@ -61,7 +63,7 @@ Desde la raíz del hub, ejecuta `python3 .codex/workflow.py`. El CLI usa
 `CODEX_THREAD_ID`; si el hook comunica otra sesión, añade `--session ID` antes
 del subcomando. No compartas la sesión `manual` entre trabajos concurrentes.
 
-1. `begin --turn ID` comprueba el upstream si no lo hizo el hook de inicio.
+1. `begin --turn ID` comprueba explícitamente el upstream.
    Hace fetch; integra con fast-forward solo con árbol limpio y sin divergencia.
    Un fallo se conserva como impedimento para escritura; permite leer.
 2. `plan` recibe por stdin `requirements` y `paths`: criterios observables y
@@ -112,23 +114,17 @@ El instalador activa tres hooks de Git (`pre-commit`, `post-commit`, `pre-push`)
 solo si no sustituye hooks ajenos. Guarda el valor anterior en el directorio
 privado de Git. No cambia la configuración global de Codex ni su confianza.
 
-Los hooks de Codex están en `hooks.json`: `UserPromptSubmit` comprueba el remoto;
-`PreToolUse` valida las rutas de `apply_patch`, también con nombres cualificados;
-`SubagentStart` comunica sesión, alcance y publicación centralizada sin crear
-estado; `Stop` exige cierre verificado.
-Las cuatro definiciones ejecutan el motor fijo de `$HOME/GitHub/.codex/workflow.py`.
-El cwd de un vecino nunca selecciona otro script. Si instalas el hub en otra
-ubicación, cambia ese destino explícitamente y revisa de nuevo la confianza;
-los comandos de `workspace.py` siguen admitiendo otras ubicaciones.
-Los dos intentos de continuación de Stop son acotados; después informa
-`INCOMPLETE` y no finge que el trabajo terminó. Los scripts no crean agentes,
-procesos residentes ni commits dentro de Stop.
+`hooks.json` conserva una declaración vacía de migración. Los cinco eventos del
+plugin usan un único adaptador para contratos activos. `UserPromptSubmit` no
+crea tareas ni comprueba remotos; `PreToolUse` verifica las rutas declaradas;
+los eventos de agentes comunican contexto y `Stop` solicita cierre con intentos
+acotados e idempotentes. No se publica desde hooks. Los comandos heredados de
+hooks delegan al mismo adaptador para sesiones que todavía los tengan cargados.
 
-Para activar las definiciones nuevas, revísalas en `/hooks` y confía cada una
-mediante la interfaz nativa. Reabre la sesión para cargar el perfil. Comprueba
-que `hooks/list` muestra las cuatro definiciones del proyecto como `trusted`.
-`enabled: true`, instalar los hooks de Git y pasar los tests son hechos distintos
-de esa confianza. No edites hashes de confianza ni uses opciones para eludirla.
+La confianza se administra en `/hooks`; instalar no la concede. Comprueba
+descubrimiento, habilitación, confianza y ejecución por separado. No edites
+hashes de confianza ni uses opciones para eludirla. Una sesión nueva carga las
+definiciones actuales sin los eventos duplicados del hub.
 [Documentación oficial de hooks](https://learn.chatgpt.com/docs/hooks).
 
 ## Alcance y límites
@@ -179,9 +175,8 @@ de retirarlas; `.claude/` se conserva y los validadores Git siguen ejecutándose
 El post-commit de Sweeplab reconoce los commits del coordinador para no crear
 commits o pushes secundarios. El generador reconoce
 `profile.json` en cualquiera de ellos y nunca lo sobrescribe.
-Los hooks validan el repositorio efectivo y el marcador nativo antes de
-crear estado; un evento dirigido a un vecino no ejecuta el flujo del hub ni
-le instala nada. Las utilidades de investigación de `.claude/` siguen disponibles
+El adaptador usa datos de contratos y código fijo del paquete; un evento dirigido
+a un vecino no importa scripts de ese vecino ni le instala nada. Las utilidades de investigación de `.claude/` siguen disponibles
 cuando el trabajo las necesita; este perfil no las carga como ritual inicial.
 
 `.codex/profile.json` declara propiedad nativa. `codex_sync.py --repo .` y sus

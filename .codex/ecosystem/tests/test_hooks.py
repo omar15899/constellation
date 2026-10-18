@@ -88,19 +88,28 @@ class HookProcessTests(unittest.TestCase):
 
     def run_hook(self, event: str, *, payload: dict[str, Any] | None = None,
                  raw: bytes | None = None, env: dict[str, str] | None = None,
-                 state: Path | None = None, audit: bool = False) -> dict[str, Any]:
+                 state: Path | None = None, audit: bool = False,
+                 audit_git: bool = False) -> dict[str, Any]:
         command = [sys.executable, "-I", "-B", str(SOURCE / "hooks.py"), event,
                    "--state-dir", str(state or self.state)]
-        if audit:
+        if audit or audit_git:
             # Audit the actual script in a fresh interpreter. A swallowed access
             # error still fails this harness, proving the forbidden attempt did
             # not merely disappear behind the adapter's exception handler.
             wrapper = """
 import os, pathlib, runpy, sys
-script, private, *arguments = sys.argv[1:]
+script, private, allow_git, *arguments = sys.argv[1:]
 violations = []
 def audit(event, values):
     forbidden = event in {'subprocess.Popen', 'os.system', 'os.exec', 'os.posix_spawn', 'os.spawn'}
+    if event == 'subprocess.Popen' and allow_git == 'yes':
+        command = values[1]
+        if isinstance(command, (list, tuple)) and len(command) > 1 and command[0] == 'git':
+            readonly = {'rev-parse', 'symbolic-ref', 'remote', 'status', 'diff', 'check-ignore',
+                        'ls-files', 'ls-tree', 'diff-tree', 'merge-base'}
+            forbidden = command[1] not in readonly
+            if command[1] == 'config':
+                forbidden = len(command) < 3 or command[2] not in {'--get', '--get-all'}
     if event == 'open' and isinstance(values[0], (str, bytes, os.PathLike)):
         forbidden = forbidden or pathlib.Path(os.fsdecode(values[0])).resolve() == pathlib.Path(private)
     if forbidden:
@@ -115,7 +124,7 @@ finally:
         raise SystemExit(91)
 """
             command = [sys.executable, "-I", "-B", "-c", wrapper,
-                       str(SOURCE / "hooks.py"), str(self.private), event,
+                       str(SOURCE / "hooks.py"), str(self.private), "yes" if audit_git else "no", event,
                        "--state-dir", str(state or self.state)]
         content = raw if raw is not None else json.dumps(
             payload if payload is not None else self.payload(event)).encode()
@@ -306,6 +315,18 @@ finally:
         self.assertEqual((self.root / "result.md").read_text(), "before\n")
         self.assertFalse((self.root / "outside.md").exists())
         self.assertEqual(self.status(), baseline)
+
+    def test_native_patch_input_representations_have_the_same_guard(self) -> None:
+        self.plan()
+        for value in (patch("result.md"), {"input": patch("result.md")},
+                      {"patch": patch("result.md")}, {"command": patch("result.md")}):
+            with self.subTest(input_type=type(value).__name__, value=value):
+                self.assertEqual(self.run_hook("PreToolUse", payload=self.payload(
+                    "PreToolUse", tool_input=value)), {})
+        for value in ({"input": patch("result.md"), "command": patch("outside.md")},
+                      {"file_path": "result.md", "content": "unsupported Write payload"}):
+            self.assert_denied(self.run_hook("PreToolUse", payload=self.payload(
+                "PreToolUse", tool_input=value)))
 
     def test_patch_rename_checks_both_endpoints(self) -> None:
         self.plan()
@@ -568,8 +589,10 @@ finally:
         for raw in cases:
             with self.subTest(size=len(raw), prefix=raw[:20]):
                 self.assert_warning(self.run_hook("Stop", raw=raw))
+                self.assert_denied(self.run_hook("PreToolUse", raw=raw))
         self.assert_warning(self.run_hook("Stop", payload=self.payload("SubagentStart")))
         self.assert_warning(self.run_hook("Stop", payload=self.payload("UnknownEvent")))
+        self.assert_denied(self.run_hook("PreToolUse", payload=self.payload("UnknownEvent")))
         self.assertEqual(self.status(), baseline)
 
     def test_corrupt_or_symlinked_state_never_signals_completion(self) -> None:
@@ -578,10 +601,283 @@ finally:
         database = corrupt / "ecosystem.sqlite3"
         database.write_bytes(b"synthetic invalid database")
         self.assert_warning(self.run_hook("Stop", state=corrupt))
+        self.assert_denied(self.run_hook("PreToolUse", state=corrupt))
         database.unlink()
         database.symlink_to(self.private)
         self.assert_warning(self.run_hook("Stop", state=corrupt, audit=True))
+        self.assert_denied(self.run_hook("PreToolUse", state=corrupt, audit=True))
         self.assertEqual(self.private.read_text(), PRIVATE_TEXT)
+
+    def make_git(self, root: Path | None = None) -> Any:
+        """Create a real disposable Git recipient; never install any native hooks."""
+        from ecosystem.runtime.workflow import Workflow
+
+        root = root or self.root
+        root.mkdir(parents=True, exist_ok=True)
+        remote = self.directory / (root.name + "-remote.git")
+        def git(*arguments: str) -> None:
+            subprocess.run(["git", *arguments], cwd=root, env=self.env,
+                           capture_output=True, check=True)
+        git("init", "--bare", "-q", str(remote))
+        git("init", "-q", "-b", "main")
+        git("config", "user.name", "Synthetic hook fixture")
+        git("config", "user.email", "hook-fixture@example.invalid")
+        git("config", "core.hooksPath", str(root / ".git/hooks"))
+        git("config", "commit.gpgsign", "false")
+        (root / "result.md").write_text("before\n")
+        git("add", "result.md")
+        git("commit", "-qm", "Create synthetic fixture")
+        git("remote", "add", "origin", str(remote))
+        git("push", "-qu", "origin", "main")
+        return Workflow(root, SESSION, create_state=False)
+
+    def git_plan(self, root: Path | None = None) -> Any:
+        flow = self.make_git(root)
+        flow.home.mkdir(mode=0o700)
+        flow.begin("synthetic-setup-turn")
+        flow.plan({"requirements": ["Synthetic result is checked"], "paths": ["result.md"]})
+        return flow
+
+    def legacy_peer(self) -> tuple[Path, Path, dict[str, Any]]:
+        root = self.directory / "legacy-peer"
+        flow = self.git_plan(root)
+        state = flow.load()
+        directory = flow.home.parent / "omaros"
+        directory.mkdir(mode=0o700)
+        path = directory / flow.path.name
+        path.write_text(json.dumps(state))
+        flow.path.unlink()
+        return root, path, state
+
+    def test_independent_git_peer_requires_its_own_active_contract(self) -> None:
+        self.git_plan()
+        peer = self.directory / "git-peer"
+        flow = self.git_plan(peer)
+        payload = self.payload("PreToolUse", tool_input={"command": patch(str(peer / "result.md"))})
+        self.assertEqual(self.run_hook("PreToolUse", payload=payload, audit_git=True), {})
+        state = flow.load()
+        state["finished"] = {"at": "synthetic-closed-fixture"}
+        flow.save(state)
+        self.assert_denied(self.run_hook("PreToolUse", payload=payload, audit_git=True))
+
+    def test_legacy_peer_permits_only_same_session_exact_declared_paths(self) -> None:
+        self.git_plan()
+        peer, path, _state = self.legacy_peer()
+        baseline = path.read_bytes()
+        payload = self.payload("PreToolUse", tool_input={"command": patch(str(peer / "result.md"))})
+        self.assertEqual(self.run_hook("PreToolUse", payload=payload, audit_git=True), {})
+        self.assertEqual(path.read_bytes(), baseline)
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+            "PreToolUse", tool_input={"command": patch(str(peer / "undeclared.md"))})))
+        other = path.with_name(hashlib.sha256(b"synthetic-other-session").hexdigest()[:24] + ".json")
+        path.rename(other)
+        self.assert_denied(self.run_hook("PreToolUse", payload=payload, audit_git=True))
+        self.assertEqual(other.read_bytes(), baseline)
+
+    def test_legacy_peer_rejects_changed_target_failed_sync_and_malformed_state(self) -> None:
+        self.git_plan()
+        peer, path, state = self.legacy_peer()
+        payload = self.payload("PreToolUse", tool_input={"command": patch(str(peer / "result.md"))})
+        for fields in ({"target": {**state["target"], "branch": "synthetic-wrong-branch"}},
+                       {"sync_error": "synthetic sync failure"}, {"sync": {}},
+                       {"sync": {**state["sync"], "behind": 1}},
+                       {"sync": {**state["sync"], "remote": "synthetic-other-remote"}},
+                       {"paths": "result.md"},
+                       {"requirements": "not a requirements list"}, {"finished": {"at": "closed"}}):
+            with self.subTest(fields=fields):
+                path.write_text(json.dumps({**state, **fields}))
+                self.assert_denied(self.run_hook("PreToolUse", payload=payload, audit_git=True))
+        path.write_text("{invalid")
+        self.assert_denied(self.run_hook("PreToolUse", payload=payload, audit_git=True))
+        path.unlink()
+        path.symlink_to(self.private)
+        self.assert_denied(self.run_hook("PreToolUse", payload=payload, audit_git=True))
+
+    def test_legacy_peer_preserves_private_and_symlink_boundaries(self) -> None:
+        self.git_plan()
+        peer, path, state = self.legacy_peer()
+        private_name = "09_data_sources/email_exports/index.json"
+        path.write_text(json.dumps({**state, "paths": ["result.md", private_name]}))
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+            "PreToolUse", tool_input={"command": patch(str(peer / private_name))})))
+        (peer / "result.md").unlink()
+        (peer / "result.md").symlink_to(self.private)
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+            "PreToolUse", tool_input={"command": patch(str(peer / "result.md"))})))
+
+    def test_mixed_patch_rejects_any_undeclared_external_endpoint(self) -> None:
+        flow = self.git_plan()
+        peer, path, _state = self.legacy_peer()
+        baseline, peer_baseline = flow.path.read_bytes(), path.read_bytes()
+        command = ("*** Begin Patch\n*** Update File: result.md\n@@\n-before\n+after\n"
+                   f"*** Update File: {peer / 'result.md'}\n*** Move to: {peer / 'outside.md'}\n*** End Patch")
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+            "PreToolUse", tool_input={"command": command})))
+        self.assertEqual(flow.path.read_bytes(), baseline)
+        self.assertEqual(path.read_bytes(), peer_baseline)
+        self.assertEqual((self.root / "result.md").read_text(), "before\n")
+        self.assertEqual((peer / "result.md").read_text(), "before\n")
+
+    def test_minimal_git_project_needs_no_scaffold_or_hook_state(self) -> None:
+        flow = self.make_git()
+        for event in sorted(EVENTS):
+            self.assertEqual(self.run_hook(event, audit_git=True), {})
+        self.assertFalse(flow.home.exists())
+        self.assertFalse(self.state.exists())
+        self.assertFalse((self.root / ".codex").exists())
+
+    def test_git_prompt_and_subagent_events_are_read_only(self) -> None:
+        flow = self.git_plan()
+        before = {path.name: path.read_bytes() for path in flow.home.iterdir() if path.is_file()}
+        for event in ("UserPromptSubmit", "SubagentStart", "SubagentStop"):
+            result = self.run_hook(event, audit_git=True)
+            if event != "SubagentStop":
+                self.assertEqual(result["hookSpecificOutput"]["hookEventName"], event)
+        after = {path.name: path.read_bytes() for path in flow.home.iterdir() if path.is_file()}
+        self.assertEqual(after, before)
+        self.assertFalse(self.state.exists())
+        self.assertFalse((self.directory / "codex-home").exists())
+
+    def test_git_guard_checks_scope_upstream_and_original_components(self) -> None:
+        flow = self.git_plan()
+        self.assertEqual(self.run_hook("PreToolUse", audit_git=True), {})
+        self.symlink_parent_escape()
+        for name in ("outside.md", "alias/../result.md", "missing/../result.md"):
+            self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+                "PreToolUse", tool_input={"input": patch(name)})))
+        rename = "*** Begin Patch\n*** Update File: result.md\n*** Move to: outside.md\n*** End Patch"
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+            "PreToolUse", tool_input={"patch": rename})))
+        state = flow.load()
+        state["target"]["branch"] = "synthetic-other-branch"
+        flow.save(state)
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True))
+
+    def test_git_stop_is_bounded_idempotent_and_never_publishes(self) -> None:
+        flow = self.git_plan()
+        self.assertEqual(self.run_hook("Stop", audit_git=True)["decision"], "block")
+        self.assertEqual(flow.load()["stop_attempts"], 1)
+        replay = self.run_hook("Stop", audit_git=True)
+        self.assertNotEqual(replay.get("decision"), "block")
+        self.assertIn("INCOMPLETE", replay.get("systemMessage", ""))
+        self.assertEqual(flow.load()["stop_attempts"], 1)
+        self.assertEqual(self.run_hook("Stop", audit_git=True, payload=self.payload(
+            "Stop", stop_hook_active=True))["decision"], "block")
+        result = self.run_hook("Stop", audit_git=True, payload=self.payload(
+            "Stop", turn_id="synthetic-second-turn"))
+        self.assertNotEqual(result.get("decision"), "block")
+        self.assertEqual(flow.load()["stop_attempts"], 3)
+        self.assertFalse(flow.load().get("finished"))
+
+    @unittest.skipUnless(hasattr(signal, "setitimer"), "POSIX internal hook deadline")
+    def test_busy_git_lifecycle_denies_with_deadline_diagnostic(self) -> None:
+        flow = self.git_plan()
+        before = flow.path.read_bytes()
+        with flow.lock():
+            result = self.run_hook("PreToolUse", audit_git=True)
+        self.assert_denied(result)
+        self.assertIn("deadline", result["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertEqual(flow.path.read_bytes(), before)
+
+    def test_finished_git_contracts_do_not_reopen_on_new_prompt(self) -> None:
+        flow = self.git_plan()
+        state = flow.load()
+        state["finished"] = {"at": "synthetic-completed-fixture"}
+        flow.save(state)
+        baseline = flow.path.read_bytes()
+        for event in sorted(EVENTS):
+            self.assertEqual(self.run_hook(event, audit_git=True), {})
+        self.assertEqual(flow.path.read_bytes(), baseline)
+
+    def test_git_portable_conflict_is_explicit_and_never_falls_back(self) -> None:
+        flow = self.git_plan()
+        self.plan()
+        before_git, before_portable = flow.path.read_bytes(), self.status()
+        for event in sorted(EVENTS):
+            result = self.run_hook(event, audit_git=True)
+            if event == "PreToolUse":
+                self.assert_denied(result)
+            else:
+                self.assert_warning(result)
+        self.assertEqual(flow.path.read_bytes(), before_git)
+        self.assertEqual(self.status(), before_portable)
+
+    def test_corrupt_or_symlinked_git_state_rejects_guarded_edits(self) -> None:
+        flow = self.git_plan()
+        flow.path.write_text("{invalid")
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True))
+        self.assert_warning(self.run_hook("Stop", audit_git=True))
+        flow.path.unlink()
+        flow.path.symlink_to(self.private)
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True))
+        self.assert_warning(self.run_hook("Stop", audit_git=True))
+
+    def test_git_project_cannot_supply_executable_hook_modules(self) -> None:
+        self.git_plan()
+        marker = self.root / "injected-engine-ran"
+        malicious = "from pathlib import Path\nPath('injected-engine-ran').write_text('unexpected')\n"
+        (self.root / ".codex").mkdir()
+        for name in ("workflow.py", ".codex/workflow.py", "workspace.py", "review_gate.py"):
+            (self.root / name).write_text(malicious)
+        self.assertEqual(self.run_hook("PreToolUse", audit_git=True), {})
+        self.assertEqual(self.run_hook("Stop", audit_git=True)["decision"], "block")
+        self.assertFalse(marker.exists())
+
+    def test_workspace_routes_from_participant_without_duplicate_lifecycle(self) -> None:
+        from ecosystem.runtime.workspace import Workspace
+
+        self.make_git()
+        child = self.root / "child"
+        self.make_git(child)
+        unrelated = self.root / "unrelated"
+        self.make_git(unrelated)
+        (self.root / ".codex").mkdir()
+        (self.root / ".codex/repositories.json").write_text(json.dumps({
+            "schema_version": 1, "repositories": [
+                {"path": name, "management": "native"} for name in (".", "child", "unrelated")],
+        }))
+        workspace = Workspace(self.root, SESSION)
+        workspace.plan({"requirements": ["Synthetic child result is checked"],
+                        "paths": ["child/result.md"]})
+        before = workspace.path.read_bytes()
+        for location in (self.root, child):
+            with self.subTest(cwd=location):
+                result = self.run_hook("UserPromptSubmit", audit_git=True, payload=self.payload(
+                    "UserPromptSubmit", cwd=str(location)))
+                self.assertIn("workspace", result["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(workspace.path.read_bytes(), before)
+        self.assertEqual(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+            "PreToolUse", cwd=str(child))), {})
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+            "PreToolUse", cwd=str(child), tool_input={"command": patch("../result.md")})))
+        for event in sorted(EVENTS):
+            self.assertEqual(self.run_hook(event, audit_git=True, payload=self.payload(
+                event, cwd=str(unrelated))), {})
+        stopped = self.run_hook("Stop", audit_git=True, payload=self.payload("Stop", cwd=str(child)))
+        self.assertEqual(stopped["decision"], "block")
+        self.assertEqual(workspace.load()["stop_attempts"], 1)
+
+    def test_child_only_workspace_does_not_hide_independent_hub_contract(self) -> None:
+        from ecosystem.runtime.workspace import Workspace
+
+        flow = self.git_plan()
+        self.make_git(self.root / "child")
+        (self.root / ".codex").mkdir()
+        (self.root / ".codex/repositories.json").write_text(json.dumps({
+            "schema_version": 1, "repositories": [
+                {"path": name, "management": "native"} for name in (".", "child")],
+        }))
+        workspace = Workspace(self.root, SESSION)
+        workspace.plan({"requirements": ["Independent child result is checked"],
+                        "paths": ["child/result.md"]})
+        before = (flow.path.read_bytes(), workspace.path.read_bytes())
+        for event in sorted(EVENTS):
+            result = self.run_hook(event, audit_git=True)
+            if event == "PreToolUse":
+                self.assert_denied(result)
+            else:
+                self.assert_warning(result)
+        self.assertEqual((flow.path.read_bytes(), workspace.path.read_bytes()), before)
 
     @unittest.skipUnless(hasattr(signal, "setitimer"), "POSIX internal hook deadline")
     def test_stalled_stdin_returns_warning_within_native_timeout(self) -> None:

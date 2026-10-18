@@ -1,5 +1,10 @@
 # Redacción y revisión sustancial
 
+Para trabajo sustancial o prolongado, conserva decisiones, hallazgos, evidencia y
+siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/PROGRESS.md).
+Sincroniza hitos personales sólo cuando la política local lo autorice; no abras
+otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimiento.
+
 ## Del encargo al documento
 
 Establece qué debe conseguir el texto, para quién, con qué grado de conocimiento
@@ -21,12 +26,16 @@ que debe conservar, fuentes necesarias y condiciones de aceptación. Declara
 solo los entregables intencionales y sus rutas exactas. No archives prompts,
 conversaciones ni transcripciones como si fueran documentación del trabajo.
 
-Usa el [protocolo común](../../../ecosystem/references/protocol.md) para las
-operaciones y esquemas vigentes de requisitos, autoría, comprobaciones, revisión
-y cierre. Respeta además el contrato del proyecto y sus permisos de publicación;
-no sustituyas ni reinicies una tarea existente. El motor portable funciona sin
-Git: no crees un repositorio para poder redactar. Si una capacidad requerida no
-está disponible, declara la limitación y el trabajo pendiente; no simules una
+Elige el ciclo con el [protocolo común](../../../ecosystem/references/protocol.md).
+Para una entrega sustantiva sin publicación, usa sus operaciones portátiles de
+requisitos, autoría, comprobaciones, revisión y cierre. Una edición Git ordinaria
+usa el contrato receptor, sin un segundo registro obligatorio por usar esta skill.
+Si el informe requiere garantías semánticas del portátil y además publicación,
+relaciona los artefactos revisados y su evidencia con la integración Git; no
+supongas equivalencia ni sincronización automática entre sus controles. Respeta
+los permisos de publicación y conserva la tarea existente. El motor portátil
+funciona sin Git: no crees un repositorio para poder redactar. Si una capacidad
+requerida no está disponible, declara la limitación y el trabajo pendiente; no simules una
 operación, una revisión o un cierre aprobado.
 
 ## Estructura y responsabilidad
@@ -56,8 +65,11 @@ recursos de [edición](../../../ecosystem/agents/editor.toml),
 esfuerzo y permisos; no presupongas herramientas que la sesión no expone.
 
 Cada encargo delegado especifica alcance, archivos, resultado y evidencia
-esperada. Registra la identidad nativa real de quienes contribuyen antes de
-la revisión. Un nombre de rol o un ID de tarea no identifica al autor real.
+esperada, además de las skills pertinentes y su ubicación accesible. El agente
+comprueba su catálogo y carga solo las instrucciones necesarias; una capacidad
+del coordinador puede no estar disponible para él. Registra la identidad nativa
+real de quienes contribuyen antes de la revisión. Un nombre de rol o un ID de
+tarea no identifica al autor real.
 
 ## Fuentes y afirmaciones
 
@@ -99,6 +111,13 @@ versiones, ejecución y comportamiento pertinente; usa `coding` cuando esté
 disponible. No describas como ejecutado un ejemplo de código que solo leíste.
 La ausencia de una skill especializada no elimina la obligación de verificar
 el contenido ni autoriza fingir herramientas o resultados.
+
+Determina las dependencias por el resultado: la redacción de conclusiones espera
+la evidencia matemática y computacional; investigación o secciones independientes
+pueden avanzar en paralelo con escritores distintos. No cargues habilidades ajenas
+al encargo ni repitas todos los ciclos por cada skill seleccionada. En el informe
+existente basta indicar qué capacidad se usó, para qué, con qué evidencia y qué
+falló; no crees un registro separado de selección ni guardes conversaciones.
 
 Consulta la [ontología](../../../ecosystem/references/ontology.md) solo si las
 distinciones conceptuales sostienen el texto; sus

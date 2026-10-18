@@ -14,9 +14,9 @@ from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE))
-import dispatch
-import workspace as ws
-from workflow import review_engine
+from ecosystem.runtime import dispatch
+from ecosystem.runtime import workspace as ws
+from ecosystem.runtime.workflow import review_engine
 
 
 class DispatchTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class DispatchTests(unittest.TestCase):
                              "repositories": {"Provider": {"max_concurrent_threads_per_session": 2}}}
         self.agent_path = self.root / ".codex/agent-policy.json"
         self.agent_path.write_text(json.dumps(self.agent_policy))
-        self.review_policy = json.loads((MODULE / "review-policy.json").read_text())
+        self.review_policy = json.loads((MODULE / "ecosystem/runtime/review-policy.json").read_text())
         self.review_policy["modes"] = {
             "quick": {"reviewers": 1, "focus": {"correctness": 1}},
             "standard": {"reviewers": 3, "focus": {"correctness": 3}},
@@ -61,13 +61,8 @@ class DispatchTests(unittest.TestCase):
             ws.git(root, "push", "-u", "origin", "main")
         self.workspace = ws.Workspace(self.root, "dispatch-test")
         self.engine = review_engine()
-        # Exercise real registry discovery rather than masking it with an
-        # explicit policy_path, including changes after Workspace construction.
-        self.hub_mock = patch.object(self.engine, "__file__", str(self.root / ".codex/review_gate.py"))
-        self.hub_mock.start()
 
     def tearDown(self):
-        self.hub_mock.stop()
         self.temp.cleanup()
 
     def plan(self, paths=None, **extra):
@@ -249,13 +244,38 @@ class DispatchTests(unittest.TestCase):
         self.assertTrue(all(not task["write_paths"] for task in result["tasks"]))
         self.assertFalse(any("review-author" in task["handoff"] for task in result["tasks"]))
         self.assertIsNone(ws.Workflow(self.root, self.workspace.session).load().get("review_gate"))
-        integration = next(task for task in result["tasks"] if task["phase"] == "integrate")
-        self.assertIn("Otherwise use workspace.py publish --repo", integration["handoff"])
+        self.assertEqual([task["phase"] for task in result["tasks"]], ["check", "integrate"])
+        self.assertTrue(all(task["executor"] == "coordinator" for task in result["tasks"]))
         original_head = ws.git(self.root, "rev-parse", "HEAD")
         self.workspace.review({".": {"The selected artifacts satisfy the contract": "The read-only contract declares no deliverables."}})
         self.workspace.publish(".")
         self.assertTrue(self.workspace.finish()["completed"])
         self.assertEqual(ws.git(self.root, "rev-parse", "HEAD"), original_head)
+
+    def test_single_repository_uses_coordinator_for_implementation(self):
+        self.plan(["Provider/lib.py"])
+        tasks = self.workspace.dispatch()["tasks"]
+        self.assertFalse(any(task["phase"] in {"map", "research"} for task in tasks))
+        implementation = [task for task in tasks if task["phase"] == "implement"]
+        self.assertEqual(len(implementation), 1)
+        self.assertEqual(implementation[0]["executor"], "coordinator")
+        self.assertIsNone(implementation[0]["agent_role"])
+        self.assertEqual(implementation[0]["write_paths"], ["lib.py"])
+        agents = [task for task in tasks if task["executor"] == "agent"]
+        self.assertEqual(len(agents), 3)
+        self.assertTrue(all(task["phase"].startswith("review-") for task in agents))
+
+    def test_multiple_repositories_delegate_only_scoped_implementation(self):
+        self.plan(depends_on={"Consumer": ["Provider"]})
+        tasks = self.workspace.dispatch()["tasks"]
+        self.assertFalse(any(task["phase"] in {"map", "research"} for task in tasks))
+        implementations = [task for task in tasks if task["phase"] == "implement"]
+        self.assertEqual({task["repository"] for task in implementations}, {"Provider", "Consumer"})
+        self.assertTrue(all(task["executor"] == "agent" and task["agent_role"]
+                            for task in implementations))
+        consumer = next(task for task in implementations if task["repository"] == "Consumer")
+        self.assertIn("Provider::check", consumer["depends_on"])
+        self.assertNotIn("Provider::integrate", consumer["depends_on"])
 
     def test_cli_is_readonly_and_returns_json(self):
         self.plan(["Provider/lib.py"])

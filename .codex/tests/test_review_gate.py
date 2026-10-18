@@ -2,20 +2,20 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 
-MODULE = Path(__file__).resolve().parents[1] / "review_gate.py"
-spec = importlib.util.spec_from_file_location("review_gate_test_module", MODULE)
-assert spec and spec.loader
-gate = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gate)
+MODULE = Path(__file__).resolve().parents[1] / "ecosystem/runtime/review_gate.py"
+sys.path.insert(0, str(MODULE.parents[2]))
+from ecosystem.runtime import review_gate as gate
+
 DEFAULT_POLICY = json.loads(MODULE.with_name("review-policy.json").read_text())
 # Minimal quorums isolate each engine invariant; shipped quorums have dedicated
 # end-to-end cases below and remain independent of these small fixtures.
@@ -77,6 +77,204 @@ class ReviewFixture(unittest.TestCase):
             self.call("validate")
         self.call("report", self.payload())
         self.call("validate")
+
+    def quick_code(self, reason="Only the empty-input return value changes; its boundary regression passes."):
+        return gate.start(self.root, self.state, policy_path=self.policy_path,
+                          quick_code_reason=reason)
+
+    def test_quick_code_declaration_permits_one_reviewer_and_is_idempotent(self):
+        self.policy_path.write_text(json.dumps(DEFAULT_POLICY))
+        context = self.quick_code()
+        self.assertEqual((context["mode"], context["required_reviewers"]), ("quick", 1))
+        self.assertIn("empty-input", context["quick_code_reason"])
+        self.assertTrue(self.quick_code()["unchanged"])
+        self.assertTrue(self.start()["unchanged"])
+        self.call("report", self.payload())
+        self.call("validate")
+
+    def test_quick_code_requires_explicit_policy_consent(self):
+        for consent in (None, False):
+            with self.subTest(consent=consent):
+                policy = deepcopy(DEFAULT_POLICY)
+                policy.pop("allow_quick_code", None)
+                if consent is not None:
+                    policy["allow_quick_code"] = consent
+                self.policy_path.write_text(json.dumps(policy))
+                before = deepcopy(self.state)
+                with self.assertRaisesRegex(gate.ReviewError, "policy"):
+                    self.quick_code()
+                self.assertEqual(self.state, before)
+                self.assertEqual(self.call("prepare")["mode"], "standard")
+        self.start()
+        self.call("report", self.payload())
+        self.call("report", self.payload("reviewer-b"))
+        self.call("report", self.payload("reviewer-c"))
+        self.call("validate")
+
+    def test_quick_code_policy_consent_uses_and_and_rejects_malformed_values(self):
+        allowed = {**DEFAULT_POLICY, "allow_quick_code": True}
+        old = {key: value for key, value in DEFAULT_POLICY.items() if key != "allow_quick_code"}
+        for other in (old, {**allowed, "allow_quick_code": False}):
+            self.assertFalse(gate._policy_floor(allowed, other)["allow_quick_code"])
+            self.assertFalse(gate._policy_floor(other, allowed)["allow_quick_code"])
+        for invalid in (None, 0, 1, "true", [], {}):
+            with self.subTest(invalid=invalid):
+                self.policy_path.write_text(json.dumps({**allowed, "allow_quick_code": invalid}))
+                with self.assertRaises(gate.ReviewError):
+                    self.call("prepare")
+
+    def test_quick_code_local_legacy_policy_withholds_permission(self):
+        policy = {key: value for key, value in DEFAULT_POLICY.items() if key != "allow_quick_code"}
+        config = self.root / ".codex"
+        config.mkdir()
+        (config / "review-policy.json").write_text(json.dumps(policy))
+        self.assertFalse(gate.policy_for(self.root)["allow_quick_code"])
+        with self.assertRaisesRegex(gate.ReviewError, "policy"):
+            gate.start(self.root, self.state, quick_code_reason="Only a constant return value changes.")
+        self.assertEqual(gate.start(self.root, self.state)["required_reviewers"], 3)
+
+    def test_quick_code_cannot_be_declared_late_or_replace_its_reason(self):
+        before = deepcopy(self.state)
+        for reason in ("", "  ", 17, False, "a" * 1001):
+            with self.subTest(reason=reason):
+                with self.assertRaises(gate.ReviewError):
+                    self.quick_code(reason)
+                self.assertEqual(self.state, before)
+        self.quick_code()
+        with self.assertRaisesRegex(gate.ReviewError, "declaration"):
+            self.quick_code("A different justification.")
+        self.state = before
+        self.start()
+        with self.assertRaisesRegex(gate.ReviewError, "first"):
+            self.quick_code()
+        self.assertEqual(self.call("prepare")["mode"], "standard")
+
+    def test_quick_code_never_lowers_semantic_or_active_risk_floor(self):
+        self.state["review_risk"] = "standard"
+        self.assertEqual(self.quick_code()["mode"], "standard")
+        self.assertTrue(self.quick_code()["unchanged"])
+        self.state["review_risk"] = "quick"
+        self.assertEqual(self.call("prepare")["mode"], "standard")
+        self.state["review_risk"] = "deep"
+        self.assertEqual(self.start()["mode"], "deep")
+
+    def test_quick_code_rejects_sensitive_artifacts_and_documentation(self):
+        for name, mode in (("auth.py", "deep"), ("AGENTS.md", "deep"), ("guide.md", "quick")):
+            with self.subTest(name=name):
+                self.state["paths"] = [name]
+                (self.root / name).write_text("content\n")
+                with self.assertRaises(gate.ReviewError):
+                    self.quick_code()
+                self.assertEqual(self.call("prepare")["mode"], mode)
+                self.assertNotIn("review_gate", self.state)
+        self.state["review_risk"] = "standard"
+        with self.assertRaises(gate.ReviewError):
+            self.quick_code()
+
+    def test_quick_code_declaration_is_bound_to_complete_review_snapshot(self):
+        original = deepcopy(self.state)
+        for mutation in ("content", "scope", "requirements", "author", "contributors", "policy", "context", "task", "repository"):
+            with self.subTest(mutation=mutation):
+                self.state = deepcopy(original)
+                self.policy_path.write_text(json.dumps(DEFAULT_POLICY))
+                (self.root / "tool.py").write_text("print('works')\n")
+                self.quick_code()
+                if mutation == "content":
+                    (self.root / "tool.py").write_text("print('changed')\n")
+                elif mutation == "scope":
+                    (self.root / "other.py").write_text("pass\n")
+                    self.state["paths"].append("other.py")
+                elif mutation == "requirements":
+                    self.state["requirements"].append("Another requirement")
+                elif mutation == "author":
+                    self.state["author"] = "another-author"
+                elif mutation == "contributors":
+                    self.state["review_authors"] = {"worker": ["tool.py"]}
+                elif mutation == "policy":
+                    policy = deepcopy(DEFAULT_POLICY)
+                    policy["max_rounds"] = 2
+                    self.policy_path.write_text(json.dumps(policy))
+                elif mutation == "context":
+                    self.state["review_context_sha256"] = "a" * 64
+                elif mutation == "task":
+                    self.state["started"] = "another-task"
+                elif mutation == "repository":
+                    other = self.base / "other"
+                    other.mkdir(exist_ok=True)
+                    (other / "tool.py").write_text("print('works')\n")
+                    context = gate.prepare(other, self.state, policy_path=self.policy_path)
+                    self.assertEqual(context["mode"], "standard")
+                    continue
+                self.assertEqual(self.call("prepare")["mode"], "standard")
+                with self.assertRaises(gate.ReviewError):
+                    self.quick_code()
+                if mutation != "author":
+                    self.assertEqual(self.start()["mode"], "standard")
+
+    def test_quick_code_stale_round_cannot_replay_declaration_after_revert(self):
+        original = (self.root / "tool.py").read_text()
+        self.quick_code()
+        (self.root / "tool.py").write_text("pass\n")
+        self.assertEqual(self.start()["mode"], "standard")
+        (self.root / "tool.py").write_text(original)
+        self.assertEqual(self.call("prepare")["mode"], "standard")
+        with self.assertRaises(gate.ReviewError):
+            self.quick_code()
+
+    def test_quick_code_scope_change_to_documentation_still_requires_standard(self):
+        self.quick_code()
+        (self.root / "guide.md").write_text("Replacement scope\n")
+        self.state["paths"] = ["guide.md"]
+        self.assertEqual(self.call("prepare")["mode"], "standard")
+        self.assertEqual(self.start()["mode"], "standard")
+
+    def test_quick_code_malformed_stored_declaration_fails_closed(self):
+        self.quick_code()
+        declaration = self.state["review_gate"]["quick_code_declaration"]
+        for malformed in ({}, {**declaration, "reason": ""}, {**declaration, "snapshot_sha256": "bad"},
+                          {**declaration, "unknown": True}):
+            self.state["review_gate"]["quick_code_declaration"] = malformed
+            with self.assertRaises(gate.ReviewError):
+                self.call("prepare")
+
+    def test_quick_code_cli_wrappers_forward_reason_and_preserve_risk(self):
+        from ecosystem.runtime import workflow, workspace
+
+        config = self.root / ".codex"
+        config.mkdir()
+        (config / "repositories.json").write_text(json.dumps({"schema_version": 1,
+            "repositories": [{"path": ".", "management": "native"}]}))
+        remote = self.base / "remote.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.root)], check=True)
+        for key, value in (("user.name", "Fixture"), ("user.email", "fixture@example.invalid"),
+                           ("commit.gpgsign", "false"), ("core.hooksPath", str(self.root / ".git/hooks"))):
+            workflow.git(self.root, "config", key, value)
+        workflow.git(self.root, "add", "tool.py", ".codex/repositories.json")
+        workflow.git(self.root, "commit", "-m", "Seed fixture")
+        workflow.git(self.root, "remote", "add", "origin", str(remote))
+        workflow.git(self.root, "push", "-u", "origin", "main")
+        session = "fixture-adaptive-review"
+        coordinator = workspace.Workspace(self.root, session)
+        coordinator.plan({"requirements": ["The constant result is correct"], "paths": ["tool.py"]})
+        (self.root / "tool.py").write_text("def answer(): return 42\n")
+        prefix = ["--root", str(self.root), "--session", session]
+        reason = "Only the constant return value changes; an independent reviewer checks that premise."
+        output = io.StringIO()
+        with patch("sys.stdout", output):
+            workspace.main([*prefix, "review-start", "--repo", ".", "--quick-code-reason", reason])
+        context = json.loads(output.getvalue())
+        self.assertEqual(context["mode"], "quick")
+        self.assertEqual(context["quick_code_reason"], reason)
+        output = io.StringIO()
+        with patch("sys.stdout", output):
+            workflow.main([*prefix, "review-start", "--quick-code-reason", reason])
+        self.assertTrue(json.loads(output.getvalue())["unchanged"])
+        with patch("sys.stdout", io.StringIO()):
+            workflow.main([*prefix, "review-start", "--risk", "deep"])
+        self.assertEqual(coordinator.review_operation(".", "prepare")["mode"], "deep")
+        with self.assertRaisesRegex(workflow.Blocked, "cannot be lowered"):
+            workflow.main([*prefix, "review-start", "--risk", "quick"])
 
     def test_quick_docs_require_correctness_and_scope_cannot_be_withdrawn(self):
         self.state["paths"] = ["guide.md"]
@@ -479,6 +677,61 @@ class ReviewFixture(unittest.TestCase):
                     with self.assertRaises(gate.ReviewError):
                         self.call("prepare")
 
+    def test_project_path_validator_rejects_before_any_artifact_read(self):
+        self.state["paths"].append("z_blocked.py")
+        (self.root / "z_blocked.py").write_text("pass\n")
+        calls = []
+
+        def reject_blocked(root, name):
+            calls.append((root, name))
+            if name == "z_blocked.py":
+                raise PermissionError("Project path denied")
+
+        for name, args in [("prepare", ()), ("start", ()), ("author", ({},)),
+                           ("report", ({},)), ("resolve", ({},)), ("validate", ())]:
+            with self.subTest(operation=name):
+                calls.clear()
+                before = deepcopy(self.state)
+                with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read artifacts")):
+                    with self.assertRaisesRegex(PermissionError, "Project path denied"):
+                        getattr(gate, name)(self.root, self.state, *args,
+                                            policy_path=self.policy_path, path_validator=reject_blocked)
+                self.assertEqual(calls, [(self.root.resolve(), "tool.py"),
+                                         (self.root.resolve(), "z_blocked.py")])
+                self.assertEqual(self.state, before)
+
+    def test_project_path_validator_return_value_does_not_replace_artifact(self):
+        calls = []
+
+        def accept_path(root, name):
+            calls.append((root, name))
+            return self.base / "outside-and-missing.py"
+
+        expected = self.call("prepare")
+        actual = gate.prepare(self.root, self.state, policy_path=self.policy_path,
+                              path_validator=accept_path)
+        self.assertEqual(actual, expected)
+        self.assertEqual(calls, [(self.root.resolve(), "tool.py")])
+
+    def test_permissive_project_validator_cannot_bypass_common_path_guards(self):
+        secret = self.base / "private.txt"
+        secret.write_text("local-only content")
+        (self.root / "link.py").symlink_to(secret)
+        (self.root / "dir").symlink_to(self.base, target_is_directory=True)
+
+        def accept_path(root, name):
+            return root / "tool.py"
+
+        for name in ["link.py", "dir/private.txt", "../private.txt", ".env", "conversations/file.md"]:
+            with self.subTest(name=name):
+                self.state["paths"] = [name]
+                before = deepcopy(self.state)
+                with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read contents")):
+                    with self.assertRaises(gate.ReviewError):
+                        gate.prepare(self.root, self.state, policy_path=self.policy_path,
+                                     path_validator=accept_path)
+                self.assertEqual(self.state, before)
+
     def test_policy_change_during_review_fails_closed(self):
         self.complete()
         policy = deepcopy(MINIMAL_POLICY)
@@ -613,33 +866,294 @@ class ReviewFixture(unittest.TestCase):
             self.call("report", self.payload(reviewer, paths=["tool.py"]))
         self.call("validate")
 
-    def test_outside_repository_has_no_implicit_policy(self):
-        with patch.object(gate, "_read_json", side_effect=AssertionError("must not read central policy")):
-            self.assertIsNone(gate.policy_for(self.root))
-            self.assertEqual(gate.prepare(self.root, self.state), {"enabled": False})
-            gate.validate(self.root, self.state)
+    def test_non_git_directory_uses_bundled_policy_without_git_scaffolding(self):
+        self.assertEqual(gate.policy_for(self.root), DEFAULT_POLICY)
+        context = gate.prepare(self.root, self.state)
+        self.assertTrue(context["enabled"])
+        self.assertEqual(context["mode"], "standard")
+        self.assertEqual(context["required_reviewers"], 3)
+        self.assertFalse((self.root / ".git").exists())
+        self.assertFalse((self.root / ".codex").exists())
 
-    def test_native_registration_requires_actual_owner_and_installed_policy(self):
+    def test_standalone_git_repository_uses_bundled_policy_without_scaffolding(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        self.assertEqual(gate.policy_for(self.root), DEFAULT_POLICY)
+        context = gate.start(self.root, self.state)
+        self.assertTrue(context["enabled"])
+        self.assertEqual(context["mode"], "standard")
+        self.assertEqual(context["required_reviewers"], 3)
+        with self.assertRaisesRegex(gate.ReviewError, "distinct reviewers"):
+            gate.validate(self.root, self.state)
+        for reviewer in ["reviewer-a", "reviewer-b", "reviewer-c"]:
+            gate.report(self.root, self.state, {
+                "token": context["token"], "reviewer": reviewer, "role": "reviewer",
+                "focus": ["correctness"], "paths": ["tool.py"],
+                "summary": "Checked the standalone implementation and its boundary behavior.",
+                "evidence": "The declared artifact preserves the requested behavior.",
+                "findings": [],
+            })
+        gate.validate(self.root, self.state)
+        self.assertFalse((self.root / ".codex").exists())
+
+    def test_standalone_local_policy_tightens_without_registry(self):
+        config = self.root / ".codex"
+        config.mkdir()
+        strict = deepcopy(DEFAULT_POLICY)
+        strict["max_rounds"] = 2
+        strict["deep_patterns"].append("tool.py")
+        (config / "review-policy.json").write_text(json.dumps(strict))
+        for git_owner in (False, True):
+            with self.subTest(git_owner=git_owner):
+                if git_owner:
+                    subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+                context = gate.prepare(self.root, self.state)
+                self.assertEqual(context["mode"], "deep")
+                self.assertEqual(context["max_rounds"], 2)
+                self.assertFalse((config / "repositories.json").exists())
+
+    def test_standalone_local_policy_cannot_weaken_packaged_minimums(self):
+        config = self.root / ".codex"
+        config.mkdir()
+        weakened = deepcopy(MINIMAL_POLICY)
+        weakened["max_rounds"] = 10
+        weakened["documentation_extensions"].append(".py")
+        (config / "review-policy.json").write_text(json.dumps(weakened))
+        context = gate.prepare(self.root, self.state)
+        self.assertEqual(context["mode"], "standard")
+        self.assertEqual(context["required_reviewers"], 3)
+        self.assertEqual(context["max_rounds"], 3)
+
+    def test_standalone_rejects_invalid_or_linked_local_policy(self):
+        config = self.root / ".codex"
+        config.mkdir()
+        local_policy = config / "review-policy.json"
+        local_policy.write_text("{}")
+        with self.subTest(policy="malformed"):
+            with self.assertRaises(gate.ReviewError):
+                gate.policy_for(self.root)
+        local_policy.unlink()
+        local_policy.symlink_to(self.base / "missing.json")
+        with self.subTest(policy="symlink"):
+            with self.assertRaisesRegex(gate.ReviewError, "regular local file"):
+                gate.policy_for(self.root)
+
+    def test_native_registration_requires_actual_owner_and_floors_workspace_override(self):
         config = self.root / ".codex"
         config.mkdir()
         (config / "repositories.json").write_text(json.dumps({"repositories": [{"path": ".", "management": "native"}]}))
-        (config / "review-policy.json").write_text(json.dumps(DEFAULT_POLICY))
-        with patch.object(gate, "__file__", str(config / "review_gate.py")):
-            with self.assertRaisesRegex(gate.ReviewError, "owner"):
-                gate.policy_for(self.root)
-            subprocess.run(["git", "init", "-q", str(self.root)], check=True)
-            self.assertEqual(gate.policy_for(self.root), DEFAULT_POLICY)
-            (config / "review-policy.json").unlink()
-            with self.assertRaisesRegex(gate.ReviewError, "must exist"):
-                gate.policy_for(self.root)
+        (config / "review-policy.json").write_text(json.dumps(MINIMAL_POLICY))
+        with self.assertRaisesRegex(gate.ReviewError, "owner"):
+            gate.policy_for(self.root)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        self.assertEqual(gate.policy_for(self.root)["modes"], DEFAULT_POLICY["modes"])
+        (config / "review-policy.json").unlink()
+        self.assertEqual(gate.policy_for(self.root), DEFAULT_POLICY)
+        (config / "review-policy.json").write_text("{}")
+        with self.assertRaises(gate.ReviewError):
+            gate.policy_for(self.root)
+
+    def test_registered_child_discovers_workspace_policy_from_its_root(self):
+        config = self.root / ".codex"
+        config.mkdir()
+        (config / "repositories.json").write_text(json.dumps({"repositories": [{"path": "child", "management": "native"}]}))
+        (config / "review-policy.json").write_text(json.dumps(MINIMAL_POLICY))
+        child = self.root / "child"
+        child.mkdir()
+        subprocess.run(["git", "init", "-q", str(child)], check=True)
+        self.assertEqual(gate.policy_for(child)["modes"], DEFAULT_POLICY["modes"])
 
     def test_external_and_unregistered_children_keep_their_own_policy(self):
         config = self.root / ".codex"
         config.mkdir()
         (config / "repositories.json").write_text(json.dumps({"repositories": [{"path": "external", "management": "external"}]}))
-        with patch.object(gate, "__file__", str(config / "review_gate.py")):
-            self.assertIsNone(gate.policy_for(self.root / "external"))
-            self.assertIsNone(gate.policy_for(self.root / "unregistered"))
+        (config / "review-policy.json").write_text(json.dumps(DEFAULT_POLICY))
+        for name in ["external", "unregistered"]:
+            with self.subTest(name=name):
+                child = self.root / name
+                child.mkdir()
+                subprocess.run(["git", "init", "-q", str(child)], check=True)
+                self.assertIsNone(gate.policy_for(child))
+                self.assertEqual(gate.prepare(child, self.state), {"enabled": False})
+                gate.validate(child, self.state)
+
+
+class ReviewPolicyDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.hub = Path(self.temp.name)
+        self.root = self.hub / "child"
+        self.root.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / "tool.py").write_text("pass\n")
+        self.state = {"requirements": ["Change the declared artifact"], "paths": ["tool.py"],
+                      "author": "author-session", "started": "task-start"}
+        self.register(self.hub, [{"path": "child", "management": "native"}])
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def register(self, root, entries, policy=None):
+        config = root / ".codex"
+        config.mkdir(exist_ok=True)
+        (config / "repositories.json").write_text(json.dumps({"repositories": entries}))
+        if policy is not None:
+            (config / "review-policy.json").write_text(json.dumps(policy))
+
+    def test_nested_external_registry_cannot_disable_ancestor_native_review(self):
+        self.register(self.root, [{"path": ".", "management": "external"}])
+        self.assertTrue(gate.prepare(self.root, self.state)["enabled"])
+        with self.assertRaisesRegex(gate.ReviewError, "Start an independent review"):
+            gate.validate(self.root, self.state)
+        context = gate.start(self.root, self.state)
+        gate.report(self.root, self.state, {
+            "token": context["token"], "reviewer": "reviewer-a", "role": "reviewer",
+            "focus": ["correctness"], "paths": ["tool.py"],
+            "summary": "Checked the artifact and boundary behavior.",
+            "evidence": "The implementation satisfies the declared behavior.", "findings": [],
+        })
+        with self.assertRaisesRegex(gate.ReviewError, "3 distinct reviewers"):
+            gate.validate(self.root, self.state)
+
+    def test_nested_unregistered_registry_cannot_disable_ancestor_native_review(self):
+        self.register(self.root, [])
+        self.assertTrue(gate.prepare(self.root, self.state)["enabled"])
+        with self.assertRaises(gate.ReviewError):
+            gate.validate(self.root, self.state)
+
+    def test_implicit_policy_cannot_reduce_packaged_quorums_or_raise_round_limit(self):
+        weakened = deepcopy(MINIMAL_POLICY)
+        weakened["max_rounds"] = 10
+        self.register(self.hub, [{"path": "child", "management": "native"}], weakened)
+        context = gate.prepare(self.root, self.state)
+        self.assertEqual(context["required_reviewers"], 3)
+        self.assertEqual(context["required_focus"], {"correctness": 3})
+        self.assertEqual(context["max_rounds"], 3)
+        self.state["review_risk"] = "deep"
+        context = gate.prepare(self.root, self.state)
+        self.assertEqual(context["required_reviewers"], 5)
+        self.assertEqual(context["required_focus"], {"correctness": 3, "security": 2})
+
+    def test_implicit_policy_cannot_reclassify_code_as_documentation(self):
+        weakened = deepcopy(DEFAULT_POLICY)
+        weakened["documentation_extensions"].append(".py")
+        weakened["documentation_names"].append("tool.py")
+        self.register(self.hub, [{"path": "child", "management": "native"}], weakened)
+        self.assertEqual(gate.prepare(self.root, self.state)["mode"], "standard")
+
+    def test_implicit_policy_cannot_remove_packaged_sensitive_paths(self):
+        weakened = deepcopy(DEFAULT_POLICY)
+        weakened["deep_patterns"] = ["custom-sensitive/**"]
+        self.register(self.hub, [{"path": "child", "management": "native"}], weakened)
+        self.state["paths"] = ["auth.py"]
+        (self.root / "auth.py").write_text("pass\n")
+        self.assertEqual(gate.prepare(self.root, self.state)["mode"], "deep")
+
+    def test_nested_native_registry_retains_stricter_ancestor_policy(self):
+        strict = deepcopy(DEFAULT_POLICY)
+        strict["max_rounds"] = 2
+        strict["modes"]["quick"] = {"reviewers": 2, "focus": {"correctness": 2}}
+        strict["modes"]["standard"] = {"reviewers": 4, "focus": {"correctness": 4}}
+        strict["modes"]["deep"] = {"reviewers": 6, "focus": {"correctness": 4, "security": 2}}
+        strict["documentation_extensions"].remove(".txt")
+        strict["deep_patterns"].append("sensitive.py")
+        self.register(self.hub, [{"path": "child", "management": "native"}], strict)
+        self.register(self.root, [{"path": ".", "management": "native"}], MINIMAL_POLICY)
+        context = gate.prepare(self.root, self.state)
+        self.assertEqual(context["required_reviewers"], 4)
+        self.assertEqual(context["required_focus"], {"correctness": 4})
+        self.assertEqual(context["max_rounds"], 2)
+        for name, mode, reviewers in [("guide.md", "quick", 2), ("guide.txt", "standard", 4),
+                                      ("sensitive.py", "deep", 6)]:
+            with self.subTest(name=name):
+                (self.root / name).write_text("Content\n")
+                self.state["paths"] = [name]
+                context = gate.prepare(self.root, self.state)
+                self.assertEqual(context["mode"], mode)
+                self.assertEqual(context["required_reviewers"], reviewers)
+
+    def test_native_registry_does_not_hide_invalid_ancestor_registry(self):
+        self.register(self.root, [{"path": ".", "management": "native"}])
+        (self.hub / ".codex/repositories.json").write_text("{}")
+        with self.assertRaisesRegex(gate.ReviewError, "registry"):
+            gate.policy_for(self.root)
+
+    def test_external_child_can_explicitly_adopt_its_own_native_policy(self):
+        self.register(self.hub, [{"path": "child", "management": "external"}])
+        strict = deepcopy(DEFAULT_POLICY)
+        strict["max_rounds"] = 2
+        self.register(self.root, [{"path": ".", "management": "native"}], strict)
+        context = gate.prepare(self.root, self.state)
+        self.assertTrue(context["enabled"])
+        self.assertEqual(context["required_reviewers"], 3)
+        self.assertEqual(context["max_rounds"], 2)
+
+    def test_unrelated_nested_workspace_policy_does_not_apply_to_owner(self):
+        intermediate = self.hub / "intermediate"
+        intermediate.mkdir()
+        nested = intermediate / "child"
+        self.root.rename(nested)
+        self.root = nested
+        self.register(self.hub, [{"path": "intermediate/child", "management": "native"}])
+        self.register(intermediate, [])
+        (intermediate / ".codex/review-policy.json").write_text("{}")
+        context = gate.prepare(self.root, self.state)
+        self.assertTrue(context["enabled"])
+        self.assertEqual(context["required_reviewers"], 3)
+
+    def test_registered_child_policy_can_tighten_without_own_registry(self):
+        config = self.root / ".codex"
+        config.mkdir()
+        strict = deepcopy(DEFAULT_POLICY)
+        strict["max_rounds"] = 2
+        strict["deep_patterns"].append("tool.py")
+        (config / "review-policy.json").write_text(json.dumps(strict))
+        context = gate.prepare(self.root, self.state)
+        self.assertEqual(context["mode"], "deep")
+        self.assertEqual(context["max_rounds"], 2)
+        self.assertFalse((config / "repositories.json").exists())
+
+    def test_ancestor_policy_does_not_apply_to_nonmatching_native_owner(self):
+        strict = deepcopy(DEFAULT_POLICY)
+        strict["max_rounds"] = 1
+        self.register(self.hub, [{"path": "other", "management": "native"}], strict)
+        self.register(self.root, [{"path": ".", "management": "native"}])
+        self.assertEqual(gate.prepare(self.root, self.state)["max_rounds"], 3)
+
+    def test_shadowed_native_registration_still_requires_exact_git_root(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.register(self.hub, [{"path": "child/nested", "management": "native"}])
+        self.register(nested, [{"path": ".", "management": "external"}])
+        with self.assertRaisesRegex(gate.ReviewError, "actual Git repository root"):
+            gate.policy_for(nested)
+
+    def test_registered_child_rejects_invalid_or_linked_local_policy(self):
+        config = self.root / ".codex"
+        config.mkdir()
+        local_policy = config / "review-policy.json"
+        local_policy.write_text("{}")
+        with self.assertRaises(gate.ReviewError):
+            gate.policy_for(self.root)
+        local_policy.unlink()
+        local_policy.symlink_to(self.hub / "missing.json")
+        with self.assertRaisesRegex(gate.ReviewError, "regular local file"):
+            gate.policy_for(self.root)
+
+    def test_local_policy_does_not_enroll_external_or_unregistered_owner(self):
+        self.register(self.hub, [{"path": "child", "management": "external"}])
+        config = self.root / ".codex"
+        config.mkdir()
+        (config / "review-policy.json").write_text("{}")
+        self.assertIsNone(gate.policy_for(self.root))
+        self.register(self.hub, [])
+        self.assertIsNone(gate.policy_for(self.root))
+
+    def test_explicit_policy_injection_retains_embedded_engine_contract(self):
+        injected = self.hub / "explicit-policy.json"
+        injected.write_text(json.dumps(MINIMAL_POLICY))
+        context = gate.prepare(self.root, self.state, policy_path=injected)
+        self.assertEqual(context["required_reviewers"], 1)
+        self.assertEqual(context["required_focus"], {"correctness": 1})
 
 
 if __name__ == "__main__":

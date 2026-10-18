@@ -1,5 +1,80 @@
 # Compatibilidad observada
 
+## Verificación de migración — 2026-10-18
+
+Cliente comprobado: Codex CLI 0.163.0, macOS ARM64. El catálogo de esta sesión,
+las instalaciones y `skills/list` de un app-server nuevo son superficies distintas.
+El adaptador `native.py --capabilities` conserva esa diferencia y separa errores,
+advertencias, habilitación, confianza y ejecución todavía no comprobada.
+
+| Prueba | Resultado observado |
+| --- | --- |
+| Hub, app-server nuevo | 21 skills, 18 habilitadas; fuentes Constellation excluidas y plugin 1.0 activo al iniciar |
+| Plugins y MCP configurados | 24 plugins; 7 servidores MCP, 4 habilitados; no acredita autenticación ni llamadas exitosas |
+| Hooks al iniciar | 5 del plugin y 1 global, habilitados y confiados; definiciones duplicadas del hub retiradas |
+| Dispatch nativo baseline | `UserPromptSubmit` y `Stop` 1.0 completados en thread efímero; otros eventos no inferidos |
+| Configuración de 19 hijos | `config/read` devuelve 64 en cada uno tras retirar overrides locales; sin prueba de saturación |
+| Proyecto vacío | Descubrimiento global/local real probado sin scaffolding; ejecución se evalúa aparte |
+| Control de navegador | `iab` no disponible en subagente; ningún navegador disponible en coordinador |
+| Lectura web | Páginas públicas oficiales consultadas con la herramienta web disponible |
+
+La configuración global existente permite acceso completo y aprobación `never`.
+Se conserva por elección previa del usuario. Los hooks de Constellation no son
+un sandbox de shell o MCP. Tampoco se cambian Memories, feedback, telemetría ni
+controles de cuenta; la inspección local no demuestra esos controles remotos.
+
+El esquema instalado de `skills/list` no admite `perCwdExtraUserRoots`, aunque
+aparezca en documentación más nueva. Se usan sólo campos aceptados por el cliente.
+El inventario de plugins usa el CLI; las APIs app-server de plugins siguen
+siendo interfaces experimentales. No se interpreta un binario nuevo como prueba
+de compatibilidad: se repiten construcción, descubrimiento y casos representativos.
+
+Los comandos públicos del hub son adaptadores del runtime compartido. El paquete
+puede ejecutar su ciclo Git en un receptor sin `.codex` ni checkout del hub. Los
+proyectos conservan Git, dominio y validación; OmarOS conserva su adaptador de
+publicación y fija por hash la revisión compartida.
+
+### Modelo y contexto personal
+
+Se retiró `.codex/config.toml` del hub, incluido el override de contexto
+1.000.000/900.000. La inspección de `codex debug models` por el coordinador
+registró 272.000 tokens para
+`gpt-6-astra` y 500.000 para `gpt-6.1-sol` en este cliente; los ensayos nativos
+observaron ventanas efectivas de 258.400 y 475.000. No se extrapolan límites de
+API a Codex ni se cambian el modelo y esfuerzo predeterminados del usuario.
+
+Dos procesos nuevos de app-server completaron la misma consulta matemática con
+`gpt-6-astra`/Ultra y `gpt-6.1-sol`/Ultra. Ambos leyeron íntegramente el perfil
+local persistido; su salida de lectura coincidió con el archivo observado.
+El primero leyó además la skill de enseñanza y creó un subagente; el segundo
+no lo hizo. Los archivos personales vigilados permanecieron idénticos y los
+threads fueron efímeros. Esto acredita recuperación local del mismo perfil en
+esos procesos y modelos, no eficacia pedagógica, equivalencia de resultados ni
+compatibilidad universal. Sólo se publican métricas reducidas, sin contenido
+personal ni respuestas de los ensayos.
+
+La calibración sintética separada verificó ocho casos y 23 comprobaciones con
+agentes nuevos en la sesión de colaboración. No sustituye la prueba entre
+procesos: son fronteras de contexto diferentes. El perfil, su calibración y la
+política del diario permanecen fuera de las skills genéricas distribuidas.
+
+### Progreso y revisión proporcional
+
+Los adaptadores Git, portable y OmarOS usan el mismo formato de progreso. El
+receptor OmarOS exige un bundle verificado que incluya `runtime/progress.py`;
+el lock de tres recursos de la distribución 1.1.0 anterior a esta extensión sólo
+conserva la compatibilidad de revisión tras verificar su inventario y hashes,
+no habilita progreso. Las actualizaciones del proveedor y del
+receptor siguen sus contratos independientes.
+
+`allow_quick_code` es una opción de política, no un permiso del cliente. Una
+política receptora que omita o niegue esa opción no acepta la reducción opcional
+para código. Los mínimos más estrictos se conservan y la justificación debe
+preceder a la primera ronda, ligada a su snapshot. No modifica sandbox,
+aprobaciones, confianza de hooks ni las obligaciones Deep.
+
+## Evidencia histórica 1.0
+
 Fecha: 2026-10-17. Cliente probado: Codex CLI 0.163.0, macOS ARM64. Las pruebas
 de descubrimiento usan instalaciones sintéticas y `CODEX_HOME` aislados, sin
 confiar hooks ni iniciar turnos de modelo. No se han modificado componentes

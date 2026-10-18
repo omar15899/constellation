@@ -29,17 +29,22 @@ _BUILD_SPEC.loader.exec_module(_BUILDER)
 
 # This fixture describes the distribution contract independently of the validator.
 CORE_RESOURCES = (
-    "review_gate.py", "review-policy.json",
+    "ecosystem/runtime/review_gate.py", "ecosystem/runtime/review-policy.json",
+    "ecosystem/runtime/__init__.py", "ecosystem/runtime/workflow.py",
+    "ecosystem/runtime/workspace.py", "ecosystem/runtime/dispatch.py",
+    "ecosystem/runtime/agent_policy.py", "ecosystem/runtime/progress.py",
     "ecosystem/__init__.py", "ecosystem/core.py", "ecosystem/storage.py",
     "ecosystem/cli.py", "ecosystem/hooks.py", "ecosystem/build.py",
     "ecosystem/install.py", "ecosystem/native.py", "ecosystem/validate.py",
     "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
+    "ecosystem/ARCHITECTURE.md", "ecosystem/MIGRATION.md", "ecosystem/PROGRESS.md",
     "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
     "ecosystem/EVALUATION.md", "ecosystem/evaluation.json",
     "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
     "ecosystem/tests/helpers.py", "ecosystem/tests/test_core.py",
     "ecosystem/tests/test_hooks.py", "ecosystem/tests/test_package.py",
-    "ecosystem/tests/test_validation.py",
+    "ecosystem/tests/test_validation.py", "ecosystem/tests/test_capabilities.py",
+    "ecosystem/tests/test_progress.py", "ecosystem/tests/test_progress_core.py",
 )
 ROLES = {
     "coding": ("coder",),
@@ -64,7 +69,7 @@ class PackageFixture:
             else:
                 self.write(relative, "A resource needed by the portable fixture.\n")
         self.write_json(self.manifest_path, {
-            "name": "constellation", "version": "1.0.0",
+            "name": "constellation", "version": "1.1.0",
             "description": "Portable fixture for package validation.",
             "skills": "./skills/", "hooks": "./ecosystem/hooks.json",
         })
@@ -360,8 +365,10 @@ class ValidationTests(unittest.TestCase):
                 self.assert_rejected("ecosystem/hooks.json")
 
     def test_subset_still_requires_common_resources(self) -> None:
-        for relative in ("ecosystem/core.py", "review_gate.py", "ecosystem/references/protocol.md",
-                         "ecosystem/agents/verifier.toml"):
+        for relative in ("ecosystem/core.py", "ecosystem/runtime/review_gate.py", "ecosystem/references/protocol.md",
+                         "ecosystem/agents/verifier.toml", "ecosystem/runtime/progress.py",
+                         "ecosystem/tests/test_progress.py", "ecosystem/tests/test_progress_core.py",
+                         "ecosystem/PROGRESS.md"):
             with self.subTest(relative=relative):
                 path = self.package.root / relative
                 original = path.read_bytes()
@@ -396,6 +403,15 @@ class ValidationTests(unittest.TestCase):
                 self.assertEqual(validate(package.root), [])
                 self.assertEqual(validate(package.root, modules[:1]), [])
 
+    def test_manifest_description_required_by_builder_is_required_by_validator(self) -> None:
+        metadata = self.package.read_json(self.package.manifest_path)
+        del metadata["description"]
+        self.package.write_json(self.package.manifest_path, metadata)
+        with self.assertRaises(_BUILDER.BundleError):
+            _BUILDER.build_bundle(self.temporary / "missing-description",
+                                  self.package.modules, source_root=self.package.root)
+        self.assert_rejected(self.package.manifest_path)
+
     def test_bundle_rejects_changed_hash_and_permissions(self) -> None:
         for mutation in ("hash", "mode"):
             with self.subTest(mutation=mutation):
@@ -406,6 +422,19 @@ class ValidationTests(unittest.TestCase):
                     path.write_text("Changed after inventory.\n", encoding="utf-8")
                 else:
                     path.chmod(0o755)
+                self.assert_rejected("ecosystem/core.py", package)
+
+    def test_bundle_rejects_unsupported_modes_even_when_inventory_matches(self) -> None:
+        for mode in (0o600, 0o664, 0o777):
+            with self.subTest(mode=oct(mode)):
+                package = PackageFixture(self.temporary / f"mode-{mode:o}", bundled=True)
+                path = package.root / "ecosystem/core.py"
+                path.chmod(mode)
+                inventory = package.read_json("bundle.json")
+                inventory["files"]["ecosystem/core.py"]["mode"] = mode
+                package.write_json("bundle.json", inventory)
+                with self.assertRaises(_BUILDER.BundleError):
+                    _BUILDER.verify_bundle(package.root)
                 self.assert_rejected("ecosystem/core.py", package)
 
     def test_bundle_rejects_missing_inventory_resource_or_selected_module(self) -> None:

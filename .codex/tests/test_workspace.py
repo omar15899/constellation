@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE))
-import workspace as ws
+from ecosystem.runtime import workspace as ws
 
 
 class WorkspaceFixture(unittest.TestCase):
@@ -62,8 +62,25 @@ class WorkspaceFixture(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("verified artifact\n")
         state = self.workspace.load()
-        self.workspace.review({repo: {"Artifacts satisfy the task": "Read each declared artifact and verified its contents."}
-                               for repo in state["roots"]})
+        self.review({repo: {"Artifacts satisfy the task": "Read each declared artifact and verified its contents."}
+                     for repo in state["roots"]})
+
+    def review(self, evidence):
+        """Supply fixture reports without bypassing the shared review gate."""
+        for repo in evidence:
+            context = self.workspace.review_operation(repo, "start")
+            if not context.get("enabled"):
+                continue
+            for focus, count in context["required_focus"].items():
+                for index in range(count):
+                    self.workspace.review_operation(repo, "report", {
+                        "token": context["token"], "reviewer": f"fixture-{repo}-{focus}-{index}",
+                        "role": "reviewer", "focus": [focus], "paths": context["paths"],
+                        "summary": "The fixture artifacts satisfy their declared behavior.",
+                        "evidence": "The test constructs and checks each exact artifact and its Git destination.",
+                        "findings": [],
+                    })
+        return self.workspace.review(evidence)
 
     def test_route_uses_real_owner_and_is_read_only(self):
         routes = self.workspace.route(["new.md", "Shared/new dir/new.md", "Sibling/README.md"])
@@ -81,7 +98,7 @@ class WorkspaceFixture(unittest.TestCase):
         before = self.workspace.load()["contracts"]
         with self.assertRaisesRegex(ws.Blocked, "does not participate"):
             self.workspace.review_operation("Sibling", "start")
-        self.assertEqual(self.workspace.review_operation("Shared", "prepare"), {"enabled": False})
+        self.assertTrue(self.workspace.review_operation("Shared", "prepare")["enabled"])
         self.workspace.review_operation("Shared", "start", {"risk": "deep"})
         self.assertEqual(self.workspace.load()["contracts"], before)
         with self.assertRaisesRegex(ws.Blocked, "cannot be lowered"):
@@ -118,7 +135,7 @@ class WorkspaceFixture(unittest.TestCase):
         self.plan([path], deletions=[path])
         (self.root / path).unlink()
         self.assertEqual(self.workspace.route_one(path)["repository"], "Shared")
-        self.workspace.review({"Shared": {"Artifacts satisfy the task": "The tracked obsolete file is absent."}})
+        self.review({"Shared": {"Artifacts satisfy the task": "The tracked obsolete file is absent."}})
         self.workspace.commit([path], "Remove obsolete file")
         self.assertTrue(self.workspace.finish()["completed"])
         self.assertFalse(ws.git(self.root / "Shared", "ls-tree", "HEAD", "README.md"))
@@ -371,15 +388,15 @@ class WorkspaceFixture(unittest.TestCase):
         sentinel = "PRIVATE_CHECK_COMMAND_SENTINEL"
         with patch("sys.stdout", new=io.StringIO()):
             self.workspace.check("Shared", [sys.executable, "-c", f"from pathlib import Path; assert Path('tool.py').is_file(); print('{sentinel}')"])
-        self.workspace.review({"Shared": {"Artifacts satisfy the task": "Executed a passing check from the child repository."}})
+        self.review({"Shared": {"Artifacts satisfy the task": "Executed a passing check from the child repository."}})
         state = self.workspace.status()
         self.assertNotIn(sentinel, json.dumps(state))
         self.assertIn("command_sha256", json.dumps(state))
 
     def test_read_only_dependency_can_finish_without_previous_commit(self):
         self.plan(["README.md", "Shared/README.md"], depends_on={".": ["Shared"]})
-        self.workspace.review({repo: {"Artifacts satisfy the task": "Read the unchanged tracked artifact."}
-                               for repo in (".", "Shared")})
+        self.review({repo: {"Artifacts satisfy the task": "Read the unchanged tracked artifact."}
+                     for repo in (".", "Shared")})
         self.assertTrue(self.workspace.finish()["completed"])
 
     def test_guard_routes_root_child_and_moves_under_each_contract(self):
@@ -412,6 +429,32 @@ class WorkspaceFixture(unittest.TestCase):
         self.assertEqual(self.workspace.stop(), {})
         (self.root / "Shared/forgotten.md").write_text("new task work")
         self.assertFalse(self.workspace.stop()["continue"])
+
+    def test_stop_event_replay_preserves_workspace_and_child_attempts(self):
+        self.plan(["answer.md", "Shared/answer.md"])
+        self.assertEqual(self.workspace.stop(request_id="event-1")["decision"], "block")
+        paths = [self.workspace.path]
+        for repo in (".", "Shared"):
+            paths.append(ws.Workflow(self.root / repo, self.workspace.session).path)
+        before = {path: path.read_bytes() for path in paths}
+        replay = self.workspace.stop(request_id="event-1")
+        self.assertFalse(replay["continue"])
+        self.assertIn("INCOMPLETE", replay["systemMessage"])
+        self.assertEqual({path: path.read_bytes() for path in paths}, before)
+        self.assertEqual(self.workspace.load()["stop_attempts"], 1)
+        self.assertEqual(self.workspace.stop(request_id="event-2")["decision"], "block")
+        self.assertEqual(self.workspace.load()["stop_attempts"], 2)
+
+    def test_completed_stop_event_replay_preserves_workspace_state(self):
+        paths = ["answer.md", "Shared/answer.md"]
+        self.plan(paths)
+        self.write_and_review(paths)
+        self.workspace.commit(paths, "Publish fixture artifacts")
+        self.workspace.finish()
+        self.assertEqual(self.workspace.stop(request_id="completed-event"), {})
+        before = self.workspace.path.read_bytes()
+        self.assertEqual(self.workspace.stop(request_id="completed-event"), {})
+        self.assertEqual(self.workspace.path.read_bytes(), before)
 
 
 if __name__ == "__main__":

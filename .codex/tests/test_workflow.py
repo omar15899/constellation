@@ -1,43 +1,54 @@
 """Exercise real Git boundaries against disposable local bare remotes."""
 from __future__ import annotations
 
-import importlib.util
 import io
 import json
+import os
 from pathlib import Path
-import re
-import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1] / "workflow.py"
-spec = importlib.util.spec_from_file_location("workflow", MODULE)
-assert spec and spec.loader
-w = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(w)
+RUNTIME = MODULE.parent / "ecosystem/runtime"
+sys.path.insert(0, str(MODULE.parent))
+from ecosystem.runtime import workflow as w
+
+
+def copy_runtime(destination: Path) -> None:
+    """Install the compatibility entry point and its single implementation."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(MODULE, destination)
+    shutil.copytree(RUNTIME.parent, destination.parent / "ecosystem", dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
 
 
 def native_hook_command(event: str, runtime: Path) -> list[str]:
-    """Substitute only the trusted runtime location; never change HOME or trust."""
-    manifest = json.loads((MODULE.parent / "hooks.json").read_text())
-    command = shlex.split(manifest["hooks"][event][0]["hooks"][0]["command"])
-    anchor = '"$HOME/GitHub/.codex/workflow.py"'
-    if len(command) != 3 or command[:2] != ["/bin/sh", "-c"] or command[2].count(anchor) != 1:
-        raise AssertionError("Native hook must select the trusted hub runtime explicitly.")
-    command[2] = command[2].replace(anchor, shlex.quote(str(runtime)))
-    return command
+    """Exercise legacy payload handling, independently of native hook loading."""
+    events = {"UserPromptSubmit": "prompt", "PreToolUse": "pre-tool",
+              "SubagentStart": "subagent-start", "Stop": "stop"}
+    return [sys.executable, str(runtime), "hook", events[event]]
 
 
 class GitFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name)
+        self.environment = patch.dict(os.environ, {"CODEX_HOME": str(self.base / "codex-home")})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
         self.remote = self.base / "remote.git"
         self.root = self.base / "vault"
         self.other = self.base / "other"
+        # Publication tests isolate Git controls from the independently tested
+        # review policy. These recipients deliberately retain external policy.
+        registry = self.base / ".codex/repositories.json"
+        registry.parent.mkdir()
+        registry.write_text(json.dumps({"schema_version": 1, "repositories": [
+            {"path": name, "management": "external"} for name in ("vault", "other")]}))
         subprocess.run(["git", "init", "--bare", "-q", str(self.remote)], check=True)
         subprocess.run(["git", "clone", "-q", str(self.remote), str(self.root)], check=True, capture_output=True)
         for key, value in (("user.name", "Test"), ("user.email", "test@example.invalid"),
@@ -257,7 +268,7 @@ class GitFixture(unittest.TestCase):
 
     def test_primary_session_cannot_review_or_verify_its_own_task(self):
         engine = w.review_engine()
-        policy = json.loads((MODULE.parent / "review-policy.json").read_text())
+        policy = json.loads((RUNTIME / "review-policy.json").read_text())
         self.flow.begin("identities")
         self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
         (self.root / "answer.md").write_text("answer\n")
@@ -401,33 +412,33 @@ class GitFixture(unittest.TestCase):
             self.flow.reviewed(self.flow.load())
 
     def native_hook(self, event, payload, cwd=None):
-        """Execute the installed definition with its trusted runtime in a fixture."""
+        """Execute the compatibility entry point using a disposable runtime."""
         runtime = self.root / ".codex/workflow.py"
         runtime.parent.mkdir(exist_ok=True)
-        shutil.copyfile(MODULE, runtime)
+        copy_runtime(runtime)
         (runtime.parent / "profile.json").write_text('{"mode":"native"}\n')
+        payload = {"hook_event_name": event, "turn_id": "fixture-turn",
+                   "session_id": "test-session", "cwd": str(cwd or self.root), **payload}
         return subprocess.run(native_hook_command(event, runtime), cwd=cwd or self.root,
                               input=json.dumps(payload), capture_output=True,
                               text=True, timeout=15)
 
-    def test_installed_prompt_checks_remote_from_subfolder(self):
+    def test_prompt_does_not_start_or_synchronize_a_task_from_subfolder(self):
         self.advance_remote()
-        # Keep fixture installation clean so the prompt can fast-forward.
+        before = w.git(self.root, "rev-parse", "HEAD")
         runtime = self.root / ".codex/workflow.py"
         runtime.parent.mkdir()
-        shutil.copyfile(MODULE, runtime)
+        copy_runtime(runtime)
         w.git(self.root, "config", "--add", "core.excludesFile", str(self.base / "ignore"))
         (self.base / "ignore").write_text(".codex/\n")
         payload = {"session_id": "native", "turn_id": "one", "cwd": str(runtime.parent),
                    "prompt": "SYNTHETIC_PRIVATE_PROMPT"}
         result = self.native_hook("UserPromptSubmit", payload, cwd=runtime.parent)
         self.assertEqual(result.returncode, 0, result.stderr)
-        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("Upstream checked", context)
-        self.assertIn("--session 'native' dispatch --capacity N", context)
-        self.assertIn(".codex/RESEARCH.md", context)
-        self.assertIn("review-author", context)
-        self.assertEqual((self.root / "remote.md").read_text(), "new cloud data\n")
+        self.assertEqual(json.loads(result.stdout), {})
+        self.assertEqual(w.git(self.root, "rev-parse", "HEAD"), before)
+        self.assertFalse((self.root / "remote.md").exists())
+        self.assertEqual(list(self.flow.home.iterdir()), [])
 
     def test_installed_patch_resolves_paths_against_payload_cwd(self):
         folder = self.root / "nested folder"
@@ -440,27 +451,22 @@ class GitFixture(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload["tool_input"]["input"] = "*** Begin Patch\n*** Add File: ../answer.md\n+answer\n*** End Patch"
         result = self.native_hook("PreToolUse", payload, cwd=folder)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("Undeclared patch path", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
 
-    def test_patch_matcher_routes_qualified_tool_names_to_the_guard(self):
+    def test_legacy_patch_payload_accepts_qualified_tool_names(self):
         self.flow.begin("qualified patches")
         self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
-        matcher = json.loads((MODULE.parent / "hooks.json").read_text())["hooks"]["PreToolUse"][0]["matcher"]
         for tool_name in ("apply_patch", "functions.apply_patch", "tools.apply_patch", "functions:apply_patch",
                           "native_tools.functions.apply_patch"):
             with self.subTest(tool_name=tool_name):
-                self.assertIsNotNone(re.fullmatch(matcher, tool_name))
                 payload = {"session_id": "test-session", "cwd": str(self.root), "tool_name": tool_name,
                            "tool_input": {"input": "*** Begin Patch\n*** Add File: answer.md\n+answer\n*** End Patch"}}
                 self.assertEqual(self.native_hook("PreToolUse", payload).returncode, 0)
                 payload["tool_input"]["input"] = payload["tool_input"]["input"].replace("answer.md", "other.md")
                 rejected = self.native_hook("PreToolUse", payload)
-                self.assertEqual(rejected.returncode, 2, rejected.stderr)
-                self.assertIn("Undeclared patch path", rejected.stderr)
-        for tool_name in ("exec", "functions.exec", "functions.exec_command", "apply_patch_extra", "tools/apply_patch"):
-            with self.subTest(unrelated_tool=tool_name):
-                self.assertIsNone(re.fullmatch(matcher, tool_name))
+                self.assertEqual(rejected.returncode, 0, rejected.stderr)
+                self.assertEqual(json.loads(rejected.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_subagent_start_without_parent_contract_creates_no_state(self):
         self.flow.home.rmdir()  # Empty temporary fixture directory, not user state.
@@ -468,15 +474,24 @@ class GitFixture(unittest.TestCase):
                    "prompt": "SYNTHETIC_PRIVATE_WORKER_PROMPT", "transcript_path": "/private/worker-transcript"}
         result = self.native_hook("SubagentStart", payload)
         self.assertEqual(result.returncode, 0, result.stderr)
-        output = json.loads(result.stdout)["hookSpecificOutput"]
-        self.assertEqual(output["hookEventName"], "SubagentStart")
-        self.assertIn("parent session is 'parent-session'", output["additionalContext"])
-        self.assertIn("native-child-id", output["additionalContext"])
-        self.assertIn("Do not commit or push", output["additionalContext"])
-        self.assertIn("review-author", output["additionalContext"])
+        self.assertEqual(json.loads(result.stdout), {})
         self.assertNotIn(payload["prompt"], result.stdout)
         self.assertNotIn(payload["transcript_path"], result.stdout)
         self.assertFalse(self.flow.home.exists())
+
+    def test_subagent_start_supplies_active_contract_context_without_mutation(self):
+        self.flow.begin("parent")
+        self.flow.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+        before = self.flow.path.read_bytes()
+        result = self.native_hook("SubagentStart", {"agent_id": "native-child-id"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "SubagentStart")
+        self.assertIn("parent session is 'test-session'", output["additionalContext"])
+        self.assertIn("native-child-id", output["additionalContext"])
+        self.assertIn("Do not commit or push", output["additionalContext"])
+        self.assertIn("review-author", output["additionalContext"])
+        self.assertEqual(self.flow.path.read_bytes(), before)
 
     def test_subagent_start_preserves_finished_parent_and_workspace_bytes(self):
         self.flow.begin("parent")
@@ -509,12 +524,11 @@ class GitFixture(unittest.TestCase):
         with self.assertRaisesRegex(w.Blocked, "regular files"):
             self.flow.guard_patch(payload, self.root)
 
-    def test_installed_stop_missing_contract_reports_incomplete(self):
+    def test_stop_without_registered_contract_creates_no_state(self):
         result = self.native_hook("Stop", {"session_id": "no-contract", "cwd": str(self.root)})
         self.assertEqual(result.returncode, 0, result.stderr)
-        output = json.loads(result.stdout)
-        self.assertFalse(output["continue"])
-        self.assertIn("INCOMPLETE", output["systemMessage"])
+        self.assertEqual(json.loads(result.stdout), {})
+        self.assertEqual(list(self.flow.home.iterdir()), [])
 
     def test_stop_retries_are_bounded_and_labeled_incomplete(self):
         self.flow.begin("t1")
@@ -523,6 +537,36 @@ class GitFixture(unittest.TestCase):
         final = self.flow.stop()
         self.assertFalse(final["continue"])
         self.assertIn("INCOMPLETE", final["systemMessage"])
+
+    def test_stop_event_replay_does_not_spend_another_continuation(self):
+        self.flow.begin("stop-event")
+        self.assertEqual(self.flow.stop(request_id="event-1")["decision"], "block")
+        before = self.flow.path.read_bytes()
+        replay = self.flow.stop(request_id="event-1")
+        self.assertFalse(replay["continue"])
+        self.assertIn("INCOMPLETE", replay["systemMessage"])
+        self.assertEqual(self.flow.path.read_bytes(), before)
+        self.assertEqual(self.flow.load()["stop_attempts"], 1)
+        self.assertEqual(self.flow.stop(request_id="event-2")["decision"], "block")
+        self.assertEqual(self.flow.load()["stop_attempts"], 2)
+
+    def test_completed_stop_event_replay_preserves_state(self):
+        self.task()
+        self.flow.commit(["answer.md"], "Publish fixture answer")
+        self.flow.finish()
+        self.assertEqual(self.flow.stop(request_id="completed-event"), {})
+        before = self.flow.path.read_bytes()
+        self.assertEqual(self.flow.stop(request_id="completed-event"), {})
+        self.assertEqual(self.flow.path.read_bytes(), before)
+        (self.root / "forgotten.md").write_text("new pending work\n")
+        self.assertEqual(self.flow.stop(request_id="next-event")["decision"], "block")
+
+    def test_inspection_does_not_create_operational_state(self):
+        directory = self.other / ".git/constellation"
+        self.assertFalse(directory.exists())
+        flow = w.Workflow(self.other, "inspection", create_state=False)
+        self.assertFalse(flow.path.exists())
+        self.assertFalse(directory.exists())
 
     def test_sessions_have_separate_contracts(self):
         self.flow.begin("one")
@@ -545,7 +589,7 @@ class GitFixture(unittest.TestCase):
     def test_git_hooks_do_not_deadlock_inside_workflow(self):
         runtime = self.root / ".codex/workflow.py"
         runtime.parent.mkdir()
-        shutil.copyfile(MODULE, runtime)
+        copy_runtime(runtime)
         self.commit("install runtime fixture")
         w.git(self.root, "push")
         import sys
@@ -559,27 +603,30 @@ class GitFixture(unittest.TestCase):
         self.assertEqual(result["head"], w.git(self.root, "rev-parse", "origin/main"))
 
     def test_prompt_hook_does_not_persist_prompt_or_transcript(self):
-        import sys
+        private_state = w.Workflow(self.root, "native")
+        private_state.begin("explicit-task")
+        private_state.plan({"requirements": ["answer"], "paths": ["answer.md"]})
+        before = private_state.path.read_bytes()
         payload = {"session_id": "native", "turn_id": "one", "cwd": str(self.root),
                    "prompt": "UNIQUE_PRIVATE_PROMPT", "transcript_path": "/private/transcript.jsonl"}
         result = self.native_hook("UserPromptSubmit", payload)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit")
-        private_state = w.Workflow(self.root, "native")
         contents = private_state.path.read_text() + (private_state.home / "events.jsonl").read_text()
+        self.assertEqual(private_state.path.read_bytes(), before)
         self.assertNotIn("UNIQUE_PRIVATE_PROMPT", contents)
         self.assertNotIn("transcript.jsonl", contents)
 
     def test_steered_prompt_preserves_unfinished_requirements(self):
-        import sys
         self.task()
+        before = self.flow.path.read_bytes()
         payload = {"session_id": "test-session", "turn_id": "two", "cwd": str(self.root), "prompt": "Also explain the example"}
         result = self.native_hook("UserPromptSubmit", payload)
         self.assertEqual(result.returncode, 0, result.stderr)
         state = self.flow.load()
         self.assertEqual(state["requirements"], ["answer is present"])
         self.assertEqual(state["paths"], ["answer.md"])
-        self.assertIsNone(state["review"])
+        self.assertEqual(self.flow.path.read_bytes(), before)
 
 
 
@@ -636,8 +683,8 @@ class GitFixture(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload["tool_input"]["command"] = payload["tool_input"]["command"].replace("answer.md", "other.md")
         result = self.native_hook("PreToolUse", payload)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("Undeclared", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_hook_ignores_neighbor_without_native_profile(self):
         result = self.native_hook("UserPromptSubmit", {}, cwd=self.other)
@@ -758,23 +805,26 @@ class GitFixture(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), {})
         self.assertFalse((self.other / ".git/constellation").exists())
 
-    def test_hook_rejects_invalid_or_symlinked_native_marker(self):
+    def test_hook_ignores_local_profile_metadata_without_starting_task(self):
         import sys
         runtime = self.root / ".codex/workflow.py"
         runtime.parent.mkdir()
-        shutil.copyfile(MODULE, runtime)
+        copy_runtime(runtime)
         marker = runtime.parent / "profile.json"
-        payload = json.dumps({"session_id": "invalid-marker", "cwd": str(self.root)})
+        payload = json.dumps({"session_id": "invalid-marker", "cwd": str(self.root),
+                              "hook_event_name": "UserPromptSubmit", "turn_id": "fixture-turn"})
         for content in ['{"mode":"projected"}', '{}']:
             marker.write_text(content)
             result = subprocess.run([sys.executable, str(runtime), "hook", "prompt"], input=payload, text=True, capture_output=True)
-            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {})
             self.assertFalse((self.root / ".git/constellation/" / (w.digest(b"invalid-marker")[:24]+".json")).exists())
         marker.unlink()
         marker.symlink_to(self.base / "outside.json")
         result = subprocess.run([sys.executable, str(runtime), "hook", "prompt"], input=payload, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("regular local file", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+        self.assertFalse((self.base / "outside.json").exists())
 
 
 if __name__ == "__main__":

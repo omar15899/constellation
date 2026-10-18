@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -18,9 +19,9 @@ except ImportError:
 
 MODULE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE))
-import agent_policy as ap
-from workspace import Workspace
-from workflow import Blocked, git
+from ecosystem.runtime import agent_policy as ap
+from ecosystem.runtime.workspace import Workspace
+from ecosystem.runtime.workflow import Blocked, git
 
 
 class RenderingTests(unittest.TestCase):
@@ -118,6 +119,11 @@ class PolicyFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name).resolve()
+        self.codex_home = self.base / "codex-home"
+        self.codex_home.mkdir()
+        (self.codex_home / "config.toml").write_text(f"[agents]\n{ap.KEY} = 2\n")
+        self.environment = patch.dict(os.environ, {"CODEX_HOME": str(self.codex_home)})
+        self.environment.start()
         self.root = self.base / 'hub'
         (self.root / '.codex').mkdir(parents=True)
         self.registry = {'schema_version': 1, 'repositories': [
@@ -148,6 +154,7 @@ class PolicyFixture(unittest.TestCase):
         self.workspace = Workspace(self.root, 'policy-test')
 
     def tearDown(self):
+        self.environment.stop()
         self.temp.cleanup()
 
     def save_policy(self):
@@ -168,6 +175,21 @@ class PolicyFixture(unittest.TestCase):
         self.assertFalse(result['matches'])
         self.assertFalse(result['primary_agent_included'])
         self.assertFalse((self.root / '.git/constellation').exists())
+
+    def test_missing_local_configuration_inherits_global_without_writing(self):
+        config = self.root / "Child" / ap.CONFIG
+        config.unlink()
+        global_config = self.codex_home / "config.toml"
+        global_config.write_text(f"[agents]\n{ap.KEY} = 6\n")
+        before = global_config.read_bytes()
+        result = self.manager().inspect(["Child"])
+        self.assertTrue(result["matches"])
+        self.assertTrue(result["repositories"][0]["inherited"])
+        self.assertFalse(config.exists())
+        self.assertEqual(global_config.read_bytes(), before)
+        self.assertFalse((self.root / ".git/constellation").exists())
+        global_config.write_text(f"[agents]\n{ap.KEY} = 3\n")
+        self.assertFalse(self.manager().inspect(["Child"])["matches"])
 
     def test_apply_requires_plan_and_explicit_scope(self):
         manager = self.manager()

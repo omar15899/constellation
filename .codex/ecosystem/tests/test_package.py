@@ -6,6 +6,7 @@ has a separate test using only a temporary CODEX_HOME and no conversation/thread
 from __future__ import annotations
 
 import hashlib
+from itertools import combinations
 import json
 import os
 from pathlib import Path
@@ -41,12 +42,16 @@ MODULES = (tuple(json.loads((CODEX_DIR / "bundle.json").read_text())["modules"])
 PLUGIN_ID = "constellation@constellation"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 CORE_FILES = {
-    "review_gate.py", "review-policy.json", "ecosystem/core.py",
+    "ecosystem/runtime/review_gate.py", "ecosystem/runtime/review-policy.json", "ecosystem/core.py",
+    "ecosystem/runtime/__init__.py", "ecosystem/runtime/workflow.py",
+    "ecosystem/runtime/workspace.py", "ecosystem/runtime/dispatch.py",
+    "ecosystem/runtime/agent_policy.py", "ecosystem/runtime/progress.py",
     "ecosystem/storage.py", "ecosystem/cli.py", "ecosystem/build.py",
     "ecosystem/install.py", "ecosystem/native.py", "ecosystem/validate.py",
-    "ecosystem/hooks.py", "ecosystem/hooks.json", "ecosystem/references/protocol.md",
+    "ecosystem/hooks.py", "ecosystem/hooks.json", "ecosystem/references/protocol.md", "ecosystem/PROGRESS.md",
     "ecosystem/agents/researcher.toml", "ecosystem/agents/reviewer.toml",
     "ecosystem/agents/security-reviewer.toml", "ecosystem/agents/verifier.toml",
+    "ecosystem/tests/test_progress.py", "ecosystem/tests/test_progress_core.py",
 }
 
 
@@ -158,7 +163,7 @@ class SyntheticNativeClient:
         self._save("plugins", rows)
         if self.corrupt_cache_once:
             self.corrupt_cache_once = False
-            (cache / "review-policy.json").write_text("{}\n")
+            (cache / "ecosystem/runtime/review-policy.json").write_text("{}\n")
         self._failure("add_plugin")
         return {"pluginId": PLUGIN_ID, "version": version}
 
@@ -196,7 +201,7 @@ class BundleCase(unittest.TestCase):
         (source / ".codex-plugin").rmdir()
         return source
 
-    def changed_bundle(self, version: str = "1.0.1", *, change_agent: bool = False) -> Path:
+    def changed_bundle(self, version: str = "1.1.1", *, change_agent: bool = False) -> Path:
         source = self.source_copy("update-source")
         metadata = json.loads((source / "ecosystem/plugin.json").read_text())
         metadata["version"] = version
@@ -251,6 +256,79 @@ class BundleCase(unittest.TestCase):
 
 
 class BuildTests(BundleCase):
+    def test_exported_git_runtime_reviews_and_publishes_without_hub_or_project_scaffolding(self) -> None:
+        receiver = self.root / "standalone-git"
+        receiver.mkdir()
+        remote = self.root / "standalone.git"
+        environment = dict(os.environ)
+        environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
+                           GIT_CONFIG_NOSYSTEM="1", GIT_ALLOW_PROTOCOL="file")
+        environment.pop("PYTHONPATH", None)
+        environment.pop("CODEX_THREAD_ID", None)
+        for args in (("init", "--bare", str(remote)), ("init", "-b", "main", str(receiver)),
+                     ("-C", str(receiver), "config", "user.name", "Synthetic Fixture"),
+                     ("-C", str(receiver), "config", "user.email", "fixture@example.invalid"),
+                     ("-C", str(receiver), "config", "core.hooksPath", str(self.root / "no-hooks"))):
+            subprocess.run(["git", *args], env=environment, capture_output=True, text=True,
+                           check=True, timeout=15)
+        (receiver / "README.md").write_text("Initial fixture.\n")
+        for args in (("add", "README.md"), ("commit", "-m", "Create fixture"),
+                     ("remote", "add", "origin", str(remote)), ("push", "-u", "origin", "main")):
+            subprocess.run(["git", *args], cwd=receiver, env=environment, capture_output=True,
+                           text=True, check=True, timeout=15)
+        runner = textwrap.dedent('''\
+            import os, pathlib, runpy, sys
+            original = pathlib.Path(sys.argv[1])
+            def deny_source(event, args):
+                if event in {"open", "os.listdir", "os.scandir"} and args and isinstance(args[0], (str, bytes, os.PathLike)):
+                    path = pathlib.Path(os.fsdecode(args[0])).resolve()
+                    if path == original or original in path.parents:
+                        raise RuntimeError("The original package is unavailable")
+            sys.addaudithook(deny_source)
+            sys.argv = sys.argv[2:]
+            runpy.run_path(sys.argv[0], run_name="__main__")
+            ''')
+        command = [sys.executable, "-I", "-B", "-c", runner, str(CODEX_DIR),
+                   str(self.bundle / "ecosystem/cli.py"), "git", "--root", str(receiver),
+                   "--session", "synthetic-standalone-author"]
+
+        def invoke(*args: str, payload: dict | None = None, rejected: bool = False) -> dict:
+            result = subprocess.run([*command, *args], input=json.dumps(payload or {}),
+                                    cwd=receiver, env=environment, capture_output=True, text=True, timeout=30)
+            if rejected:
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                return {}
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return json.loads(result.stdout)
+
+        self.assertNotIn("sync_error", invoke("begin"))
+        requirement = "Document the verified fixture result."
+        invoke("plan", payload={"requirements": [requirement], "paths": ["README.md"]})
+        artifact = receiver / "README.md"
+        artifact.write_text("Verified fixture.\n")
+        invoke("review", payload={requirement: "Fixture checked."}, rejected=True)
+
+        def report() -> None:
+            context = invoke("review-start")
+            invoke("review-report", payload={
+                "token": context["token"], "reviewer": "synthetic-independent-reviewer",
+                "role": "reviewer", "focus": ["correctness"], "paths": ["README.md"],
+                "summary": "Synthetic fixture review.",
+                "evidence": "Inspected the expected fixture bytes.", "findings": [],
+            })
+
+        report()
+        artifact.write_text("Updated verified fixture.\n")
+        invoke("review", payload={requirement: "Fixture checked."}, rejected=True)
+        report()
+        invoke("check", "--", sys.executable, "-I", "-B", "-c",
+               "from pathlib import Path; assert 'Updated' in Path('README.md').read_text()")
+        invoke("review", payload={requirement: "Checked the updated fixture and independent review."})
+        invoke("commit", "-m", "Update fixture", "README.md")
+        self.assertTrue(invoke("finish")["completed"])
+        self.assertFalse((receiver / ".codex").exists())
+        self.assertFalse((receiver / "AGENTS.md").exists())
+
     def test_reproducible_bytes_hashes_modes_and_archive(self) -> None:
         rebuilt = self.root / "rebuilt"
         source = self.source_copy()
@@ -287,7 +365,7 @@ class BuildTests(BundleCase):
                 self.assertEqual(verify_bundle(target), manifest)
 
     def test_common_gate_and_policy_are_source_bytes_and_manifest_has_one_native_location(self) -> None:
-        for relative in ("review_gate.py", "review-policy.json"):
+        for relative in ("ecosystem/runtime/review_gate.py", "ecosystem/runtime/review-policy.json"):
             self.assertEqual((self.bundle / relative).read_bytes(), (CODEX_DIR / relative).read_bytes())
         origin = CODEX_DIR / PLUGIN_MANIFEST if IS_DISTRIBUTED else SOURCE_DIR / "plugin.json"
         self.assertEqual((self.bundle / PLUGIN_MANIFEST).read_bytes(), origin.read_bytes())
@@ -340,7 +418,7 @@ class BuildTests(BundleCase):
 
     def test_source_file_and_directory_symlinks_are_rejected(self) -> None:
         source = self.source_copy()
-        for relative in ("review_gate.py", f"skills/{self.module}/references"):
+        for relative in ("ecosystem/runtime/review_gate.py", f"skills/{self.module}/references"):
             path = source / relative
             held = self.root / ("held-" + path.name)
             path.rename(held)
@@ -369,7 +447,7 @@ class BuildTests(BundleCase):
         for mutation in ("changed", "missing", "extra", "private", "symlink", "mode"):
             target = self.root / mutation
             shutil.copytree(self.bundle, target)
-            path = target / "review-policy.json"
+            path = target / "ecosystem/runtime/review-policy.json"
             if mutation == "changed":
                 path.write_text("{}\n")
             elif mutation == "missing":
@@ -380,7 +458,7 @@ class BuildTests(BundleCase):
                 (target / "auth.json").write_text('{"synthetic":true}\n')
             elif mutation == "symlink":
                 path.unlink()
-                path.symlink_to(self.bundle / "review-policy.json")
+                path.symlink_to(self.bundle / "ecosystem/runtime/review-policy.json")
             else:
                 path.chmod(0o600)
             with self.subTest(mutation=mutation), self.assertRaises(BundleError):
@@ -415,6 +493,18 @@ class BuildTests(BundleCase):
             with self.subTest(field=field, value=value), self.assertRaises(BundleError):
                 build_bundle(self.root / "rejected-metadata", MODULES, source_root=source)
             self.assertFalse((self.root / "rejected-metadata").exists())
+
+    def test_bundle_modules_require_an_explicit_list_before_rebuild(self) -> None:
+        path = self.bundle / "bundle.json"
+        original = json.loads(path.read_text())
+        for modules in (None, True, 1, "coding", {name: True for name in MODULES}):
+            with self.subTest(modules=modules):
+                write_json(path, {**original, "modules": modules})
+                with self.assertRaises(BundleError):
+                    verify_bundle(self.bundle)
+                with self.assertRaises(BundleError):
+                    build_bundle(self.root / "rejected-modules", source_root=self.bundle)
+                self.assertFalse((self.root / "rejected-modules").exists())
 
     def test_archive_rejects_existing_and_in_bundle_outputs(self) -> None:
         existing = self.root / "existing.zip"
@@ -466,6 +556,192 @@ class SyntheticInstallationTests(BundleCase):
         version = version or self.receipt()["version"]
         return self.home / "plugins/cache/constellation/constellation" / version
 
+    def seed_legacy_installation(self, modules: list[str] | None = None,
+                                 *, executable_agent: bool = False) -> None:
+        """Create the historical ownership layout with synthetic release bytes.
+
+        Only the inventory is historical; this fixture never executes 1.0 code
+        and is not a substitute for testing the user's actual prior release.
+        """
+        self.install(modules=modules)
+        receipt = self.receipt()
+        catalog = self.home / "constellation/catalog"
+        payload = catalog / "plugins/constellation"
+        for name in ("review_gate.py", "review-policy.json"):
+            (payload / "ecosystem/runtime" / name).replace(payload / name)
+        shutil.rmtree(payload / "ecosystem/runtime")
+        for name in ("ARCHITECTURE.md", "MIGRATION.md", "PROGRESS.md", "tests/test_capabilities.py",
+                     "tests/test_progress.py", "tests/test_progress_core.py"):
+            (payload / "ecosystem" / name).unlink()
+        metadata = json.loads((payload / PLUGIN_MANIFEST).read_text())
+        write_json(payload / PLUGIN_MANIFEST, {**metadata, "version": "1.0.0"})
+        if executable_agent:
+            (payload / "ecosystem/agents/reviewer.toml").chmod(0o755)
+        records = installer._inventory(payload)
+        records.pop("bundle.json")
+        write_json(payload / "bundle.json", {"schema": 1, "modules": receipt["modules"], "files": records})
+        self.backend.add_plugin()
+        write_json(self.home / "constellation/receipt.json", {
+            **receipt, "schema": 1, "version": "1.0.0",
+            "catalog": installer._inventory(catalog),
+            "cache": installer._inventory(self.cache("1.0.0")),
+        })
+        self.backend.mutations.clear()
+
+    def seed_prior_shared_installation(self, modules: list[str] | None = None) -> None:
+        """Model an owned schema-2 release before the progress resources existed."""
+        self.install(modules=modules)
+        self.rewrite_owned_shared_resources(remove=(
+            "ecosystem/runtime/progress.py", "ecosystem/tests/test_progress.py",
+            "ecosystem/tests/test_progress_core.py", "ecosystem/PROGRESS.md",
+        ))
+
+    def rewrite_owned_shared_resources(self, *, remove: tuple[str, ...] = (),
+                                       add: tuple[str, ...] = ()) -> None:
+        receipt = self.receipt()
+        catalog = self.home / "constellation/catalog"
+        payload = catalog / "plugins/constellation"
+        for relative in remove:
+            (payload / relative).unlink()
+        for relative in add:
+            path = payload / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("Synthetic independently named resource.\n")
+        records = installer._inventory(payload)
+        records.pop("bundle.json")
+        write_json(payload / "bundle.json", {
+            "schema": 1, "modules": receipt["modules"], "files": records,
+        })
+        self.backend.add_plugin()
+        write_json(self.home / "constellation/receipt.json", {
+            **receipt, "catalog": installer._inventory(catalog),
+            "cache": installer._inventory(self.cache()),
+        })
+        self.backend.mutations.clear()
+
+    def test_prior_shared_release_accepts_added_resources_for_every_module_selection(self) -> None:
+        for count in range(1, len(MODULES) + 1):
+            for selected in combinations(MODULES, count):
+                modules = list(selected)
+                with self.subTest(modules=modules):
+                    self.seed_prior_shared_installation(modules)
+                    self.assertFalse((self.cache() / "ecosystem/runtime/progress.py").exists())
+                    before = snapshot(self.home)
+                    self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
+                    self.assertEqual(snapshot(self.home), before)
+                    self.assertEqual(self.backend.mutations, [])
+                    self.assertEqual(self.install(modules=modules)["status"], "updated")
+                    self.assertTrue((self.cache() / "ecosystem/runtime/progress.py").is_file())
+                    self.assertEqual(verify_bundle(self.cache())["modules"], modules)
+                    self.assert_unrelated_preserved()
+
+    def test_failed_shared_resource_expansion_restores_prior_release_and_can_retry(self) -> None:
+        self.seed_prior_shared_installation()
+        state = self.home / "constellation/state/progress.json"
+        state.parent.mkdir(parents=True)
+        state.write_text('{"synthetic": "recoverable state"}\n')
+        before = snapshot(self.home)
+        self.backend.fail_once = "add_plugin"
+        with self.assertRaisesRegex(InstallError, "previous owned files and registration restored"):
+            self.install()
+        self.assertEqual(snapshot(self.home), before)
+        self.assertEqual(self.install(check=True)["status"], "checked")
+        self.assertEqual(self.install()["status"], "updated")
+        self.assertEqual(state.read_text(), '{"synthetic": "recoverable state"}\n')
+        self.assert_unrelated_preserved()
+
+    def test_prior_shared_package_code_is_never_executed_during_upgrade(self) -> None:
+        self.seed_prior_shared_installation()
+        marker = self.root / "old-builder-executed"
+        payload = self.home / "constellation/catalog/plugins/constellation"
+        (payload / "ecosystem/build.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n"
+            "raise RuntimeError('The previous release must only be read as data')\n"
+        )
+        self.rewrite_owned_shared_resources()
+        self.assertEqual(self.install()["status"], "updated")
+        self.assertFalse(marker.exists())
+
+    def test_prior_shared_release_cannot_claim_foreign_files_or_omit_module_identity(self) -> None:
+        for change in ({"add": ("ecosystem/foreign.py",)},
+                       {"add": ("agents/foreign.toml",)},
+                       {"add": ("ecosystem/agents/foreign.toml",)},
+                       {"remove": (f"skills/{self.module}/SKILL.md",)},
+                       {"remove": ("ecosystem/agents/reviewer.toml",)}):
+            with self.subTest(change=change):
+                self.seed_prior_shared_installation()
+                before_change = snapshot(self.home)
+                self.rewrite_owned_shared_resources(**change)
+                before = snapshot(self.home)
+                with self.assertRaises(InstallError):
+                    self.install()
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, [])
+                # Restore this fixture through exact bytes, never production state.
+                shutil.rmtree(self.home)
+                self.home.mkdir()
+                for relative, (kind, contents, mode) in before_change.items():
+                    self.assertEqual(kind, "file")
+                    path = self.home / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(contents)
+                    path.chmod(mode)
+
+    def test_legacy_release_updates_to_shared_runtime_for_every_module_selection(self) -> None:
+        selections = [list(group) for count in range(1, len(MODULES) + 1)
+                      for group in combinations(MODULES, count)]
+        for modules in selections:
+            with self.subTest(modules=modules):
+                self.seed_legacy_installation(modules)
+                self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
+                self.assertEqual(self.backend.mutations, [])
+                result = self.install(modules=modules)
+                self.assertEqual(result["status"], "updated")
+                self.assertEqual(result["version"], "1.1.0")
+                self.assertEqual(self.receipt()["schema"], 2)
+                self.assertFalse((self.cache() / "review_gate.py").exists())
+                self.assertTrue((self.cache() / "ecosystem/runtime/workflow.py").is_file())
+                self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
+                self.assert_unrelated_preserved()
+
+    def test_failed_legacy_upgrade_restores_old_inventory_and_can_retry(self) -> None:
+        self.seed_legacy_installation()
+        before = snapshot(self.home)
+        self.backend.fail_once = "add_plugin"
+        with self.assertRaisesRegex(InstallError, "previous owned files and registration restored"):
+            self.install()
+        self.assertEqual(snapshot(self.home), before)
+        self.assertEqual(self.receipt()["schema"], 1)
+        self.assertEqual(self.install(check=True)["status"], "checked")
+        self.assertEqual(self.install()["version"], "1.1.0")
+
+    def test_executable_packaged_agent_keeps_normalized_projection_across_updates(self) -> None:
+        source = self.source_copy()
+        (source / "ecosystem/agents/reviewer.toml").chmod(0o755)
+        bundle = self.root / "executable-agent-bundle"
+        build_bundle(bundle, MODULES, source_root=source)
+        self.install(bundle)
+        receipt = self.receipt()
+        self.assertEqual(receipt["cache"]["ecosystem/agents/reviewer.toml"]["mode"], 0o755)
+        self.assertEqual(receipt["agents"]["constellation-reviewer.toml"]["mode"], 0o644)
+        self.assertEqual(self.install(bundle, check=True)["status"], "checked")
+        self.assertEqual(self.install(bundle)["status"], "updated")
+        self.seed_legacy_installation(executable_agent=True)
+        self.assertEqual(self.install(check=True)["status"], "checked")
+        self.assertEqual(self.install()["status"], "updated")
+
+    def test_legacy_upgrade_preserves_and_rejects_unrecorded_catalog_files(self) -> None:
+        self.seed_legacy_installation()
+        payload = self.home / "constellation/catalog/plugins/constellation"
+        for name in (".DS_Store", "skills/.DS_Store", f"skills/{self.module}/.DS_Store"):
+            path = payload / name
+            path.write_bytes(b"independently owned fixture bytes")
+        before = snapshot(self.home)
+        with self.assertRaisesRegex(InstallError, "Catalog was modified"):
+            self.install()
+        self.assertEqual(snapshot(self.home), before)
+        self.assertEqual(self.backend.mutations, [])
+
     def test_install_repeat_and_update_use_native_registration_and_preserve_unrelated_files(self) -> None:
         first = self.install()
         self.assertEqual(first["status"], "installed")
@@ -476,8 +752,8 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(self.backend.mutations.count("add_marketplace"), 1)
         self.assertEqual(len([row for row in self.backend.plugins() if row["pluginId"] == PLUGIN_ID]), 1)
         updated = self.install(self.changed_bundle())
-        self.assertEqual(updated["version"], "1.0.1")
-        self.assertEqual(self.receipt()["version"], "1.0.1")
+        self.assertEqual(updated["version"], "1.1.1")
+        self.assertEqual(self.receipt()["version"], "1.1.1")
         self.assertIn("Updated synthetic release.", (self.cache() / f"skills/{self.module}/references/workflow.md").read_text())
         self.assert_unrelated_preserved()
 
@@ -619,7 +895,7 @@ class SyntheticInstallationTests(BundleCase):
 
     def test_modified_catalog_cache_or_agent_prevents_update_without_mutation(self) -> None:
         self.install()
-        targets = (self.home / "constellation/catalog/plugins/constellation/review-policy.json",
+        targets = (self.home / "constellation/catalog/plugins/constellation/ecosystem/runtime/review-policy.json",
                    self.cache() / f"skills/{self.module}/SKILL.md", self.home / "agents/constellation-reviewer.toml")
         for target in targets:
             original = target.read_bytes()
@@ -679,6 +955,75 @@ class SyntheticInstallationTests(BundleCase):
             self.assertEqual(snapshot(self.home), before)
             self.assertEqual(self.backend.mutations, mutations)
 
+    def test_corrupt_receipt_types_records_paths_and_duplicates_are_rejected_before_mutation(self) -> None:
+        self.install()
+        path = self.home / "constellation/receipt.json"
+        original = self.receipt()
+        variants = [{**original, "schema": True}, {**original, "schema": 1},
+                    {**original, "extra": "unknown"}, {**original, "modules": None},
+                    {**original, "modules": {self.module: True}},
+                    *({**original, group: list(original[group])} for group in ("cache", "catalog", "agents"))]
+        for record in ({"sha256": "x" * 64, "mode": 0o644},
+                       {"sha256": "0" * 64, "mode": True},
+                       {"sha256": "0" * 64, "mode": 0o600},
+                       {"sha256": "0" * 64, "mode": 0o644, "extra": True}):
+            value = json.loads(json.dumps(original))
+            value["cache"]["bundle.json"] = record
+            variants.append(value)
+        for extra in ("../outside", "/tmp/outside", "ecosystem/../../outside", ".DS_Store"):
+            value = json.loads(json.dumps(original))
+            value["cache"][extra] = {"sha256": "0" * 64, "mode": 0o644}
+            variants.append(value)
+        texts = [json.dumps(value) for value in variants]
+        texts.append('{"schema": 999,' + json.dumps(original)[1:])
+        for text in texts:
+            with self.subTest(receipt=text[:100]):
+                path.write_text(text)
+                before, mutations = snapshot(self.home), list(self.backend.mutations)
+                with self.assertRaises(InstallError):
+                    self.install()
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, mutations)
+
+    def test_receipt_must_be_a_regular_file_before_reading(self) -> None:
+        path = self.root / "unreadable-receipt"
+        for kind in ("directory", "fifo", "symlink"):
+            with self.subTest(kind=kind):
+                if kind == "directory":
+                    path.mkdir()
+                elif kind == "fifo":
+                    os.mkfifo(path)
+                else:
+                    path.symlink_to(self.bundle / "bundle.json")
+                with self.assertRaises(InstallError):
+                    installer._load_receipt(path)
+                path.rmdir() if kind == "directory" else path.unlink()
+
+    def test_legacy_manifest_inconsistency_is_rejected_even_with_updated_receipt_hashes(self) -> None:
+        self.seed_legacy_installation()
+        for metadata_path in ("bundle.json", PLUGIN_MANIFEST):
+            with self.subTest(path=metadata_path):
+                receipt = self.receipt()
+                catalog = self.home / "constellation/catalog"
+                payload = catalog / "plugins/constellation"
+                path = payload / metadata_path
+                original = path.read_bytes()
+                data = json.loads(original)
+                data["modules" if metadata_path == "bundle.json" else "version"] = [] if metadata_path == "bundle.json" else "9.9.9"
+                write_json(path, data)
+                shutil.copyfile(path, self.cache() / metadata_path)
+                write_json(self.home / "constellation/receipt.json", {
+                    **receipt, "catalog": installer._inventory(catalog), "cache": installer._inventory(self.cache()),
+                })
+                before = snapshot(self.home)
+                with self.assertRaisesRegex(InstallError, "metadata differs"):
+                    self.install()
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, [])
+                path.write_bytes(original)
+                shutil.copyfile(path, self.cache() / metadata_path)
+                write_json(self.home / "constellation/receipt.json", receipt)
+
     def test_first_install_partial_native_failures_roll_back_and_do_not_write_receipt(self) -> None:
         for when in ("before", "after"):
             for operation in ("add_marketplace", "add_plugin"):
@@ -704,7 +1049,7 @@ class SyntheticInstallationTests(BundleCase):
         with self.assertRaises(InstallError):
             self.install(updated)
         self.assertEqual(snapshot(self.home), before)
-        self.assertEqual(self.receipt()["version"], "1.0.0")
+        self.assertEqual(self.receipt()["version"], "1.1.0")
         self.assert_unrelated_preserved()
 
     def test_native_cache_mismatch_is_rejected_and_compensated(self) -> None:
@@ -716,6 +1061,30 @@ class SyntheticInstallationTests(BundleCase):
         after.pop("constellation/.install.lock", None)
         self.assertEqual(after, before)
         self.assertFalse((self.home / "constellation/receipt.json").exists())
+
+    def test_native_retaining_an_old_cache_cannot_report_a_successful_update(self) -> None:
+        self.install()
+        updated = self.changed_bundle()
+        before = snapshot(self.home)
+        old_cache = self.cache()
+        previous = self.root / "previous-cache"
+        shutil.copytree(old_cache, previous)
+        native_add = self.backend.add_plugin
+        first_attempt = True
+
+        def retain_previous_once() -> dict:
+            nonlocal first_attempt
+            result = native_add()
+            if first_attempt:
+                first_attempt = False
+                shutil.copytree(previous, old_cache)
+            return result
+
+        with patch.object(self.backend, "add_plugin", side_effect=retain_previous_once):
+            with self.assertRaisesRegex(InstallError, "previous owned files and registration restored"):
+                self.install(updated)
+        self.assertEqual(snapshot(self.home), before)
+        self.assertEqual(self.install(check=True)["status"], "checked")
 
     def test_failed_compensation_is_reported_as_incomplete_not_success(self) -> None:
         self.backend.fail_once = "add_plugin"
@@ -1078,7 +1447,8 @@ class RealNativeSourceExclusionTests(BundleCase):
 
         source_alias = self.root / "source-alias"
         source_alias.symlink_to(source, target_is_directory=True)
-        cache_root = home / "plugins/cache/constellation/constellation/1.0.0"
+        version = json.loads((self.bundle / PLUGIN_MANIFEST).read_text())["version"]
+        cache_root = home / "plugins/cache/constellation/constellation" / version
         for unsafe in (source_alias, self.bundle, cache_root, self.root):
             with self.subTest(source=unsafe):
                 before = self.preference_snapshot(home)
@@ -1213,7 +1583,7 @@ class DistributedSuiteTests(unittest.TestCase):
                     environment.pop("PYTHONPATH", None)
                     result = subprocess.run(
                         [sys.executable, "-I", "-B", "-m", "unittest", "discover", "-s",
-                         str(bundle / "ecosystem/tests"), "-v"], cwd=receiver, env=environment,
+                         str(bundle / "ecosystem/tests"), "-q"], cwd=receiver, env=environment,
                         capture_output=True, text=True, timeout=180)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     summary = re.search(r"^Ran (\d+) tests? in ([\d.]+)s$", result.stderr, re.MULTILINE)

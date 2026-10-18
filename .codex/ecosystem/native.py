@@ -73,6 +73,54 @@ def _skill_snapshot(rpc: _Rpc, cwd: Path) -> dict[str, dict]:
     return snapshot
 
 
+def _metadata_rows(value: Any, key: str) -> list[dict]:
+    rows = value.get(key) if isinstance(value, dict) else None
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise NativeError("Native discovery returned invalid metadata")
+    return rows
+
+
+def _discovery_row(value: dict, location: str) -> dict:
+    rows = _metadata_rows(value, "data")
+    if len(rows) != 1 or rows[0].get("cwd") != location:
+        raise NativeError("Native discovery did not confirm the requested directory")
+    return rows[0]
+
+
+def _issues(row: dict) -> tuple[list[dict], list[dict]]:
+    """Do not echo parser messages, which can include source/configuration text."""
+    errors = _metadata_rows(row, "errors")
+    warnings = row.get("warnings", [])
+    if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
+        raise NativeError("Native discovery returned invalid warning metadata")
+    return ([{"kind": "native_discovery_error",
+              "path": item.get("path") if isinstance(item.get("path"), str) else None}
+             for item in errors],
+            [{"kind": "native_discovery_warning",
+              "message": "Native discovery reported a warning; message content is omitted."}
+             for _ in warnings])
+
+
+def _skill_metadata(row: dict) -> dict:
+    if (not isinstance(row.get("name"), str) or not isinstance(row.get("path"), str)
+            or not isinstance(row.get("enabled"), bool)):
+        raise NativeError("Native discovery returned invalid skill metadata")
+    return {**{key: row.get(key) for key in
+               ("name", "description", "path", "scope", "enabled", "pluginId")
+               if row.get(key) is None or isinstance(row.get(key), (str, bool))},
+            "discovered": True}
+
+
+def _hook_metadata(row: dict) -> dict:
+    if (not isinstance(row.get("eventName"), str)
+            or not isinstance(row.get("enabled"), bool)):
+        raise NativeError("Native discovery returned invalid hook metadata")
+    return {**{key: row.get(key) for key in
+               ("key", "eventName", "source", "sourcePath", "pluginId", "enabled", "trustStatus")
+               if row.get(key) is None or isinstance(row.get(key), (str, bool))},
+            "discovered": True}
+
+
 class _Rpc:
     def __init__(self, client: NativeClient):
         self.timeout = client.timeout
@@ -169,7 +217,7 @@ class NativeClient:
         env.pop("CODEX_THREAD_ID", None)
         return env
 
-    def _run(self, *args: str) -> dict:
+    def _run_json(self, *args: str) -> Any:
         try:
             result = subprocess.run([self.executable, *args, "--json"], cwd=self.cwd,
                                     env=self.environment(), stdout=subprocess.PIPE,
@@ -182,6 +230,10 @@ class NativeClient:
             value = json.loads(result.stdout)
         except ValueError as exc:
             raise NativeError("Native Codex returned invalid JSON") from exc
+        return value
+
+    def _run(self, *args: str) -> dict:
+        value = self._run_json(*args)
         if not isinstance(value, dict):
             raise NativeError("Native Codex returned an unexpected result")
         return value
@@ -211,6 +263,112 @@ class NativeClient:
 
     def remove_marketplace(self) -> dict:
         return self._run("plugin", "marketplace", "remove", "constellation")
+
+    def capabilities(self) -> dict[str, Any]:
+        """Discover fresh CLI metadata without loading skills or invoking capabilities.
+
+        Each native surface may fail independently. Only explicitly allowed fields
+        leave this adapter: no MCP transport, hook command, raw config or messages.
+        """
+        location = str(self.cwd)
+        result: dict[str, Any] = {
+            "surface": "fresh_codex_cli", "cwd": location,
+            "skills": [], "hooks": [], "plugins": [], "mcp_servers": [],
+            "agents": {"configured_max_concurrent_threads_per_session": None,
+                       "effective_session_limit": None},
+            "checks": {}, "errors": [], "warnings": [],
+            "unverified": ["current_session_availability", "authorized", "compatible",
+                           "executable", "skill_instructions_loaded", "executed"],
+            "limits": [
+                "Discovery describes a fresh CLI process, not the current client or its subagents.",
+                "Plugin installation and enabled settings do not prove callable capabilities.",
+                "MCP entries are configuration metadata; no server handshake or tool call is made.",
+                "Configured agent capacity is not a verified limit of the current session.",
+            ],
+        }
+
+        def failed(name: str, source: str) -> None:
+            result["checks"][name] = {"source": source, "status": "failed"}
+            result["errors"].append({"source": source, "kind": "metadata_unavailable",
+                                     "message": "Native metadata is unavailable or malformed."})
+
+        def checked(name: str, source: str) -> None:
+            result["checks"][name] = {"source": source, "status": "ok"}
+
+        try:
+            plugins = self.plugins()
+            metadata = []
+            for row in plugins:
+                if (not isinstance(row.get("pluginId"), str)
+                        or not isinstance(row.get("enabled"), bool)):
+                    raise NativeError("Invalid native plugin metadata")
+                metadata.append({"pluginId": row["pluginId"], "enabled": row["enabled"],
+                                 "installed": True, "discovered": True,
+                                 "version": row.get("version") if isinstance(row.get("version"), str) else None})
+            result["plugins"] = metadata
+            checked("plugins", "codex plugin list --json")
+        except NativeError:
+            failed("plugins", "codex plugin list --json")
+
+        try:
+            servers = self._run_json("mcp", "list")
+            if not isinstance(servers, list):
+                raise NativeError("Invalid native MCP metadata")
+            metadata = []
+            for row in servers:
+                if (not isinstance(row, dict) or not isinstance(row.get("name"), str)
+                        or not isinstance(row.get("enabled"), bool)):
+                    raise NativeError("Invalid native MCP metadata")
+                metadata.append({"name": row["name"], "enabled": row["enabled"],
+                                 "configured": True,
+                                 "auth_status": row.get("auth_status")
+                                 if isinstance(row.get("auth_status"), str) else None})
+            result["mcp_servers"] = metadata
+            checked("mcp", "codex mcp list --json")
+        except NativeError:
+            failed("mcp", "codex mcp list --json")
+
+        try:
+            rpc = _Rpc(self)
+        except NativeError:
+            for name, source in (("skills", "skills/list"), ("hooks", "hooks/list"),
+                                 ("agents", "config/read")):
+                failed(name, source)
+        else:
+            try:
+                for name, source, params, convert in (
+                    ("skills", "skills/list", {"cwds": [location], "forceReload": True}, _skill_metadata),
+                    ("hooks", "hooks/list", {"cwds": [location]}, _hook_metadata),
+                ):
+                    try:
+                        row = _discovery_row(rpc.call(source, params), location)
+                        errors, warnings = _issues(row)
+                        result[name] = [convert(item) for item in _metadata_rows(row, name)]
+                        result["errors"].extend({"source": source, **item} for item in errors)
+                        result["warnings"].extend({"source": source, **item} for item in warnings)
+                        checked(name, source)
+                        if errors or warnings:
+                            result["checks"][name]["status"] = "partial"
+                    except NativeError:
+                        failed(name, source)
+                try:
+                    config = rpc.call("config/read", {"cwd": location, "includeLayers": False}).get("config")
+                    if not isinstance(config, dict):
+                        raise NativeError("Invalid native configuration metadata")
+                    agents = config.get("agents", {})
+                    if not isinstance(agents, dict):
+                        raise NativeError("Invalid native agent configuration")
+                    capacity = agents.get("max_concurrent_threads_per_session")
+                    if capacity is not None and (type(capacity) is not int or capacity < 1):
+                        raise NativeError("Invalid native configured agent capacity")
+                    result["agents"]["configured_max_concurrent_threads_per_session"] = capacity
+                    checked("agents", "config/read")
+                except NativeError:
+                    failed("agents", "config/read")
+            finally:
+                rpc.close()
+        result["status"] = "partial" if result["errors"] or result["warnings"] else "complete"
+        return result
 
     def exclude_source_skills(self, source_root: Path,
                               modules: Iterable[str] | None = None) -> dict[str, Any]:
@@ -325,7 +483,7 @@ class NativeClient:
         try:
             skills = rpc.call("skills/list", {"cwds": [location], "forceReload": True})
             hooks = rpc.call("hooks/list", {"cwds": [location]})
-            result: dict[str, Any] = {"skills": [], "hooks": [], "errors": 0}
+            result: dict[str, Any] = {"skills": [], "hooks": [], "errors": 0, "warnings": 0}
             for row in skills.get("data", []):
                 result["errors"] += len(row.get("errors", []))
                 for skill in row.get("skills", []):
@@ -334,6 +492,7 @@ class NativeClient:
                                                 ("name", "path", "enabled")})
             for row in hooks.get("data", []):
                 result["errors"] += len(row.get("errors", []))
+                result["warnings"] += len(row.get("warnings", []))
                 for hook in row.get("hooks", []):
                     if hook.get("pluginId") == PLUGIN_ID:
                         result["hooks"].append({key: hook.get(key) for key in
@@ -355,13 +514,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cwd", type=Path)
     parser.add_argument("--codex", default="codex")
     parser.add_argument("--marketplace-path", type=Path)
-    parser.add_argument("--exclude-source-root", type=Path)
+    operation = parser.add_mutually_exclusive_group()
+    operation.add_argument("--exclude-source-root", type=Path)
+    operation.add_argument("--capabilities", action="store_true",
+                           help="Read fresh CLI capability metadata without executing skills or tools")
     parser.add_argument("--modules", nargs="+", choices=MODULES)
     args = parser.parse_args(argv)
     if args.modules and args.exclude_source_root is None:
         parser.error("--modules requires --exclude-source-root")
+    if args.capabilities and args.marketplace_path is not None:
+        parser.error("--marketplace-path does not apply to --capabilities")
     try:
         client = NativeClient(args.codex_home, args.codex, args.cwd)
+        if args.capabilities:
+            result = client.capabilities()
+            print(json.dumps(result, sort_keys=True))
+            return 0 if result["status"] == "complete" else 1
         if args.exclude_source_root is not None:
             result = client.exclude_source_skills(args.exclude_source_root, args.modules)
             print(json.dumps(result, sort_keys=True))

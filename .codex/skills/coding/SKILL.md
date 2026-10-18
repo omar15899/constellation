@@ -5,55 +5,54 @@ description: "Implementar, depurar y refactorizar software con requisitos observ
 
 # Coding
 
-Lleva el encargo desde el comportamiento pedido hasta una entrega comprobada,
-integrada y, cuando esté autorizado, publicada. El resultado debe permitir seguir
-cada requisito hasta sus artefactos, comprobaciones, autores reales y revisión
-independiente. Un check aprobado fija evidencia; su pertinencia exige juicio.
-En el plugin instalado, el selector es `$constellation:coding`; el nombre interno
-de la skill sigue siendo `coding`.
+Lleva el comportamiento pedido hasta una entrega comprobada e integrada, y
+publicada cuando forme parte del encargo autorizado. Identifica el receptor,
+sus instrucciones, los consumidores e invariantes que puedan cambiar la solución;
+preserva el trabajo ajeno.
 
-## Elegir el alcance
+## Elegir el trabajo necesario
 
-Identifica el proyecto receptor y sus instrucciones antes de escribir. Lee los
-contratos, consumidores e invariantes que puedan cambiar la solución. Delimita
-requisitos observables, rutas exactas, dependencias y aceptación; preserva el
-trabajo concurrente. Investiga alternativas cuando puedan cambiar una decisión
-material, sin convertir una corrección localizada en un rediseño.
+Una corrección local pequeña puede resolverse leyendo el código pertinente,
+editando y ejecutando una comprobación enfocada. Si no hay un contrato activo
+ni una política receptora que lo exija, no crees un contrato persistente, token,
+repositorio Git o equipo de agentes para esa edición. Explica el cambio y su
+comprobación; no cargues las referencias del flujo extendido por rutina.
 
-Usa [el flujo de ingeniería](references/workflow.md) para implementación,
-diagnóstico, refactor y entregas entre agentes. Una corrección pequeña conserva
-el mismo rigor con alcance y evidencia breves: reutiliza checks pertinentes y
-evita pruebas que solo repitan la edición o ampliaciones rutinarias de la suite.
+En un proyecto Git, cumple el flujo receptor y su mínimo de revisión; no abras
+además una tarea portátil por haber seleccionado esta skill. Para implementación
+sustantiva, diagnóstico complejo o trabajo coordinado, consulta el
+[flujo de ingeniería](references/workflow.md). Usa el
+[protocolo común](../../ecosystem/references/protocol.md) cuando necesites elegir
+o enlazar ciclos de evidencia; el [CLI portátil](../../ecosystem/cli.py) permite
+entregas con evidencia persistente sin Git. Conserva los contratos ya activos.
 
-## Controles esenciales
+## Implementar y verificar
 
-- Registra cada entrega significativa con el
-  [protocolo común](../../ecosystem/references/protocol.md). Su
-  [CLI](../../ecosystem/cli.py) mantiene requisitos, evidencia, autoría y revisión;
-  consulta allí el formato vigente en vez de inventar operaciones o esquemas.
-- Adapta la profundidad al riesgo. Conserva el mínimo vigente: Quick requiere
-  un revisor de corrección; Standard, tres; Deep, tres de corrección y dos de
-  seguridad, con un máximo de tres rondas. Eleva la revisión ante controles,
-  permisos, hooks o fronteras sensibles, aunque el diff sea pequeño.
-- Delega cuando ayude, con archivos exclusivos, identidad real y resultado
-  verificable. Hereda modelo, esfuerzo y permisos. Usa los perfiles
-  [coder](../../ecosystem/agents/coder.toml),
-  [researcher](../../ecosystem/agents/researcher.toml),
-  [reviewer](../../ecosystem/agents/reviewer.toml),
-  [security_reviewer](../../ecosystem/agents/security-reviewer.toml) y
-  [verifier](../../ecosystem/agents/verifier.toml) según la necesidad; sus nombres
-  nativos llevan el prefijo `ecosystem_`. Si la superficie no los carga, entrega
-  sus instrucciones al agente nativo disponible; no afirmes que el perfil está
-  activo por haber mencionado su nombre.
-- Mantén independientes implementación, revisión y verificación de hallazgos.
-  Resuelve las discrepancias con reproducciones o argumentos, no por votación.
-  Un gate pendiente exige cierre parcial y explicación concreta del impedimento.
-- Integra y publica únicamente mediante el flujo y la autorización del receptor.
-  En Constellation, respeta `workspace.py`, sus contratos, hooks y autorizaciones
-  existentes; este paquete no crea otro committer ni sustituye controles. Otros
-  proyectos necesitan su propio alcance y autorización. Sin Git, entrega archivos
-  y evidencia local sin crear un repositorio artificial.
+Define el comportamiento observable y comprueba la causa antes de corregir.
+Implementa la solución más sencilla que satisfaga el encargo; verifica entradas,
+límites y consumidores pertinentes. Para controles, prueba tanto el rechazo como
+el caso permitido. Reutiliza checks útiles; no añadas pruebas que solo repitan la
+edición ni amplíes la suite tras aprobarla sin cambios, fallos o dudas concretas.
 
-La selección automática de esta skill no concede permisos. El plan y la
-evidencia tampoco autorizan nuevos destinos, acceso a datos privados, cambios de
-confianza ni acciones externas adicionales.
+Requisitos, artefactos actuales y evidencia deben corresponderse. Adapta la
+revisión al riesgo sin rebajar el mínimo receptor; permisos, hooks y fronteras
+sensibles pueden exigir revisión profunda con un diff pequeño. Mantén la revisión
+y verificación de hallazgos independientes de sus autores. Un gate aprobado
+comprueba trazabilidad y vigencia, no la pertinencia de una prueba.
+
+Delega trabajo separable cuando aporte valor, con archivos exclusivos, identidad
+real y resultado comprobable. Los perfiles disponibles son
+[coder](../../ecosystem/agents/coder.toml),
+[researcher](../../ecosystem/agents/researcher.toml),
+[reviewer](../../ecosystem/agents/reviewer.toml),
+[security_reviewer](../../ecosystem/agents/security-reviewer.toml) y
+[verifier](../../ecosystem/agents/verifier.toml), con prefijo nativo `ecosystem_`.
+Si un perfil no está cargado, transmite sus instrucciones al agente disponible;
+hereda modelo, esfuerzo y permisos sin afirmar una activación inexistente.
+
+Un solver con análisis de convergencia e informe puede necesitar además
+`mathematics` y una capacidad editorial o de formato: verifica cada obligación
+con su evidencia propia. Integra y publica mediante el flujo autorizado del
+receptor; en Constellation, respeta `workspace.py`, contratos y hooks. La skill
+no autoriza nuevos destinos, datos privados ni acciones externas. Con requisitos
+o gates pendientes, entrega el resultado parcial y el impedimento concreto.

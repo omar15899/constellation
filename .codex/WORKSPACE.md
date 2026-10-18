@@ -58,7 +58,7 @@ inicia procesos, no contacta remotos ni altera el estado del ciclo.
 Los paquetes incluyen requisitos, contratos, rutas, destino congelado sin URL
 y cobertura de revisión. Sólo implementación recibe rutas de escritura. El
 coordinador lanza agentes nativos para las tareas de agentes y ejecuta los checks
-y la integración. Los perfiles de `agents/` conservan modelo y esfuerzo; si la
+y la integración. Los perfiles de `ecosystem/agents/` conservan modelo y esfuerzo; si la
 superficie no los carga, usa sus instrucciones con los agentes disponibles.
 Consulta [RESEARCH.md](RESEARCH.md) para hipótesis, fuentes, refutación y handoffs.
 
@@ -161,8 +161,10 @@ push. Solo retira el bloqueo cuando esa evidencia vuelve a ser válida.
 
 ### Presupuesto por repositorio
 
-La configuración general `~/.codex/config.toml` permite hasta 64 subagentes.
-`agent-policy.json` es la fuente común de los perfiles de la constelación:
+La configuración general `~/.codex/config.toml` declara hasta 64 subagentes.
+Los hijos heredan ese ajuste: se retiraron sus 19 archivos que repetían sólo
+el valor. Un proyecto necesita configuración local únicamente para una excepción.
+`agent-policy.json` expresa el presupuesto de coordinación de la constelación:
 `defaults.max_concurrent_threads_per_session` vale 64 y `repositories` permite
 sobrescribirlo por dueño Git. El hub y los hijos nativos usan el mismo máximo,
 sin excepciones iniciales. Las instrucciones globales permiten decidir cuántos
@@ -181,7 +183,10 @@ python3 .codex/agent_policy.py --session ejemplo apply --repo Shared
 
 Para cambiar el límite, declara la política y los `.codex/config.toml` afectados
 en un plan, edita el JSON y aplica los repositorios seleccionados explícitamente.
-`check` detecta desvíos. `apply` conserva los demás ajustes y rechaza configuración
+`check` compara declaraciones locales o heredadas del archivo global; no evalúa
+overrides de CLI, perfiles o administración ni acredita ejecución. El diagnóstico
+`ecosystem/native.py --capabilities` consulta la configuración efectiva de un
+proceso nativo nuevo. `apply` conserva los demás ajustes y rechaza configuración
 ambigua, destinos externos y rutas sin declarar. Reinicia Codex o abre una sesión
 nueva para cargar el resultado. El registro de repositorios y Git delimitan
 destinos; no se modifica `~/.codex/config.toml`. La clave nativa documentada es
@@ -189,9 +194,14 @@ destinos; no se modifica `~/.codex/config.toml`. La clave nativa documentada es
 
 ### Revisión independiente
 
-La política [review-policy.json](review-policy.json) selecciona Quick para
+La política [review-policy.json](ecosystem/runtime/review-policy.json) selecciona Quick para
 documentación, Standard para cambios ordinarios y Deep para rutas sensibles,
-incluidos el motor y CI. El coordinador puede elevar el riesgo semántico con
+incluidos el motor y CI. Cuando la política efectiva permite `allow_quick_code`,
+un cambio de código acotado puede usar `review-start --quick-code-reason TEXTO`
+antes de la primera ronda. La justificación queda ligada al snapshot completo;
+un cambio posterior la invalida. No reduce Deep, mínimos locales ni quórums.
+El revisor comprueba también que la clasificación sea adecuada.
+El coordinador puede elevar el riesgo semántico con
 `review-start --risk deep`; no puede reducir el mínimo durante la tarea.
 Quick exige un revisor independiente de corrección; Standard exige tres.
 Deep exige cinco: tres de corrección y dos de seguridad. Cada archivo necesita
@@ -265,8 +275,7 @@ pero GitHub sólo los exige para fusionar si sus reglas remotas lo configuran.
 
 El hub mantiene el motor; cada proyecto nativo mantiene una entrada breve y sus
 reglas técnicas en `.codex/PROJECT.md`. Claude conserva su sistema. Codex hereda
-modelo, esfuerzo, entorno y permisos del usuario, salvo los ajustes expresamente
-conservados en el hub. El reparto fija fases y dependencias para la tarea; no
+modelo, esfuerzo, entorno y permisos del usuario. El reparto fija fases y dependencias para la tarea; no
 inicia una infraestructura paralela de agentes. Una delegación
 útil tiene repositorio, archivos, resultado y verificación definidos; el agente
 principal coordina los commits para evitar competencia sobre un mismo índice.
@@ -277,15 +286,19 @@ eso una sesión iniciada en el hub debe leer los contratos hijos al seleccionarl
 La configuración local y la confianza son conceptos distintos; no se editan
 hashes de confianza. [OpenAI Docs: configuración de proyecto](https://learn.chatgpt.com/docs/config-file/config-advanced).
 
-Los hooks del hub, cuando están confiados y se ejecutan desde él, usan el contrato
-de workspace para comprobar patches y cierre de todos sus participantes.
-`SubagentStart` transmite las reglas del trabajo delegado sin cambiar el estado.
-Las sesiones sin esos
-hooks ejecutan el mismo CLI explícitamente. Los hijos no reciben nuevos hooks
-Codex; sus hooks Git siguen aplicándose. El guarda de patches no cubre todas
-las escrituras de shell o MCP y no sustituye los permisos del cliente.
+Los hooks del plugin, cuando están habilitados y confiados, reconocen contratos
+activos de workspace, Git o entregas portables. Un prompt no crea un contrato ni
+sincroniza remotos. `SubagentStart` transmite contexto sin modificar el estado.
+Las sesiones sin esos hooks usan el mismo CLI explícitamente; los hijos heredan
+el plugin y conservan sus hooks Git. El guarda de patches no cubre todas las
+escrituras de shell o MCP y no sustituye los permisos del cliente.
 
 El estado mecánico vive bajo el directorio privado de Git, con bloqueos por
 workspace y por repositorio. No registra prompts, transcripciones, comandos
 ni salidas. Ninguna comprobación de hashes demuestra por sí sola que una
 revisión intelectual sea suficiente.
+
+Para trabajos sustanciales, conserva objetivos, decisiones, evidencia y pendientes
+mediante [progreso persistente](ecosystem/PROGRESS.md). El estado fuente permite
+reanudar sin OmarOS; el receptor recibe únicamente hitos personales autorizados
+y no convierte una recepción local en publicación remota.

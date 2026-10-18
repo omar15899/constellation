@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import importlib.util
 import math
 import os
 from pathlib import Path
@@ -17,29 +16,30 @@ from typing import Any
 import uuid
 
 from .build import MODULE_AGENTS
+from .runtime import DEFAULT_POLICY
+from .runtime import review_gate as gate
+from .runtime import progress as journal
 from .storage import Error, Store, decode, encode
 
 _SOURCE = Path(__file__).resolve().parent
 _BASE = _SOURCE.parent
-_SPEC = importlib.util.spec_from_file_location("ecosystem_review_gate", _BASE / "review_gate.py")
-if _SPEC is None or _SPEC.loader is None:
-    raise ImportError("Shared review gate is unavailable.")
-gate = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(gate)
-_POLICY = _BASE / "review-policy.json"
+_POLICY = DEFAULT_POLICY
 _ENVELOPE = {"session_id", "task_id", "agent_id", "expected_revision", "request_id"}
 _PROFILES = {"coding", "mathematics", "writter"}
 _ACCEPTANCE = {"behavior", "proof", "calculation", "editorial"}
 _KINDS = {"behavior", "numeric", "formal", "editorial"}
 _FIELDS = {
     "plan": {"requirements", "deliverables", "checks", "inputs", "depends_on", "risk", "agents"},
-    "status": set(), "review-context": set(), "review-start": set(),
+    "status": set(), "review-context": set(), "review-start": {"quick_code_reason"},
     "register-agent": {"registered_agent_id", "role"}, "author": {"author", "paths"},
     "check": {"id", "argv", "timeout"}, "recover-check": {"id", "attempt_id"},
     "review-report": {"token", "reviewer", "role", "focus", "paths", "summary", "evidence", "findings", "assessments"},
     "review-resolve": {"token", "id", "verifier", "disposition", "evidence"},
     "discover": {"requirement"}, "close": {"mode"}, "stop": set(),
     "hook-stop": set(), "observe-agent": {"observed_agent_id", "event"},
+    "progress-show": set(), "progress-update": {"task_uid", "checkpoint", "source_alias"},
+    "progress-export": {"task_uid", "policy_path"},
+    "progress-ack": {"task_uid", "receipt", "policy_path"},
 }
 
 
@@ -138,7 +138,8 @@ class Engine:
         return target
 
     def _resources(self, contract: dict[str, Any]) -> dict[str, str]:
-        paths = [_BASE / "review_gate.py", _POLICY, _SOURCE / "core.py", _SOURCE / "storage.py",
+        paths = [_SOURCE / "runtime/__init__.py", _SOURCE / "runtime/review_gate.py",
+                 _POLICY, _SOURCE / "core.py", _SOURCE / "storage.py",
                  _SOURCE / "cli.py", _SOURCE / "hooks.py", _SOURCE / "build.py", _SOURCE / "references/protocol.md"]
         manifest = _SOURCE / "plugin.json"
         paths.append(manifest if manifest.exists() else _BASE / ".codex-plugin/plugin.json")
@@ -344,7 +345,33 @@ class Engine:
 
     def execute(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            return self._execute(operation, payload)
+            if not isinstance(payload, dict):
+                raise Error("Expected a request object.")
+            if operation == "progress-ack" and "request_id" in payload:
+                # A successful historical replay performs no new export or
+                # receipt mutation, even if its former policy is unavailable.
+                required = {"session_id", "task_id", "agent_id", "expected_revision"}
+                _object(payload, required, (_ENVELOPE | _FIELDS[operation]) - required)
+                _identifier(payload["agent_id"], "agent_id")
+                if type(payload["expected_revision"]) is not int or payload["expected_revision"] < 0:
+                    raise Error("expected_revision must be a nonnegative integer.")
+                key = (str(self.root), _identifier(payload["session_id"], "session_id"),
+                       _identifier(payload["task_id"], "task_id"))
+                with self.store.connection() as db:
+                    replay = self._request(db, key, operation, payload) if db is not None else None
+                if replay is not None:
+                    return replay
+            policy_path = Path(payload.get("policy_path", default_state_dir().parent.parent / "progress-journal.json")) if operation in {"progress-export", "progress-ack"} else None
+            progress_policy = decode(policy_path.read_text()) if operation == "progress-ack" else None
+            result = self._execute(operation, payload, progress_policy=progress_policy)
+            if operation == "progress-export":
+                policy = decode(policy_path.read_text())
+                return {"envelope": journal.export_envelope(result["task_progress"], source_root=self.root, policy=policy,
+                                                            workflow_finished=result["workflow_finished"]),
+                        "revision": result["revision"]}
+            return result
+        except journal.ProgressError as exc:
+            raise Error(str(exc)) from None
         except gate.ReviewError as exc:
             raise Error(str(exc)) from None
         except (OSError, UnicodeError) as exc:
@@ -352,7 +379,7 @@ class Engine:
         except (TypeError, KeyError, IndexError):
             raise Error("Invalid request shape or corrupted task state.") from None
 
-    def _execute(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _execute(self, operation: str, payload: dict[str, Any], *, progress_policy: dict[str, Any] | None = None) -> dict[str, Any]:
         if operation == "active-tasks":
             _object(payload, {"session_id"})
             result = discover_active(self.store.directory, payload["session_id"], self.root)
@@ -360,7 +387,7 @@ class Engine:
         if operation not in _FIELDS:
             raise Error("Unknown operation.")
         hook = operation in {"hook-stop", "observe-agent"}
-        read = operation in {"status", "review-context"}
+        read = operation in {"status", "review-context", "progress-show", "progress-export"}
         required = {"session_id", "task_id"} | (set() if hook else {"agent_id"})
         if not read:
             required.add("expected_revision")
@@ -421,6 +448,35 @@ class Engine:
                 snapshot = self._snapshot(db, key, state)
                 self._sync_gate(state, snapshot)
                 return self._save(db, key, state, operation, payload, {"planned": True})
+            if operation.startswith("progress-"):
+                current = state.get("task_progress")
+                if operation == "progress-show":
+                    return {"task_progress": journal.validate_progress(current) if current else None,
+                            "revision": state["revision"]}
+                self._coordinator(state, actor)
+                if current is None:
+                    if operation != "progress-update" or payload.get("task_uid") is not None:
+                        raise Error("Legacy task needs a first progress-update without task_uid.")
+                    current = journal.create_progress(
+                        payload["checkpoint"]["snapshot"]["objectives"][0],
+                        source_alias=payload.get("source_alias", re.sub(r"[^a-z0-9-]+", "-", self.root.name.lower()).strip("-")[:64].rstrip("-") or "project"))
+                elif payload.get("task_uid") != current["task_uid"]:
+                    raise Error("Progress task_uid does not match the current task.")
+                elif "source_alias" in payload:
+                    raise Error("The progress source_alias is immutable after its first checkpoint.")
+                if operation == "progress-export":
+                    # The persisted checkpoint is copied before releasing SQLite;
+                    # authorization and the export run without a transaction.
+                    return {"task_progress": copy.deepcopy(current), "revision": state["revision"],
+                            "workflow_finished": self._progress_finished(db, key, state)}
+                if operation == "progress-update":
+                    updated = journal.checkpoint(current, payload["checkpoint"])
+                else:
+                    envelope = journal.export_envelope(current, source_root=self.root, policy=progress_policy,
+                                                       workflow_finished=self._progress_finished(db, key, state))
+                    updated = journal.acknowledge(current, envelope=envelope, receipt=payload["receipt"])
+                state["task_progress"] = updated
+                return self._save(db, key, state, operation, payload, {"task_progress": updated})
             snapshot = self._snapshot(db, key, state)
             self._sync_gate(state, snapshot)
             if operation == "status":
@@ -428,6 +484,7 @@ class Engine:
                 context = gate.prepare(self.root, state["gate"], policy_path=_POLICY)
                 return {**_summary(*key, state), "contract": state["contract"], "checks": state["checks"],
                         "gate": state["gate"], "closure": state["closure"], "pending": pending,
+                        "task_progress": state.get("task_progress"),
                         "closure_current": bool(state["status"] == "complete" and state["closure"]
                                                 and state["closure"]["token"] == context["token"] and not pending),
                         "stop_attempts": state["stop_attempts"], "observed_agents": state["observed_agents"]}
@@ -451,6 +508,19 @@ class Engine:
                 return self._save(db, key, state, operation, payload, result)
         # No database transaction survives into user-supplied executable work.
         return self._run_check(key, payload, reservation, response)
+
+    def _progress_finished(self, db: sqlite3.Connection, key: tuple[str, str, str], state: dict[str, Any]) -> bool:
+        """A narrative cannot create or renew a current completion certificate."""
+        if state["status"] != "complete" or not state.get("closure"):
+            return False
+        candidate = copy.deepcopy(state)
+        try:
+            snapshot = self._snapshot(db, key, candidate)
+            self._sync_gate(candidate, snapshot)
+            context = gate.prepare(self.root, candidate["gate"], policy_path=_POLICY)
+            return candidate["closure"]["token"] == context["token"] and not self._pending(candidate, snapshot)
+        except (Error, gate.ReviewError, OSError):
+            return False
 
     def _register(self, state: dict[str, Any], identity: str, role: str) -> None:
         _identifier(identity, "registered agent")
@@ -489,7 +559,8 @@ class Engine:
             if pending:
                 raise Error("Review cannot start: " + "; ".join(pending))
             state.update(status="active", closure=None)
-            return gate.start(self.root, state["gate"], policy_path=_POLICY)
+            return gate.start(self.root, state["gate"], policy_path=_POLICY,
+                              quick_code_reason=fields.get("quick_code_reason"))
         if operation == "review-report":
             _object(fields, _FIELDS[operation])
             if fields["reviewer"] != actor:

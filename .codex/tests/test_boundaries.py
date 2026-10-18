@@ -386,6 +386,66 @@ class RepositoryBoundaries(unittest.TestCase):
         with self.assertRaisesRegex(w.Blocked, "no blocked publication"):
             self.flow.recover(w.git(self.root, "rev-parse", "HEAD"))
 
+    def recovery_after_remote_fast_forward(self, *, retry_initial_sync=False, retry_target_check=False):
+        fixture.GitFixture.advance_remote(self)
+        synchronized_head = w.git(self.remote, "rev-parse", "refs/heads/main")
+        if retry_initial_sync:
+            with patch.object(w, "sync", side_effect=w.Blocked("Synthetic initial fetch failure")):
+                self.flow.begin("initial sync retry")
+            self.assertIn("sync_error", self.flow.load())
+        elif retry_target_check:
+            with patch.object(self.flow, "ensure_target", side_effect=w.Blocked("Synthetic initial target check failure")):
+                self.flow.begin("initial target check retry")
+            self.assertIn("sync_error", self.flow.load())
+        else:
+            self.flow.begin("initial fast-forward")
+        self.flow.plan({"requirements": ["answer is present"], "paths": ["answer.md"]})
+        (self.root / "answer.md").write_text("answer\n")
+        self.flow.review({"answer is present": "Read answer.md and verified its contents."})
+        original_log = self.flow.log
+
+        def interrupt_after_commit(event, **fields):
+            if event == "commit":
+                raise OSError("Synthetic interruption after durable commit")
+            return original_log(event, **fields)
+
+        with patch.object(self.flow, "log", side_effect=interrupt_after_commit):
+            with self.assertRaisesRegex(OSError, "after durable commit"):
+                self.flow.commit(["answer.md"], "Add task answer")
+        head = w.git(self.root, "rev-parse", "HEAD")
+        index = w.index_fingerprint(self.root, [])
+        self.assertTrue(self.flow.load()["publication_blocker"])
+        recovered = self.flow.recover(head)
+        self.assertEqual(recovered["audited_commits"], 1)
+        self.assertFalse(recovered["publication_verified"])
+        self.assertEqual(self.flow.load()["initial_head"], synchronized_head)
+        self.assertEqual(self.flow.load()["commits"], [head])
+        self.assertNotIn("publication_blocker", self.flow.load())
+        self.assertEqual(w.git(self.root, "rev-parse", "HEAD"), head)
+        self.assertEqual(w.index_fingerprint(self.root, []), index)
+        self.assertEqual(w.git(self.remote, "rev-parse", "refs/heads/main"), synchronized_head)
+        self.assertEqual((self.root / "remote.md").read_text(), "new cloud data\n")
+
+    def test_recover_after_begin_fast_forward_audits_only_task_commits(self):
+        self.recovery_after_remote_fast_forward()
+
+    def test_recover_after_initial_sync_retry_audits_only_task_commits(self):
+        self.recovery_after_remote_fast_forward(retry_initial_sync=True)
+
+    def test_recover_after_initial_target_retry_audits_only_task_commits(self):
+        self.recovery_after_remote_fast_forward(retry_target_check=True)
+
+    def test_later_sync_retry_preserves_the_original_recovery_baseline(self):
+        self.task()
+        initial = self.flow.load()["initial_head"]
+        self.flow.commit(["answer.md"], "Add answer")
+        state = self.flow.load()
+        state["sync_error"] = "Synthetic later fetch failure"
+        self.flow.save(state)
+        self.flow.plan({"requirements": ["answer is present"], "paths": ["answer.md"]})
+        self.assertNotEqual(w.git(self.root, "rev-parse", "HEAD"), initial)
+        self.assertEqual(self.flow.load()["initial_head"], initial)
+
     def test_recover_rejects_stale_working_content_after_repair(self):
         intended, _ = self.nested_commit_case()
         self.repair_fixture(intended)
@@ -450,7 +510,8 @@ class RepositoryBoundaries(unittest.TestCase):
     def native_workspace(self, *, include_hub=False):
         runtime = self.root / ".codex"
         runtime.mkdir()
-        for filename in ("workflow.py", "workspace.py", "review_gate.py", "review-policy.json"):
+        fixture.copy_runtime(runtime / "workflow.py")
+        for filename in ("workspace.py", "review_gate.py"):
             shutil.copyfile(fixture.MODULE.parent / filename, runtime / filename)
         (runtime / "profile.json").write_text('{"mode":"native"}\n')
         (runtime / "repositories.json").write_text(json.dumps({"schema_version": 1, "repositories": [
@@ -467,9 +528,11 @@ class RepositoryBoundaries(unittest.TestCase):
         return child.resolve()
 
     def native_event(self, event, **fields):
-        payload = {"session_id": "hook-workspace", "cwd": str(self.root), **fields}
         hook_name = {"prompt": "UserPromptSubmit", "pre-tool": "PreToolUse",
                      "subagent-start": "SubagentStart", "stop": "Stop"}[event]
+        payload = {"session_id": "hook-workspace", "cwd": str(self.root),
+                   "hook_event_name": hook_name, "turn_id": "fixture-turn",
+                   "tool_name": "apply_patch", **fields}
         command = fixture.native_hook_command(hook_name, self.root / ".codex/workflow.py")
         return subprocess.run(command,
                               cwd=self.root, input=json.dumps(payload), capture_output=True,
@@ -483,7 +546,8 @@ class RepositoryBoundaries(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {})
         result = self.native_event("pre-tool", tool_input={"command": document.replace("answer.md", "undeclared.md")})
-        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertNotIn("Traceback", result.stderr)
 
     def test_native_prompt_preserves_child_only_workspace_without_hub_begin(self):
@@ -494,14 +558,14 @@ class RepositoryBoundaries(unittest.TestCase):
         before = manifest.read_bytes()
         result = self.native_event("prompt", prompt="SYNTHETIC_PRIVATE_STEERING_PROMPT", turn_id="next")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("workspace lifecycle active", json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("active Git workspace contract", json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
         self.assertEqual(manifest.read_bytes(), before)
         self.assertFalse((directory / f"{key}.json").exists())
         result = self.native_event("stop")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["decision"], "block")
 
-    def test_native_workspace_completion_and_next_prompt_start_new_lifecycle(self):
+    def test_completed_workspace_prompt_preserves_receipts_without_new_lifecycle(self):
         child = self.native_workspace()
         (child / "answer.md").write_text("reviewed answer\n")
         result = self.workspace_command("review-start", "--repo", "child")
@@ -522,11 +586,13 @@ class RepositoryBoundaries(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), {})
         key = w.digest(b"hook-workspace")[:24]
         directory = self.root / ".git/constellation"
+        manifest = directory / f"workspace-{key}.json"
+        before = manifest.read_bytes()
         result = self.native_event("prompt", prompt="A different task", turn_id="new-task")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse((directory / f"workspace-{key}.json").exists())
-        self.assertTrue(list((directory / "history").glob(f"workspace-{key}-*.json")))
-        self.assertEqual(json.loads((directory / f"{key}.json").read_text())["turn"], "new-task")
+        self.assertEqual(json.loads(result.stdout), {})
+        self.assertEqual(manifest.read_bytes(), before)
+        self.assertFalse((directory / f"{key}.json").exists())
 
 
 if __name__ == "__main__":

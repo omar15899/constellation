@@ -18,15 +18,19 @@ MODULES = ("coding", "mathematics", "writter")
 BUNDLE_MANIFEST = "bundle.json"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 COMMON_FILES = (
-    "review_gate.py", "review-policy.json",
+    *(f"ecosystem/runtime/{name}.py" for name in
+      ("__init__", "workflow", "workspace", "dispatch", "review_gate", "agent_policy", "progress")),
+    "ecosystem/runtime/review-policy.json",
     *(f"ecosystem/{name}.py" for name in
       ("__init__", "core", "storage", "cli", "hooks", "build", "install", "native", "validate")),
     "ecosystem/hooks.json", "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
+    "ecosystem/ARCHITECTURE.md", "ecosystem/MIGRATION.md", "ecosystem/PROGRESS.md",
     "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
     "ecosystem/EVALUATION.md", "ecosystem/evaluation.json",
     "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
     *(f"ecosystem/tests/{name}.py" for name in
-      ("helpers", "test_core", "test_hooks", "test_package", "test_validation")),
+      ("helpers", "test_core", "test_hooks", "test_package", "test_validation", "test_capabilities",
+       "test_progress", "test_progress_core")),
     *(f"ecosystem/agents/{name}.toml" for name in
       ("researcher", "reviewer", "security-reviewer", "verifier")),
 )
@@ -121,7 +125,9 @@ def verify_bundle(root: Path) -> dict:
     manifest = _json(regular_file(root, BUNDLE_MANIFEST))
     if manifest.get("schema") != 1:
         raise BundleError("Unsupported bundle schema")
-    selected = select_modules(manifest.get("modules", ()))
+    if not isinstance(manifest.get("modules"), list):
+        raise BundleError("Bundle modules must be an explicit list")
+    selected = select_modules(manifest["modules"])
     expected = allowed_files(selected)
     if not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != expected:
         raise BundleError("Bundle file list differs from the allowlist")

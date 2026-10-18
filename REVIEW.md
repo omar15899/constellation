@@ -11,6 +11,11 @@ corrección y dos de seguridad. La cuota se aplica a cada archivo: revisar otro
 archivo no completa su cobertura. Las identidades son las devueltas por las
 herramientas de agentes, nunca nombres inventados para llenar un quórum.
 
+Una excepción Quick sobre código necesita permiso de la política efectiva y una
+justificación concreta anterior a la primera ronda, fijada al snapshot. Comprueba
+que su riesgo y alcance la sostienen. No reduce rutas Deep ni restricciones del
+receptor; los cambios posteriores invalidan esa excepción.
+
 Lee el diff, los requisitos, los AGENTS.md aplicables y las invariantes del dueño
 Git. Revisa también los consumidores necesarios para probar un fallo; un nombre
 de archivo no es evidencia. Para cada hallazgo indica ruta y línea, escenario
@@ -20,7 +25,7 @@ Empieza el informe por el número de hallazgos; di explícitamente cuando sea ce
 El coordinador ejecuta las comprobaciones pertinentes y entrega el diff a un
 agente independiente con contexto suficiente. El informe cubre corrección y
 regresiones; una segunda revisión de seguridad es obligatoria para las rutas
-sensibles de `.codex/review-policy.json`. El revisor no edita su propio objeto de
+sensibles de `.codex/ecosystem/runtime/review-policy.json`. El revisor no edita su propio objeto de
 revisión. Registra todos los implementadores mediante `review-author` con sus
 rutas: tampoco pueden revisar o resolver hallazgos de sus propios archivos.
 Otro agente puede verificar hallazgos discutidos o corregidos.

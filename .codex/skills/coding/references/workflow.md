@@ -1,5 +1,10 @@
 # Flujo de ingeniería
 
+Para trabajo sustancial o prolongado, conserva decisiones, hallazgos, evidencia y
+siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/PROGRESS.md).
+Sincroniza hitos personales sólo cuando la política local lo autorice; no abras
+otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimiento.
+
 ## Contrato y diagnóstico
 
 Localiza el dueño real de los archivos y las instrucciones que gobiernan el
@@ -24,16 +29,18 @@ coste concreto. Resuelve las decisiones rutinarias con el contexto disponible.
 
 ## Registrar trabajo y repartirlo
 
-Usa el [protocolo común](../../../ecosystem/references/protocol.md) como fuente
-única de operaciones, campos y semántica de evidencia. Resuelve sus recursos
-respecto al paquete instalado, no respecto al cwd. La raíz de trabajo es el
+Elige el ciclo según el [protocolo común](../../../ecosystem/references/protocol.md).
+El flujo Git receptor gobierna cambios y publicación; el CLI portátil conserva
+su esquema para entregas que necesitan evidencia semántica sin depender de Git.
+Resuelve sus recursos respecto al paquete instalado, no respecto al cwd. La raíz de trabajo es el
 proyecto receptor; el estado operativo es privado y queda fuera de la entrega.
 No copies prompts, transcripciones, secretos ni salidas sensibles a informes.
 
 Antes de modificar archivos de la entrega, declara el contrato y sus
-comprobaciones. Cada requisito debe enlazar artefactos exactos y checks que
-permitan juzgarlo; registra también entradas y dependencias cuya variación pueda
-invalidar el resultado. Los requisitos de código usan aceptación de comportamiento.
+comprobaciones en el ciclo elegido. Relaciona requisitos, artefactos exactos y
+checks que permitan juzgarlos; identifica entradas y dependencias cuya variación
+pueda invalidar el resultado. En el protocolo portátil, los requisitos de código
+usan aceptación de comportamiento. No atribuyas ese esquema al contrato Git.
 Una tarea puramente diagnóstica puede entregar un informe con evidencia y límites
 sin modificar el producto. Mantén un contrato breve para cambios pequeños.
 Una consulta de solo lectura sin entregables se responde sin crear estado ni un
@@ -48,19 +55,25 @@ y pásalas al agente nativo disponible.
 
 Delega investigación, implementación o revisión solo cuando aporten trabajo
 independiente útil. Cada escritor recibe rutas exclusivas, requisitos,
-dependencias, invariantes, resultado esperado y forma de comprobarlo. Advierte
-que comparte el árbol y debe preservar los cambios ajenos. Descuenta agentes
+dependencias, invariantes, resultado esperado y forma de comprobarlo. Indica las
+skills pertinentes y su ubicación accesible; el trabajador debe comprobar su
+propio catálogo y leer las instrucciones que necesite. No presupongas que hereda
+una conexión, herramienta o perfil por estar disponible para el coordinador.
+Advierte que comparte el árbol y debe preservar los cambios ajenos. Descuenta agentes
 ocupados del límite efectivo común; no multipliques la capacidad por proyecto.
 Espera la evidencia del proveedor antes de integrar un consumidor dependiente.
 El coordinador integra y publica; los trabajadores entregan archivos y evidencia.
 
-En Constellation, el contrato del motor portátil acompaña el contrato receptor:
-usa la sesión vigente, `workspace.py` y su reparto, registra allí los autores
-reales y completa sus comprobaciones y revisión. No reemplaces un contrato activo
-ni trates el cierre portátil como aprobación de publicación. En otros entornos,
-aplica su autorización y flujo. La ausencia de Git no impide planificar,
-comprobar y revisar archivos; no inicialices un repositorio para satisfacer este
-procedimiento.
+En un cambio Git ordinario de Constellation, usa la sesión vigente, `workspace.py`
+y su reparto cuando corresponda; registra allí autores, checks y revisión sin
+abrir un segundo contrato portátil. Si el objetivo también exige una prueba
+matemática o un informe con garantías del motor portátil, declara esa obligación,
+sus artefactos y la dependencia de la integración Git respecto a su evidencia
+vigente. No dupliques todos los requisitos ni supongas una sincronización entre
+motores. El protocolo detalla qué controles no son intercambiables. No reemplaces
+un contrato activo ni trates un cierre portátil como permiso de publicación.
+La ausencia de Git no impide planificar, comprobar y revisar archivos; no
+inicialices un repositorio para satisfacer este procedimiento.
 
 ## Implementar y comprobar
 
@@ -76,7 +89,7 @@ ejercitar tanto el rechazo como un caso permitido para detectar falsos bloqueos.
 Incluye consumidores o integración cuando una prueba aislada no alcance el
 contrato. Un comando no ejecutado o una prueba omitida no cuentan como éxito.
 
-Registra checks definitivos con el motor que corresponda, sobre los artefactos
+Registra checks definitivos con el ciclo que corresponda, sobre los artefactos
 actuales. Las pruebas preliminares de un trabajador ayudan al coordinador, pero
 no sustituyen ese registro. Para una edición pequeña, una comprobación existente
 y enfocada puede bastar; no inventes tests que solo busquen el texto recién
@@ -116,7 +129,9 @@ Registra el resultado mediante el protocolo; no borres ni cierres un hallazgo
 por consenso informal.
 
 Un cambio de artefactos, entradas, contrato o checks puede invalidar la evidencia:
-consulta el estado vigente y renueva lo necesario. Las rondas posteriores cubren
+consulta el estado vigente y renueva lo necesario. Los controles automáticos de
+vigencia difieren entre el contrato Git y el portátil; comprueba expresamente
+las dependencias semánticas que el receptor no fija. Las rondas posteriores cubren
 el delta y sus consecuencias sin perder hallazgos pendientes. El máximo es tres
 rondas por tarea; replanificar o cambiar de sesión no permite reiniciarlo. Si no
 converge, conserva las obligaciones abiertas y explica el impedimento concreto.

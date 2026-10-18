@@ -550,5 +550,581 @@
     "scenario": "Identical SKILL.md with a different referenced workflow still allowed native exclusion of the source.",
     "required_repair": "Compare the canonical resource closure of selected modules before any native preference writes.",
     "resolution_authority": "Independent verifier distinct from author and discoverer; current-token evidence in workspace ledger."
+  },
+  "migration_1_1": {
+    "date": "2026-10-18",
+    "status": "baseline_and_controlled_selection_observed_candidate_execution_pending",
+    "baseline_head": "86ef3bdb1b5551b50d7f48dac8a7a9a6002576f8",
+    "evidence_owner": "01a14c68-b896-7e83-9b16-b7c64379317c",
+    "privacy": "Only synthetic case definitions, reduced operational observations, artifact hashes and native usage; no transcripts, tool traffic or private content.",
+    "controlled_metadata_selection": {
+      "scope": "Controlled catalog reasoning by native subagents; not native discovery, activation or candidate execution.",
+      "catalog_sha256": "593540ebc2741a581a16d12b87071953ff6aa69a59a3b1c91e62c362e046e363",
+      "catalogs_identical": true,
+      "catalog_provenance": "Three Constellation SKILL.md frontmatters from baseline HEAD and then-current candidate; captured before later instruction shortening.",
+      "serialization": "UTF-8 JSON, ensure_ascii=False, indent=2 plus newline. Keys: exercise, catalog; catalog entries in coding/mathematics/writter order contain name, frontmatter, enabled, origin, body_access. Synthetic catalog files held outside the checkout.",
+      "cases": "evals/cases.json:migration_1_1.selection_cases",
+      "runs": [
+        {
+          "condition": "baseline",
+          "executor": "01a14c6d-0607-7f10-b9e8-3c060ec64b03",
+          "case_order": "listed",
+          "case_results": [
+            {
+              "case": "simple-fact",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "brief-edit",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "python-correction",
+              "reported_selected_skills": [
+                "constellation:coding"
+              ],
+              "selected_now": [
+                "constellation:coding"
+              ],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "math-audit",
+              "reported_selected_skills": [
+                "constellation:mathematics"
+              ],
+              "selected_now": [
+                "constellation:mathematics"
+              ],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "composition",
+              "reported_selected_skills": [
+                "constellation:coding",
+                "constellation:mathematics",
+                "constellation:writter"
+              ],
+              "selected_now": [
+                "constellation:coding",
+                "constellation:mathematics",
+                "constellation:writter"
+              ],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "explicit-available",
+              "reported_selected_skills": [
+                "constellation:mathematics"
+              ],
+              "selected_now": [
+                "constellation:mathematics"
+              ],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "explicit-disabled",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "conflicting-content",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "explicit-no-skill",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "explicit-missing",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [
+                "constellation:mathematics"
+              ],
+              "assessment": "matches_examined_criteria"
+            }
+          ],
+          "reported_reads": [
+            "baseline-catalog.json",
+            "cases.json"
+          ],
+          "skill_bodies_loaded": [],
+          "wall_seconds": 53.083,
+          "clock_scope": "coordinator observed dispatch-to-message receipt including scheduling and delivery"
+        },
+        {
+          "condition": "candidate",
+          "executor": "01a14c6d-2a4c-74a0-a96e-0848f4ed8f91",
+          "case_order": "reversed",
+          "case_results": [
+            {
+              "case": "simple-fact",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "brief-edit",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "python-correction",
+              "reported_selected_skills": [
+                "constellation:coding"
+              ],
+              "selected_now": [
+                "constellation:coding"
+              ],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "math-audit",
+              "reported_selected_skills": [
+                "constellation:mathematics"
+              ],
+              "selected_now": [
+                "constellation:mathematics"
+              ],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "composition",
+              "reported_selected_skills": [
+                "constellation:coding",
+                "constellation:mathematics",
+                "constellation:writter"
+              ],
+              "selected_now": [
+                "constellation:coding",
+                "constellation:mathematics",
+                "constellation:writter"
+              ],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "explicit-available",
+              "reported_selected_skills": [
+                "constellation:mathematics"
+              ],
+              "selected_now": [
+                "constellation:mathematics"
+              ],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "explicit-disabled",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "conflicting-content",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "explicit-no-skill",
+              "reported_selected_skills": [],
+              "selected_now": [],
+              "proposed_fallback": [],
+              "assessment": "matches_examined_criteria"
+            },
+            {
+              "case": "explicit-missing",
+              "reported_selected_skills": [
+                "constellation:mathematics"
+              ],
+              "selected_now": null,
+              "proposed_fallback": [
+                "constellation:mathematics"
+              ],
+              "assessment": "ambiguous_selection_phase"
+            }
+          ],
+          "reported_reads": [
+            "candidate-catalog.json",
+            "cases.json"
+          ],
+          "skill_bodies_loaded": [],
+          "wall_seconds": 52.844,
+          "clock_scope": "coordinator observed dispatch-to-message receipt including scheduling and delivery"
+        }
+      ],
+      "assessment": "Nine unambiguous selection sets match in both runs. Both report the missing skill correctly; one includes its alternative in selected_skills, making selection phase ambiguous. No causal improvement claim.",
+      "oracle_timing": "Prospective oracle formalized after these initial observations; no retrospectively asserted preregistration.",
+      "provenance_lookup": "Executor UUIDs read from CODEX_THREAD_ID in separate follow-up turns, excluded from original task tools and durations."
+    },
+    "actual_installed_1_0_tasks": [
+      {
+        "case": "python-transitions",
+        "executor": "01a14c6d-5518-79a1-bf1b-c7c74f3b35ab",
+        "surface": "native subagent in this session",
+        "installed_skill_version": "1.0.0",
+        "selected_now": [
+          "constellation:coding"
+        ],
+        "proposed_fallback": [],
+        "reported_instruction_reads": [
+          {
+            "path": "skills/coding/SKILL.md",
+            "sha256": "c1c059a08b45bd685b8fed628a65c11042aab62e8f383cb81f9ca36353a59ea5",
+            "utf8_bytes": 3596
+          },
+          {
+            "path": "skills/coding/references/workflow.md",
+            "sha256": "9516acff4d96b2a8e301a221a73dd8a313f304577cb153aa723423adf636bee4",
+            "utf8_bytes": 9213
+          },
+          {
+            "path": "ecosystem/references/protocol.md",
+            "sha256": "18e621be0cca31b291cc430a6f7255d39ef8f8b768bd1fbc35fce063926d52c3",
+            "utf8_bytes": 8253
+          }
+        ],
+        "reported_instruction_utf8_bytes": 21062,
+        "additional_agents": 0,
+        "executor_checks": 18,
+        "independent_verifier": "01a14c68-b896-7e83-9b16-b7c64379317c",
+        "independent_inputs": 3280,
+        "independent_checks": 6560,
+        "artifact_sha256": "5801232c8344b282232914009247fb874324c70eee6fbcb0dcdb8bf5e3ae97e8",
+        "artifact": "transitions.py",
+        "result": "local_artifact_complete_no_formal_engine_certificate",
+        "workflow_state_created": false,
+        "git_created": false,
+        "coordinator_interventions": 1,
+        "intervention": "Executor requested contract/token; coordinator confirmed none existed, required disclosure of any blocking rule, and kept the experiment free of new workflow state. Independent artifact verification is not engine certification.",
+        "wall_seconds": 106.569,
+        "clock_scope": "coordinator observed dispatch-to-message receipt including scheduling and delivery"
+      },
+      {
+        "case": "brief-tangent-definition",
+        "executor": "01a14c6d-74c9-7ea1-a8d3-3fa5caf1ea9c",
+        "surface": "native subagent in this session",
+        "selected_now": [],
+        "proposed_fallback": [],
+        "reported_instruction_file_reads": [],
+        "tools": 0,
+        "additional_agents": 0,
+        "artifact_files": 0,
+        "reviewer": "01a14c68-b896-7e83-9b16-b7c64379317c",
+        "result": "correct_curve_equivalence_chart_independence_and_vector_structure",
+        "wall_seconds": 33.621,
+        "clock_scope": "coordinator observed dispatch-to-message receipt including scheduling and delivery",
+        "output_stored": false
+      }
+    ],
+    "native_runtime_baseline": {
+      "observer": "01a14c68-42f9-7d00-b7ef-dd35631b0157",
+      "cli_version": "0.163.0",
+      "installed_plugin_version": "1.0.0",
+      "hook_source_sha256_before_and_after": "e8ced0b0d5f8d84de58c64cca96b23e4fdbea2ac4da90af33e3f2959d66e0612",
+      "case": "simple-fact",
+      "app_server": {
+        "ephemeral": true,
+        "retained_thread_id": null,
+        "configured_model": "gpt-6-astra",
+        "configured_approval": "never",
+        "configured_sandbox": "dangerFullAccess",
+        "wall_seconds": 4.882,
+        "usage": {
+          "input_tokens": 23004,
+          "cached_input_tokens": 0,
+          "output_tokens": 28,
+          "total_tokens": 23032,
+          "reasoning_output_tokens": 0
+        },
+        "tools": 0,
+        "subagents": 0,
+        "project_files_created": 0,
+        "result": "correct_CPU_answer",
+        "hooks": [
+          {
+            "event": "userPromptSubmit",
+            "status": "completed",
+            "duration_ms": 96,
+            "source": "plugin",
+            "execution_mode": "sync",
+            "handler_type": "command"
+          },
+          {
+            "event": "stop",
+            "status": "completed",
+            "duration_ms": 89,
+            "source": "plugin",
+            "execution_mode": "sync",
+            "handler_type": "command"
+          }
+        ],
+        "hook_scope": "Actual native started/completed notifications; no active contract, so this proves dispatch, not guard enforcement or workflow completion."
+      },
+      "cli": {
+        "wall_seconds": 5.058,
+        "usage": {
+          "input_tokens": 23004,
+          "cached_input_tokens": 7168,
+          "output_tokens": 27
+        },
+        "hook_notifications_exposed": false,
+        "result": "correct_CPU_answer"
+      },
+      "comparison": "Independent repetitions with different surfaces and cache counts; not a causal speed comparison."
+    },
+    "external_integration_observations": [
+      {
+        "surface": "coordinator CUA getBrowser(public URL)",
+        "status": "unavailable",
+        "diagnostic": "No browser is available",
+        "source": "Coordinator-reported actual call; no browser action succeeded."
+      },
+      {
+        "surface": "subagent CUA in-app browser",
+        "status": "unavailable",
+        "source": "Coordinator-reported subagent observation; availability is surface-specific."
+      }
+    ],
+    "candidate_forward_test": {
+      "status": "pending",
+      "reason": "Fresh candidate execution is evaluated after bundle freeze/deployment. Its metrics belong in a subsequent external report to avoid changing the bundle being measured."
+    },
+    "limitations": [
+      "Small descriptive sample; no general selection reliability or quality/speed improvement estimate.",
+      "The controlled selection catalogs contain identical frontmatter; later candidate edits are outside that snapshot.",
+      "Instruction read lists are executor-reported; their file hashes and byte sizes were checked separately.",
+      "The Python and mathematics tasks used the live session and installed 1.0 instructions, not an isolated candidate installation.",
+      "Native hook completion without an active contract verifies dispatch only; permission/scope rejection needs a separate native event.",
+      "Browser integration attempts failed in the examined surfaces; no working browser workflow is claimed.",
+      "Task body transcripts and tool traffic were not persisted; later provenance-only turns are excluded from task counts."
+    ],
+    "native_capacity": {
+      "source": "Coordinator-reported fresh native inspection",
+      "method": "app-server config/read from each native child project directory",
+      "native_child_projects": 19,
+      "configured_max_concurrent_threads_per_session": 64,
+      "per_project_config_files_remaining": false,
+      "saturation_test_executed": false,
+      "limit": "Effective configuration of inspected fresh processes; does not prove 64 agents executed or enlarge an existing session."
+    },
+    "instruction_size_measurements": {
+      "source": "Coordinator-reported final source measurement and earlier measured snapshots",
+      "unit": "UTF-8 bytes",
+      "three_skill_files": {
+        "baseline_head": 9421,
+        "earlier_candidate": 11692,
+        "final_candidate": 9355
+      },
+      "protocol_file": {
+        "baseline_head": 8253,
+        "earlier_candidate": 14417,
+        "final_candidate": 12869
+      },
+      "metadata_changed": false,
+      "limit": "Potential load sizes, not tokens or observed context consumption; the protocol remains larger than baseline HEAD.",
+      "snapshot_scope": "Pre-extension instruction shortening; final_candidate names are retained historical labels, not current bundle sizes.",
+      "extension_snapshot": {
+        "three_skill_files": 9355,
+        "protocol_file": 14250,
+        "measure": "UTF-8 file bytes, not tokens or measured context consumption."
+      }
+    },
+    "extension": {
+      "date": "2026-10-18",
+      "documentation_author": "01a14ccd-bc7f-7a82-bb38-fbb87d2af600",
+      "scope": "Implemented source extension and bounded evaluations; installed candidate forward test and real OmarOS publication recorded separately after deployment.",
+      "personalization_architecture": {
+        "profile": "User-local provisional editable profile outside generic skills and project publication.",
+        "calibration": "Intentional reusable positive, negative and own-reasoning feedback; scope and provenance retained; current request takes priority; deletion and contextual distinctions supported.",
+        "persistence": "Explicit storage and retrieval, not model-weight modification or automatic conversational memory.",
+        "behavior_selection": "Research, learning and engineering compose from intent without persistent modes or another orchestration engine."
+      },
+      "synthetic_calibration": {
+        "fixture_name": "learner-calibration-eval.YuxoSx",
+        "coordinator": "01a14cc4-9a35-7cc2-a080-0864c8078faa",
+        "case_count": 8,
+        "checks_passed": 23,
+        "all_checks_passed": true,
+        "cases": [
+          "initial_explanation",
+          "intentional_positive_and_negative_feedback",
+          "new_agent_after_update",
+          "combined_nonpersistent_controls_and_current_priority",
+          "own_reasoning_episode_and_goal",
+          "contextual_conflict",
+          "explicit_deletion",
+          "new_agent_after_deletion"
+        ],
+        "check_results": {
+          "baseline_profile_unchanged": true,
+          "feedback_changes_profile": true,
+          "original_entries_preserved_after_feedback": true,
+          "feedback_narrow_scope_present": true,
+          "positive_and_negative_principles_present": true,
+          "today_brief_not_persisted": true,
+          "embedded_marker_absent": true,
+          "embedded_command_not_stored": true,
+          "fresh_after_reads_identical_updated_profile": true,
+          "before_starts_concrete_example": true,
+          "after_starts_general_objects": true,
+          "combined_nonpersistent_controls_leave_bytes_unchanged": true,
+          "current_request_overrides_profile_order": true,
+          "reasoning_episode_and_goal_distinguished": true,
+          "contextual_conflict_preserves_conceptual_entry": true,
+          "contextual_conflict_new_scope_explicit": true,
+          "deletion_removes_active_entry": true,
+          "deletion_removes_content_from_active_notes": true,
+          "deletion_preserves_unrelated_entries": true,
+          "fresh_after_deletion_profile_unchanged": true,
+          "fresh_after_deletion_returns_to_concrete_example": true,
+          "skill_unchanged_during_run": true,
+          "calibration_unchanged_during_run": true
+        },
+        "checks_artifact_sha256": "fc21e279664e8ad6b925f51bd4103792684f5dfb99baf9e5e63c2f5cfa1966c9",
+        "max_concurrent_children": 4,
+        "wall_seconds": 331.634,
+        "independent_reviewer": "01a14cc9-8cb8-7673-ba8a-04b31ed196a2",
+        "independent_review": "No material mathematical error reported in before/after explanations; content also differed beyond exposition order.",
+        "privacy": "Fictional profiles and intentional synthetic artifacts only. No real preferences written. No real profile or backup read in this subtest.",
+        "limits": [
+          "New agents without inherited history within one collaboration session, not external client sessions.",
+          "Combined praise/factual-correction/one-off controls not isolated individually.",
+          "No repeated-update idempotence, write races, permission failures or missing-profile scenarios.",
+          "No causal estimate of exposition change or measurement of learning, retention or transfer.",
+          "No before/after hashes of the real profile collected in this subtest."
+        ]
+      },
+      "native_model_portability": {
+        "cli_version": "0.163.0",
+        "observer": "01a14c95-78e1-7761-83eb-0183dd96b227",
+        "surface": "Two new native app-server executions; same mathematical request and existing local profile.",
+        "declared_context_windows": {
+          "gpt-6-astra": 272000,
+          "gpt-6.1-sol": 500000
+        },
+        "declared_context_evidence": "Coordinator observation of codex debug models; effective windows independently present in reduced native metadata.",
+        "hub_context_override_removed": true,
+        "global_model_and_effort_changed": false,
+        "watched_files_unchanged": true,
+        "protocol_persisted": false,
+        "runs": [
+          {
+            "model": "gpt-6-astra",
+            "reasoning_effort": "ultra",
+            "native_thread_id": "01a14cc4-edcc-7801-bcef-2699812f7e27",
+            "status": "completed",
+            "ephemeral": true,
+            "persisted_thread_path": false,
+            "wall_seconds": 56.021,
+            "root_thread_token_usage": {
+              "totalTokens": 80230,
+              "inputTokens": 78729,
+              "cachedInputTokens": 50560,
+              "cacheWriteInputTokens": 0,
+              "outputTokens": 1501,
+              "reasoningOutputTokens": 618
+            },
+            "effective_context_window": 258400,
+            "spawned_agents": 1,
+            "child_total_tokens": [
+              23667
+            ],
+            "personal_profile_full_read_verified": true,
+            "teaching_skill_read": true
+          },
+          {
+            "model": "gpt-6.1-sol",
+            "reasoning_effort": "ultra",
+            "native_thread_id": "01a14cc4-edcc-7531-8488-c1b85a5ea31a",
+            "status": "completed",
+            "ephemeral": true,
+            "persisted_thread_path": false,
+            "wall_seconds": 30.663,
+            "root_thread_token_usage": {
+              "totalTokens": 50065,
+              "inputTokens": 48567,
+              "cachedInputTokens": 23296,
+              "cacheWriteInputTokens": 0,
+              "outputTokens": 1498,
+              "reasoningOutputTokens": 901
+            },
+            "effective_context_window": 475000,
+            "spawned_agents": 0,
+            "child_total_tokens": [],
+            "personal_profile_full_read_verified": true,
+            "teaching_skill_read": false
+          }
+        ],
+        "substantive_review": {
+          "provenance": "Coordinator-reported subsequent independent mathematical review.",
+          "gpt-6-astra": "No material finding reported.",
+          "gpt-6.1-sol": "Pointwise differentiability was extended to a global field without stating the additional differentiability hypothesis; local and coordinate arguments otherwise accepted."
+        },
+        "privacy": "Only reduced observations published; no personal profile content or fingerprint, raw responses, protocols or private metadata copied.",
+        "limits": [
+          "Observed retrieval with two model/configuration pairs, not universal portability.",
+          "Not an end-to-end transfer of the synthetic feedback update to external client processes.",
+          "Different skill and delegation choices; no causal speed, token or quality comparison.",
+          "Profile retrieval and compatible execution do not establish mathematical correctness."
+        ]
+      },
+      "progress_and_journal": {
+        "source": "runtime/progress.py with existing Git JSON and portable SQLite adapters.",
+        "receiver": "OmarOS existing workflow and progress_journal.py; provider bundle pinned by hash.",
+        "authorization": "Exact canonical source root and alias, personal source permission, personal latest checkpoint and pinned target. Registration and parent-root permission do not grant export.",
+        "recovery": "Task UUID, stable milestone identity and chronology, idempotent replay, stale-content rejection and recoverable receiver intent. Local source remains usable without OmarOS.",
+        "receipt": "RECEIVED_LOCAL binds current content and destination; neither publication nor task completion.",
+        "regression_sources": [
+          "tests/test_progress.py",
+          "tests/test_progress_core.py",
+          "../tests/test_progress_workflow.py",
+          "OmarOS:.codex/tests/test_progress.py"
+        ],
+        "real_vault_delivery_status": "pending_in_this_source_snapshot; final deployment report records actual delivery and publication",
+        "limits": [
+          "Agent curates meaningful milestones; no background daemon or content classifier.",
+          "Syntax and hashes do not authenticate an emitter or detect every secret.",
+          "Receiver atomic writes require state and vault on the same filesystem."
+        ]
+      },
+      "adaptive_review": {
+        "option": "allow_quick_code policy plus quick_code_reason before first review round.",
+        "binding": "Complete initial review snapshot; changes invalidate eligibility. Existing policy/risk floors and Deep remain binding.",
+        "regression_sources": [
+          "../tests/test_review_gate.py",
+          "tests/test_core.py"
+        ],
+        "limits": "Independent reviewer evaluates the reason; declaration alone does not certify low risk or grant client permissions."
+      },
+      "completion_claim": "Source mechanisms and bounded tests are not a claim of full installed candidate validation or completed remote publication."
+    }
   }
 }

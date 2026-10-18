@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strict JSON CLI for the portable local coordination engine."""
+"""Constellation entry point for portable evidence and native Git workflows."""
 from __future__ import annotations
 
 import argparse
@@ -18,11 +18,18 @@ else:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["git"]:
+        from ecosystem.runtime.workflow import entrypoint
+        return entrypoint(arguments[1:])
+    if arguments[:1] == ["workspace"]:
+        from ecosystem.runtime.workspace import entrypoint
+        return entrypoint(arguments[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--state-dir", type=Path, default=default_state_dir())
     parser.add_argument("operation")
-    options = parser.parse_args(argv)
+    options = parser.parse_args(arguments)
     try:
         payload = decode(sys.stdin.read())
         result = Engine(options.root, options.state_dir).execute(options.operation, payload)

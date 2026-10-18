@@ -29,6 +29,34 @@ else:
 
 CATALOG_MANIFEST = ".agents/plugins/marketplace.json"
 PLUGIN_DIRECTORY = "plugins/constellation"
+# Schema 1 predates the shared runtime layout. This historical ownership list
+# must not follow COMMON_FILES: upgrades validate the release being replaced.
+_LEGACY_COMMON_FILES = (
+    "review_gate.py", "review-policy.json",
+    *(f"ecosystem/{name}.py" for name in
+      ("__init__", "core", "storage", "cli", "hooks", "build", "install", "native", "validate")),
+    "ecosystem/hooks.json", "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
+    "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
+    "ecosystem/EVALUATION.md", "ecosystem/evaluation.json",
+    "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
+    *(f"ecosystem/tests/{name}.py" for name in
+      ("helpers", "test_core", "test_hooks", "test_package", "test_validation")),
+    *(f"ecosystem/agents/{name}.toml" for name in
+      ("researcher", "reviewer", "security-reviewer", "verifier")),
+)
+
+
+def _legacy_receipt_files(modules: tuple[str, ...]) -> set[str]:
+    paths = set(_LEGACY_COMMON_FILES) | {PLUGIN_MANIFEST}
+    agents = {"coding": ("coder",), "mathematics": ("mathematician", "counterexample"),
+              "writter": ("editor", "mathematician", "coder")}
+    for module in modules:
+        paths.update(f"skills/{module}/{name}" for name in
+                     ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
+        paths.update(f"ecosystem/agents/{name}.toml" for name in agents[module])
+    if {"mathematics", "writter"} & set(modules):
+        paths.update(("ecosystem/references/ontology.md", "ecosystem/references/ontology-examples.md"))
+    return paths
 
 
 class InstallError(ValueError):
@@ -74,26 +102,103 @@ def _load_receipt(path: Path) -> dict | None:
         raise InstallError("Installation receipt cannot be a symlink")
     if not path.exists():
         return None
+    if not path.is_file():
+        raise InstallError("Installation receipt must be a regular file")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict) or value.get("schema") != 1:
+        value = _read_object(path)
+        if (set(value) != {"schema", "modules", "version", "catalog", "cache", "agents"}
+                or type(value.get("schema")) is not int or value["schema"] not in (1, 2)):
             raise ValueError("schema")
+        if (not isinstance(value["modules"], list)
+                or not all(isinstance(module, str) for module in value["modules"])):
+            raise ValueError("modules")
         modules = select_modules(value["modules"])
-        expected = {f"{PLUGIN_DIRECTORY}/{p}" for p in allowed_files(modules) | {BUNDLE_MANIFEST}}
+        if (not isinstance(value["version"], str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value["version"])):
+            raise ValueError("version")
+        if value["schema"] == 1 and value["version"] != "1.0.0":
+            raise ValueError("unsupported legacy release")
+        for group in ("catalog", "cache", "agents"):
+            _check_records(value[group])
+        if value["schema"] == 1:
+            files = _legacy_receipt_files(modules)
+        else:
+            # A receipt describes the owned release, not the incoming release.
+            # Additive resources must not make a previously valid installation
+            # unupgradable. Keep the current allowlist as an outer boundary and
+            # the original module/profile identities as the stable minimum.
+            files = set(value["cache"]) - {BUNDLE_MANIFEST}
+            identities = {PLUGIN_MANIFEST} | {
+                path for path in _legacy_receipt_files(modules)
+                if path.startswith(("skills/", "ecosystem/agents/"))
+            }
+            if not identities <= files <= allowed_files(modules):
+                raise ValueError("recorded release resources")
+        expected = {f"{PLUGIN_DIRECTORY}/{p}" for p in files | {BUNDLE_MANIFEST}}
         expected.add(CATALOG_MANIFEST)
         if set(value["catalog"]) != expected:
             raise ValueError("catalog")
-        expected_agents = {"constellation-" + Path(p).name for p in allowed_files(modules)
+        expected_agents = {"constellation-" + Path(p).name for p in files
                            if p.startswith("ecosystem/agents/")}
         if set(value["agents"]) != expected_agents:
             raise ValueError("agents")
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value["version"]):
-            raise ValueError("version")
-        if set(value["cache"]) != allowed_files(modules) | {BUNDLE_MANIFEST}:
+        if set(value["cache"]) != files | {BUNDLE_MANIFEST}:
             raise ValueError("cache")
+        if any(record != value["catalog"][f"{PLUGIN_DIRECTORY}/{relative}"]
+               for relative, record in value["cache"].items()):
+            raise ValueError("cache and catalog differ")
+        # Native profile projections are deliberately normalized to 0644 even
+        # when their packaged source retained an executable source-tree mode.
+        if any(record["mode"] != 0o644 or record["sha256"] !=
+               value["cache"]["ecosystem/agents/" + name.removeprefix("constellation-")]["sha256"]
+               for name, record in value["agents"].items()):
+            raise ValueError("agent and catalog differ")
         return value
     except (KeyError, TypeError, ValueError, OSError) as exc:
         raise InstallError("Invalid installation receipt; no files were changed") from exc
+
+
+def _read_object(path: Path) -> dict:
+    def unique(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate mapping key")
+            result[key] = value
+        return result
+
+    value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
+    if not isinstance(value, dict):
+        raise ValueError("expected mapping")
+    return value
+
+
+def _check_records(value: object) -> None:
+    if not isinstance(value, dict):
+        raise ValueError("expected file records")
+    for relative, record in value.items():
+        if (not isinstance(relative, str) or not isinstance(record, dict)
+                or set(record) != {"sha256", "mode"}
+                or not isinstance(record["sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", record["sha256"])
+                or type(record["mode"]) is not int or record["mode"] not in (0o644, 0o755)):
+            raise ValueError("invalid file record")
+
+
+def _verify_recorded_bundle(root: Path, receipt: dict) -> None:
+    """Bind the owned inventory to the previous release's declared metadata."""
+    try:
+        manifest = _read_object(root / BUNDLE_MANIFEST)
+        expected = {p: record for p, record in receipt["cache"].items() if p != BUNDLE_MANIFEST}
+        if (set(manifest) != {"schema", "modules", "files"}
+                or type(manifest.get("schema")) is not int or manifest["schema"] != 1
+                or manifest.get("modules") != receipt["modules"] or manifest.get("files") != expected):
+            raise ValueError("bundle manifest differs from receipt")
+        plugin = _read_object(root / PLUGIN_MANIFEST)
+        if plugin.get("name") != "constellation" or plugin.get("version") != receipt["version"]:
+            raise ValueError("plugin manifest differs from receipt")
+    except (OSError, ValueError, TypeError) as exc:
+        raise InstallError("Owned bundle metadata differs from the installation receipt") from exc
 
 
 def _cache_root(home: Path, version: str) -> Path:
@@ -165,6 +270,7 @@ def _preflight(home: Path, selected: tuple[str, ...], client: NativeClient,
             raise InstallError("Catalog was modified; preserve its files before updating")
         if _inventory(_cache_root(home, receipt["version"])) != receipt["cache"]:
             raise InstallError("Native cache was modified; preserve its files before updating")
+        _verify_recorded_bundle(catalog / PLUGIN_DIRECTORY, receipt)
         for name, record in receipt["agents"].items():
             path = _no_links(home, "agents/" + name)
             if not path.is_file() or file_record(path) != record:
@@ -293,6 +399,8 @@ def install_bundle(bundle: Path, codex_home: Path, modules: Iterable[str] | None
                 cache = _cache_root(home, version)
                 if _inventory(cache) != _inventory(payload):
                     raise InstallError("Native cache differs from the verified bundle")
+                if {p.name for p in cache.parent.iterdir()} != {version}:
+                    raise InstallError("Native cache retained files outside the installed release")
                 agents_dir = _no_links(home, "agents")
                 agents_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
                 changed_agents = True
@@ -301,7 +409,7 @@ def install_bundle(bundle: Path, codex_home: Path, modules: Iterable[str] | None
                     _replace_bytes(target, source.read_bytes(), 0o644)
                 for name in set(previous_agents) - set(agent_sources):
                     (agents_dir / name).unlink()
-                result = {"schema": 1, "modules": list(selected), "version": version,
+                result = {"schema": 2, "modules": list(selected), "version": version,
                           "catalog": _inventory(catalog), "cache": _inventory(cache),
                           "agents": {name: file_record(agents_dir / name) for name in sorted(agent_sources)}}
                 _write_json(managed / "receipt.json", result)

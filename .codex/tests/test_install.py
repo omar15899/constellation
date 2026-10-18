@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1] / 'install.py'
 spec = importlib.util.spec_from_file_location('native_install', MODULE)
@@ -43,6 +44,16 @@ class InstallTests(unittest.TestCase):
             installer.install(self.root)
         self.assertEqual(hook.read_text(), '#!/bin/sh\nexit 0\n')
         self.assertEqual(installer.git(self.root, 'config', '--get', 'core.hooksPath'), original)
+        self.assertFalse((self.root / '.git/constellation').exists())
+
+    def test_unsupported_python_leaves_git_configuration_and_guards_untouched(self):
+        config = (self.root / '.git/config').read_bytes()
+        guards = {path: path.stat().st_mode for path in (self.root / '.codex/git-hooks').iterdir()}
+        with patch.object(installer.sys, 'version_info', (3, 10, 0)):
+            with self.assertRaisesRegex(ValueError, 'Python 3.11'):
+                installer.install(self.root)
+        self.assertEqual((self.root / '.git/config').read_bytes(), config)
+        self.assertEqual({path: path.stat().st_mode for path in guards}, guards)
         self.assertFalse((self.root / '.git/constellation').exists())
 
     def test_preserves_custom_hook_directory(self):

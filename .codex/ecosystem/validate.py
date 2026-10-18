@@ -318,12 +318,15 @@ class _Validator:
         data = self.json(relative)
         if data is None:
             return
-        if not {"name", "version", "skills", "hooks"} <= set(data) or not set(data) <= {"name", "version", "description", "skills", "hooks"}:
+        if set(data) != {"name", "version", "description", "skills", "hooks"}:
             self.error(relative, "unsupported plugin manifest schema")
-        expected = {"name": "constellation", "version": "1.0.0", "skills": "./skills/", "hooks": "./ecosystem/hooks.json"}
+        expected = {"name": "constellation", "skills": "./skills/", "hooks": "./ecosystem/hooks.json"}
         for field, value in expected.items():
             if data.get(field) != value:
                 self.error(relative, f"{field} must equal the package's declared portable value")
+        version = data.get("version")
+        if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):
+            self.error(relative, "version must be a safe non-empty release identifier")
         if "description" in data and (not isinstance(data["description"], str) or not data["description"].strip()):
             self.error(relative, "description must be a non-empty string")
 
@@ -382,7 +385,7 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
         else:
             for module in selected:
                 validator.scan(f"skills/{module}")
-            for directory in ("ecosystem/agents", "ecosystem/references", "ecosystem/evals", "ecosystem/tests"):
+            for directory in ("ecosystem/agents", "ecosystem/references", "ecosystem/evals", "ecosystem/tests", "ecosystem/runtime"):
                 validator.scan(directory)
         for relative in required:
             validator.path(relative)
@@ -437,7 +440,9 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
                         elif path is not None:
                             if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
                                 validator.error(relative, "inventory digest mismatch")
-                            if stat.S_IMODE(path.stat().st_mode) != record["mode"]:
+                            if record["mode"] not in (0o644, 0o755):
+                                validator.error(relative, "inventory permission mode must be 0644 or 0755")
+                            elif stat.S_IMODE(path.stat().st_mode) != record["mode"]:
                                 validator.error(relative, "inventory permission mode mismatch")
     except (OSError, ValueError, RecursionError) as exc:
         validator.error("package", f"validation could not complete ({type(exc).__name__})")
