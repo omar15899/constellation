@@ -78,6 +78,14 @@ Se conserva acceso completo/aprobación `never` previamente autorizado. No se
 cambiaron permisos, confianza, modelo predeterminado, Memories, feedback ni
 telemetría. La configuración local no acredita controles de cuenta.
 
+La primera CI remota detectó una matriz antigua Python 3.9 y la ausencia de
+configuración personal en el runner. La matriz del flujo Git pasa a 3.11/3.13;
+una configuración temporal explícita permite comprobar herencia y coherencia
+sin depender del equipo del usuario. Su nombre identifica que es una fixture,
+no una prueba de ejecución de 64 agentes. La reproducción del fallo y los
+controles positivos y negativos se verificaron independientemente. Los cuatro
+jobs portables originales pasaron en Linux/macOS con Python 3.11/3.13.
+
 ## Aprendizaje, investigación y continuidad
 
 `~/.codex/learning/PROFILE.md` es provisional, persistente, editable y privado.
