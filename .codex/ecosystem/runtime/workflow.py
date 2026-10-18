@@ -497,11 +497,15 @@ class Workflow:
         return record
 
     def review_operation(self, operation: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        if operation not in {"prepare", "start", "report", "resolve", "author"}:
+        if operation not in {"prepare", "start", "report", "resolve", "author", "budget"}:
             raise Blocked("Unknown independent review operation.")
+        if payload is not None and not isinstance(payload, dict):
+            raise Blocked("Expected an independent review request object.")
         state = self.load()
         self.identify_author(state)
         self.ensure_target(state)
+        if operation == "budget" and state.get("author") != self.session:
+            raise Blocked("Review budget requires the frozen coordinator identity.")
         engine = review_engine()
         try:
             if operation == "start" and payload and payload.get("risk"):
@@ -515,13 +519,13 @@ class Workflow:
                 state["review_risk"] = risk
             function = getattr(engine, operation)
             if operation == "start":
-                result = function(self.root, state, quick_code_reason=(payload or {}).get("quick_code_reason"))
+                result = function(self.root, state, quick_code_reason=(payload or {}).get("quick_code_reason"),
+                                  continuation=(payload or {}).get("continuation"))
             else:
-                result = function(self.root, state, payload) if operation in {"report", "resolve", "author"} else function(self.root, state)
+                result = function(self.root, state, payload) if operation in {"report", "resolve", "author", "budget"} else function(self.root, state)
         except engine.ReviewError as exc:
             raise Blocked(str(exc)) from exc
         if operation != "prepare":
-            state.update(review=None, finished=None)
             self.save(state)
             self.log("independent_review_" + operation)
         return result
@@ -529,7 +533,7 @@ class Workflow:
     def identify_author(self, state: dict[str, Any]) -> None:
         # Session IDs and reviewer IDs use the same declared representation.
         # Upgrade earlier, not-yet-reviewed contracts without touching a ledger.
-        if not state.get("review_gate") and state.get("author") in {None, self.key}:
+        if not state.get("review_gate") and not state.get("review_budget") and state.get("author") in {None, self.key}:
             state["author"] = self.session
 
     def independent_reviewed(self, state: dict[str, Any]) -> None:
@@ -819,11 +823,13 @@ def main(argv: list[str] | None = None, *, workflow_factory: type[Workflow] = Wo
     sub.add_parser("begin").add_argument("--turn", default="manual")
     sub.add_parser("plan")
     sub.add_parser("review")
-    for name in ("review-context", "review-start", "review-report", "review-resolve", "review-author"):
+    for name in ("review-context", "review-start", "review-report", "review-resolve", "review-author", "review-budget"):
         command = sub.add_parser(name)
         if name == "review-start":
             command.add_argument("--risk", choices=("quick", "standard", "deep"))
             command.add_argument("--quick-code-reason", help="Justify a trivial ordinary code change before its first review round.")
+            command.add_argument("--continuation-reason", help="Explain why another review iteration is useful.")
+            command.add_argument("--continuation-next-action", help="Describe the concrete next review action.")
     sub.add_parser("status")
     for name in ("progress-show", "progress-update"):
         sub.add_parser(name)
@@ -843,6 +849,8 @@ def main(argv: list[str] | None = None, *, workflow_factory: type[Workflow] = Wo
     sub.add_parser("hook").add_argument("event", choices=["prompt", "pre-tool", "stop", "subagent-start"])
     sub.add_parser("git-hook").add_argument("event", choices=["pre-commit", "post-commit", "pre-push"])
     args = parser.parse_args(argv)
+    if args.command == "review-start" and ((args.continuation_reason is None) != (args.continuation_next_action is None)):
+        parser.error("--continuation-reason and --continuation-next-action must be supplied together.")
     if args.command == "hook":
         # Existing trusted definitions remain live in open clients after a
         # plugin update. Route them through the fixed package gateway too.
@@ -850,7 +858,7 @@ def main(argv: list[str] | None = None, *, workflow_factory: type[Workflow] = Wo
         events = {"prompt": "UserPromptSubmit", "pre-tool": "PreToolUse",
                   "stop": "Stop", "subagent-start": "SubagentStart"}
         return hooks_main([events[args.event]])
-    payload = json.load(sys.stdin) if args.command in {"plan", "review", "review-report", "review-resolve", "review-author", "progress-update", "progress-ack"} else {}
+    payload = json.load(sys.stdin) if args.command in {"plan", "review", "review-report", "review-resolve", "review-author", "review-budget", "progress-update", "progress-ack"} else {}
     if not isinstance(payload, dict):
         raise Blocked("Expected a JSON request object.")
     cwd = Path(payload.get("cwd", args.root)).absolute()
@@ -870,6 +878,9 @@ def main(argv: list[str] | None = None, *, workflow_factory: type[Workflow] = Wo
             operation = args.command.removeprefix("review-")
             if operation == "start":
                 payload = {"risk": args.risk, "quick_code_reason": args.quick_code_reason}
+                if args.continuation_reason is not None:
+                    payload["continuation"] = {"reason": args.continuation_reason,
+                                               "next_action": args.continuation_next_action}
             result = workflow.review_operation("prepare" if operation == "context" else operation, payload)
         elif args.command == "status":
             result = workflow.load()

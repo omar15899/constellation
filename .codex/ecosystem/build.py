@@ -22,14 +22,14 @@ COMMON_FILES = (
       ("__init__", "workflow", "workspace", "dispatch", "review_gate", "agent_policy", "progress")),
     "ecosystem/runtime/review-policy.json",
     *(f"ecosystem/{name}.py" for name in
-      ("__init__", "core", "storage", "cli", "hooks", "build", "install", "native", "validate")),
+      ("__init__", "core", "storage", "cli", "hooks", "hook_entry", "build", "install", "native", "validate")),
     "ecosystem/hooks.json", "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
     "ecosystem/ARCHITECTURE.md", "ecosystem/MIGRATION.md", "ecosystem/PROGRESS.md",
     "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
     "ecosystem/EVALUATION.md", "ecosystem/evaluation.json",
     "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
     *(f"ecosystem/tests/{name}.py" for name in
-      ("helpers", "test_core", "test_hooks", "test_package", "test_validation", "test_capabilities",
+      ("helpers", "test_core", "test_hooks", "test_hook_entry", "test_package", "test_validation", "test_capabilities",
        "test_progress", "test_progress_core")),
     *(f"ecosystem/agents/{name}.toml" for name in
       ("researcher", "reviewer", "security-reviewer", "verifier")),

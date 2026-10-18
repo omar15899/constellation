@@ -83,6 +83,14 @@ def _review_slots(context: dict[str, Any]) -> list[list[str]]:
     return slots
 
 
+def _stable_review_context(context: dict[str, Any]) -> dict[str, Any]:
+    """A deadline crossing is checked at execution, not a new planning input."""
+    result = dict(context)
+    if "budget" in result:
+        result["budget"] = {key: value for key, value in result["budget"].items() if key != "status"}
+    return result
+
+
 def build(workspace: Workspace, capacity: int | None = None) -> dict[str, Any]:
     """Read the existing contract and return a complete prospective schedule."""
     from .agent_policy import effective_limit, load_policy
@@ -136,7 +144,7 @@ def build(workspace: Workspace, capacity: int | None = None) -> dict[str, Any]:
             if candidate.is_file():
                 instructions.add(str(candidate))
         try:
-            context = engine.prepare(flow.root, contract)
+            context = _stable_review_context(engine.prepare(flow.root, contract))
         except engine.ReviewError as exc:
             raise Blocked(str(exc)) from exc
         contexts[repo] = context
@@ -148,7 +156,7 @@ def build(workspace: Workspace, capacity: int | None = None) -> dict[str, Any]:
             "instructions": sorted(instructions), "head": head,
             "target": {key: target[key] for key in ("branch", "remote", "ref")},
             "depends_on": sorted(state["depends_on"].get(repo, [])),
-            "review": {key: context[key] for key in ("enabled", "mode", "required_reviewers", "required_focus", "max_rounds")
+            "review": {key: context[key] for key in ("enabled", "mode", "required_reviewers", "required_focus", "budget", "adaptation")
                        if key in context},
         }
         bindings[repo] = {"contract": workspace.signature(contract), "target": target,
@@ -207,7 +215,7 @@ def build(workspace: Workspace, capacity: int | None = None) -> dict[str, Any]:
         "tasks": tasks, "waves": waves(tasks, shared, limits),
         "repair_protocol": {
             "agent_role": "ecosystem_verifier",
-            "instructions": "For actionable findings, the assigned implementer repairs only declared paths; rerun affected checks and open the next permitted review round. A distinct verifier, independent of authors and discoverers, verifies fixed or dismissed findings with evidence for review-resolve. Preserve findings and the existing round limit. Recompute dispatch after scope, policy or artifact changes.",
+            "instructions": "For actionable findings, the assigned implementer repairs only declared paths; rerun affected checks and open the next permitted review round. A distinct verifier, independent of authors and discoverers, verifies fixed or dismissed findings with evidence for review-resolve. Preserve findings and rounds; inspect repeated states and independently recorded observations. Supply a concrete continuation for cycles without new observations. A declared deadline constrains new rounds and requires an explicit review-budget decision to change. Recompute dispatch after scope, policy or artifact changes.",
         },
         "limits": [
             "Read-only planning output: this command creates no agents, checks, review receipts, commits or pushes, and does not assess completion of previous work.",
@@ -230,7 +238,7 @@ def build(workspace: Workspace, capacity: int | None = None) -> dict[str, Any]:
                 or snapshot(flow.root, contracts[repo]["paths"], contracts[repo].get("deletions", [])) != bindings[repo]["artifacts"]):
             raise Blocked(f"Repository artifacts changed during dispatch: {repo}")
         try:
-            if engine.prepare(flow.root, contracts[repo]) != contexts[repo]:
+            if _stable_review_context(engine.prepare(flow.root, contracts[repo])) != contexts[repo]:
                 raise Blocked(f"Review policy or context changed during dispatch: {repo}")
         except engine.ReviewError as exc:
             raise Blocked(str(exc)) from exc

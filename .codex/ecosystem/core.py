@@ -30,7 +30,8 @@ _ACCEPTANCE = {"behavior", "proof", "calculation", "editorial"}
 _KINDS = {"behavior", "numeric", "formal", "editorial"}
 _FIELDS = {
     "plan": {"requirements", "deliverables", "checks", "inputs", "depends_on", "risk", "agents"},
-    "status": set(), "review-context": set(), "review-start": {"quick_code_reason"},
+    "status": set(), "review-context": set(), "review-start": {"quick_code_reason", "continuation"},
+    "review-budget": {"expected_budget_revision", "deadline_at", "reason"},
     "register-agent": {"registered_agent_id", "role"}, "author": {"author", "paths"},
     "check": {"id", "argv", "timeout"}, "recover-check": {"id", "attempt_id"},
     "review-report": {"token", "reviewer", "role", "focus", "paths", "summary", "evidence", "findings", "assessments"},
@@ -54,6 +55,9 @@ def _request_digest(operation: str, payload: dict[str, Any]) -> str:
 
 
 def default_state_dir() -> Path:
+    override = os.environ.get("CONSTELLATION_STATE_DIR")
+    if override:
+        return Path(override)
     return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "constellation" / "state"
 
 
@@ -140,7 +144,8 @@ class Engine:
     def _resources(self, contract: dict[str, Any]) -> dict[str, str]:
         paths = [_SOURCE / "runtime/__init__.py", _SOURCE / "runtime/review_gate.py",
                  _POLICY, _SOURCE / "core.py", _SOURCE / "storage.py",
-                 _SOURCE / "cli.py", _SOURCE / "hooks.py", _SOURCE / "build.py", _SOURCE / "references/protocol.md"]
+                 _SOURCE / "cli.py", _SOURCE / "hooks.py", _SOURCE / "hook_entry.py",
+                 _SOURCE / "build.py", _SOURCE / "references/protocol.md"]
         manifest = _SOURCE / "plugin.json"
         paths.append(manifest if manifest.exists() else _BASE / ".codex-plugin/plugin.json")
         paths.extend(_SOURCE / "agents" / (name + ".toml") for name in ("researcher", "reviewer", "security-reviewer", "verifier"))
@@ -361,7 +366,7 @@ class Engine:
                     replay = self._request(db, key, operation, payload) if db is not None else None
                 if replay is not None:
                     return replay
-            policy_path = Path(payload.get("policy_path", default_state_dir().parent.parent / "progress-journal.json")) if operation in {"progress-export", "progress-ack"} else None
+            policy_path = Path(payload.get("policy_path", Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "progress-journal.json")) if operation in {"progress-export", "progress-ack"} else None
             progress_policy = decode(policy_path.read_text()) if operation == "progress-ack" else None
             result = self._execute(operation, payload, progress_policy=progress_policy)
             if operation == "progress-export":
@@ -484,6 +489,7 @@ class Engine:
                 context = gate.prepare(self.root, state["gate"], policy_path=_POLICY)
                 return {**_summary(*key, state), "contract": state["contract"], "checks": state["checks"],
                         "gate": state["gate"], "closure": state["closure"], "pending": pending,
+                        "budget": context["budget"],
                         "task_progress": state.get("task_progress"),
                         "closure_current": bool(state["status"] == "complete" and state["closure"]
                                                 and state["closure"]["token"] == context["token"] and not pending),
@@ -494,7 +500,7 @@ class Engine:
                         "closure_current": bool(state["status"] == "complete" and state["closure"]
                                                 and state["closure"]["token"] == context["token"] and not self._pending(state, snapshot)),
                         "pending": self._mechanical(state, snapshot)}
-            if state["status"] != "active" and operation not in {"close", "stop", "hook-stop"}:
+            if state["status"] != "active" and operation not in {"close", "stop", "hook-stop", "review-budget"}:
                 raise Error("Task is closed; replan explicitly before continuing work.")
             if operation == "check":
                 reservation = self._reserve_check(db, key, state, snapshot, payload)
@@ -553,6 +559,10 @@ class Engine:
                 raise Error("Contributing author must be a registered agent.")
             state.update(status="active", closure=None)
             return gate.author(self.root, state["gate"], fields, policy_path=_POLICY)
+        if operation == "review-budget":
+            _object(fields, _FIELDS[operation])
+            self._coordinator(state, actor)
+            return gate.budget(self.root, state["gate"], fields, policy_path=_POLICY)
         if operation == "review-start":
             self._coordinator(state, actor)
             pending = self._mechanical(state, snapshot)
@@ -560,7 +570,8 @@ class Engine:
                 raise Error("Review cannot start: " + "; ".join(pending))
             state.update(status="active", closure=None)
             return gate.start(self.root, state["gate"], policy_path=_POLICY,
-                              quick_code_reason=fields.get("quick_code_reason"))
+                              quick_code_reason=fields.get("quick_code_reason"),
+                              continuation=fields.get("continuation"))
         if operation == "review-report":
             _object(fields, _FIELDS[operation])
             if fields["reviewer"] != actor:

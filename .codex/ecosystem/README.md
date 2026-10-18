@@ -71,12 +71,22 @@ El workflow Git conserva `plan`, `check`, `review-start`, `review-report`,
 los veredictos matemáticos, las entradas fijadas y los checks declarados.
 Las garantías de ambos adaptadores no son equivalentes.
 
+Para compartir un estado portable aislado entre CLI y hooks, exporta
+`CONSTELLATION_STATE_DIR` con una ruta absoluta antes de iniciar sus procesos,
+incluido Codex. `--state-dir` sólo afecta a esa invocación del CLI; los defaults
+permanecen iguales. El [protocolo](references/protocol.md#portable-api) documenta
+precedencia y validación; el ajuste no cambia permisos ni la política personal.
+
 El coordinador delega sólo trabajos independientes útiles, con identidad real,
 archivos exclusivos, dependencias y resultados verificables. Usa agentes
 nativos y un único presupuesto efectivo de sesión. `dispatch` propone paquetes;
 no ejecuta agentes ni certifica su trabajo. La revisión compartida conserva
-Quick=1, Standard=3 y Deep=3 de corrección más 2 de seguridad, por archivo y foco,
-con tres rondas máximas. Los hashes fijan versiones; los revisores juzgan
+Quick=1, Standard=3 y Deep=3 de corrección más 2 de seguridad, por archivo y foco.
+No hay un máximo universal de rondas: continúa con una acción justificada y
+presupuesto real, conservando historia, hallazgos y mínimos. El presupuesto
+ausente es desconocido; los límites del cliente siguen vigentes. El
+[protocolo](references/protocol.md#review-continuity-and-budget) describe la
+continuidad y el plazo explícito. Los hashes fijan versiones; los revisores juzgan
 corrección, hipótesis y pertinencia de las pruebas.
 
 Una corrección pequeña de código ordinario puede usar `review-start
@@ -156,10 +166,39 @@ Una sesión nueva carga perfiles/configuración actualizados; no se presupone qu
 una sesión abierta recargó su catálogo. Los scripts evitan bytecode incidental;
 para importar o probar un bundle inmutable usa `python3 -B`.
 
+Desde 1.2, los cinco eventos usan la misma entrada estable, instalada fuera del
+caché versionado:
+
+```sh
+python3 -I "${CODEX_HOME:-$HOME/.codex}/constellation/hook.py" EVENTO
+```
+
+Su fuente es `ecosystem/hook_entry.py`. Antes de ejecutar el adaptador del catálogo
+instalado, valida recibo, inventarios, hashes y modos de la entrada, catálogo y
+caché. Conserva un lock compartido no bloqueante sobre
+`CODEX_HOME/constellation/.install.lock` durante validación y ejecución; la
+instalación toma ese lock en exclusiva. Si encuentra una actualización en curso
+o una instalación incoherente, responde de forma controlada: `PreToolUse` deniega;
+`Stop` y `SubagentStop` avisan con `INCOMPLETE` sin emitir un bloqueo sobre un
+estado todavía no validado. Los demás eventos informan de la indisponibilidad.
+Ese aviso no aprueba el cierre. Tras validar el paquete, el adaptador conserva
+su política acotada de Stop. La entrada no repara automáticamente una actualización
+terminada por `SIGKILL` ni ejecuta el paquete sin verificar.
+
+El recibo de esquema 3 incluye `hook.sha256` y `hook.mode`; los recibos previos
+1 y 2 se verifican para actualizar sin importar su código. Una sesión que capturó
+el comando antiguo del caché 1.1 necesita reabrirse una vez para cargar la entrada
+estable. Un comando estable ya cargado puede seguir resolviendo futuras
+instalaciones verificadas. Esto no recarga el resto del catálogo ni concede
+confianza: si Codex exige una aprobación nativa por la definición nueva, se usa
+su interfaz. Nunca se editan hashes de confianza. La evidencia de despacho real
+se registra por separado de los tests de subprocess en
+[COMPATIBILITY.md](COMPATIBILITY.md).
+
 El paquete no fija modelo, esfuerzo ni ventana de contexto. Usa los límites
 observados del cliente para cada modelo y revalida sus capacidades al actualizar;
-la compatibilidad comprobada de Astra Ultra y Sol 6.1 Ultra cubre los ensayos
-descritos, no cualquier cliente o modelo futuro.
+la compatibilidad histórica descrita en [COMPATIBILITY.md](COMPATIBILITY.md)
+cubre esos ensayos, no cualquier cliente o modelo futuro.
 
 La [arquitectura](ARCHITECTURE.md), el [inventario de migración](MIGRATION.md), la
 [compatibilidad observada](COMPATIBILITY.md) y la [evaluación](EVALUATION.md)

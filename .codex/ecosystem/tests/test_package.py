@@ -48,7 +48,7 @@ CORE_FILES = {
     "ecosystem/runtime/agent_policy.py", "ecosystem/runtime/progress.py",
     "ecosystem/storage.py", "ecosystem/cli.py", "ecosystem/build.py",
     "ecosystem/install.py", "ecosystem/native.py", "ecosystem/validate.py",
-    "ecosystem/hooks.py", "ecosystem/hooks.json", "ecosystem/references/protocol.md", "ecosystem/PROGRESS.md",
+    "ecosystem/hooks.py", "ecosystem/hook_entry.py", "ecosystem/hooks.json", "ecosystem/references/protocol.md", "ecosystem/PROGRESS.md",
     "ecosystem/agents/researcher.toml", "ecosystem/agents/reviewer.toml",
     "ecosystem/agents/security-reviewer.toml", "ecosystem/agents/verifier.toml",
     "ecosystem/tests/test_progress.py", "ecosystem/tests/test_progress_core.py",
@@ -201,7 +201,8 @@ class BundleCase(unittest.TestCase):
         (source / ".codex-plugin").rmdir()
         return source
 
-    def changed_bundle(self, version: str = "1.1.1", *, change_agent: bool = False) -> Path:
+    def changed_bundle(self, version: str = "1.1.1", *, change_agent: bool = False,
+                       change_entry: bool = False) -> Path:
         source = self.source_copy("update-source")
         metadata = json.loads((source / "ecosystem/plugin.json").read_text())
         metadata["version"] = version
@@ -211,6 +212,9 @@ class BundleCase(unittest.TestCase):
         if change_agent:
             agent = source / "ecosystem/agents/reviewer.toml"
             agent.write_text(agent.read_text() + "\n# Updated synthetic reviewer release.\n")
+        if change_entry:
+            entry = source / "ecosystem/hook_entry.py"
+            entry.write_text(entry.read_text() + "\n# Updated synthetic stable entry release.\n")
         result = self.root / "updated-bundle"
         build_bundle(result, MODULES, source_root=source)
         return result
@@ -571,7 +575,8 @@ class SyntheticInstallationTests(BundleCase):
             (payload / "ecosystem/runtime" / name).replace(payload / name)
         shutil.rmtree(payload / "ecosystem/runtime")
         for name in ("ARCHITECTURE.md", "MIGRATION.md", "PROGRESS.md", "tests/test_capabilities.py",
-                     "tests/test_progress.py", "tests/test_progress_core.py"):
+                     "tests/test_progress.py", "tests/test_progress_core.py", "hook_entry.py",
+                     "tests/test_hook_entry.py"):
             (payload / "ecosystem" / name).unlink()
         metadata = json.loads((payload / PLUGIN_MANIFEST).read_text())
         write_json(payload / PLUGIN_MANIFEST, {**metadata, "version": "1.0.0"})
@@ -581,6 +586,8 @@ class SyntheticInstallationTests(BundleCase):
         records.pop("bundle.json")
         write_json(payload / "bundle.json", {"schema": 1, "modules": receipt["modules"], "files": records})
         self.backend.add_plugin()
+        receipt.pop("hook")
+        (self.home / "constellation/hook.py").unlink()
         write_json(self.home / "constellation/receipt.json", {
             **receipt, "schema": 1, "version": "1.0.0",
             "catalog": installer._inventory(catalog),
@@ -594,7 +601,13 @@ class SyntheticInstallationTests(BundleCase):
         self.rewrite_owned_shared_resources(remove=(
             "ecosystem/runtime/progress.py", "ecosystem/tests/test_progress.py",
             "ecosystem/tests/test_progress_core.py", "ecosystem/PROGRESS.md",
+            "ecosystem/hook_entry.py", "ecosystem/tests/test_hook_entry.py",
         ))
+        receipt = self.receipt()
+        receipt.pop("hook")
+        receipt["schema"] = 2
+        (self.home / "constellation/hook.py").unlink()
+        write_json(self.home / "constellation/receipt.json", receipt)
 
     def rewrite_owned_shared_resources(self, *, remove: tuple[str, ...] = (),
                                        add: tuple[str, ...] = ()) -> None:
@@ -697,8 +710,8 @@ class SyntheticInstallationTests(BundleCase):
                 self.assertEqual(self.backend.mutations, [])
                 result = self.install(modules=modules)
                 self.assertEqual(result["status"], "updated")
-                self.assertEqual(result["version"], "1.1.0")
-                self.assertEqual(self.receipt()["schema"], 2)
+                self.assertEqual(result["version"], "1.2.0")
+                self.assertEqual(self.receipt()["schema"], 3)
                 self.assertFalse((self.cache() / "review_gate.py").exists())
                 self.assertTrue((self.cache() / "ecosystem/runtime/workflow.py").is_file())
                 self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
@@ -713,7 +726,7 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(snapshot(self.home), before)
         self.assertEqual(self.receipt()["schema"], 1)
         self.assertEqual(self.install(check=True)["status"], "checked")
-        self.assertEqual(self.install()["version"], "1.1.0")
+        self.assertEqual(self.install()["version"], "1.2.0")
 
     def test_executable_packaged_agent_keeps_normalized_projection_across_updates(self) -> None:
         source = self.source_copy()
@@ -760,6 +773,11 @@ class SyntheticInstallationTests(BundleCase):
     def test_receipt_hashes_actual_owned_files_and_has_no_duplicate_global_skills(self) -> None:
         self.install()
         receipt = self.receipt()
+        self.assertEqual(receipt["schema"], 3)
+        entry = self.home / "constellation/hook.py"
+        self.assertEqual(receipt["hook"], installer.file_record(entry))
+        self.assertEqual(receipt["hook"]["mode"], 0o644)
+        self.assertEqual(entry.read_bytes(), (self.cache() / "ecosystem/hook_entry.py").read_bytes())
         self.assertEqual(receipt["modules"], list(MODULES))
         for group, base in (("catalog", self.home / "constellation/catalog"),
                             ("cache", self.cache()), ("agents", self.home / "agents")):
@@ -769,6 +787,94 @@ class SyntheticInstallationTests(BundleCase):
                 self.assertEqual(record["mode"], stat.S_IMODE(path.stat().st_mode))
         self.assertEqual(sorted(path.name for path in (self.home / "skills").iterdir()), ["user-skill"])
         self.assertEqual(sorted(path.name for path in (self.cache() / "skills").iterdir()), list(MODULES))
+
+    def test_stable_entry_foreign_files_and_links_are_never_adopted(self) -> None:
+        managed = self.home / "constellation"
+        managed.mkdir()
+        entry = managed / "hook.py"
+        for kind in ("file", "symlink", "directory"):
+            with self.subTest(kind=kind):
+                if kind == "file":
+                    entry.write_text("Independently owned entry.\n")
+                elif kind == "symlink":
+                    entry.symlink_to(self.home / "AGENTS.md")
+                else:
+                    entry.mkdir()
+                before = snapshot(self.home)
+                with self.assertRaises(InstallError):
+                    self.install()
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, [])
+                if kind == "directory":
+                    entry.rmdir()
+                else:
+                    entry.unlink()
+
+    def test_stable_entry_changed_hash_mode_missing_or_link_blocks_update(self) -> None:
+        self.install()
+        entry = self.home / "constellation/hook.py"
+        content = entry.read_bytes()
+        for damage in ("content", "mode", "missing", "symlink"):
+            with self.subTest(damage=damage):
+                if damage == "content":
+                    entry.write_text("Changed entry.\n")
+                elif damage == "mode":
+                    entry.chmod(0o755)
+                else:
+                    entry.unlink()
+                    if damage == "symlink":
+                        entry.symlink_to(self.home / "AGENTS.md")
+                before, mutations = snapshot(self.home), list(self.backend.mutations)
+                with self.assertRaises(InstallError):
+                    self.install()
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, mutations)
+                entry.unlink(missing_ok=True)
+                entry.write_bytes(content)
+                entry.chmod(0o644)
+
+    def test_receipt_failure_after_atomic_write_restores_entry_and_previous_receipt(self) -> None:
+        self.install()
+        before = snapshot(self.home)
+        update = self.changed_bundle(change_entry=True)
+        original_write = installer._write_json
+
+        def write_then_fail(path: Path, value: dict) -> None:
+            original_write(path, value)
+            self.assertIn(b"Updated synthetic stable entry release", (path.parent / "hook.py").read_bytes())
+            raise OSError("Synthetic lost acknowledgement after receipt replacement")
+
+        with patch.object(installer, "_write_json", side_effect=write_then_fail):
+            with self.assertRaisesRegex(InstallError, "previous owned files.*restored"):
+                self.install(update)
+        self.assertEqual(snapshot(self.home), before)
+
+    def test_first_install_receipt_failure_removes_new_stable_entry(self) -> None:
+        original_write = installer._write_json
+
+        def write_then_fail(path: Path, value: dict) -> None:
+            original_write(path, value)
+            raise OSError("Synthetic failure after receipt replacement")
+
+        with patch.object(installer, "_write_json", side_effect=write_then_fail):
+            with self.assertRaisesRegex(InstallError, "previous owned files.*restored"):
+                self.install()
+        self.assertFalse((self.home / "constellation/hook.py").exists())
+        self.assertFalse((self.home / "constellation/receipt.json").exists())
+        self.assertFalse((self.home / "constellation/catalog").exists())
+        self.assert_unrelated_preserved()
+
+    def test_stable_entry_atomic_replacement_preserves_external_hardlink(self) -> None:
+        self.install()
+        entry = self.home / "constellation/hook.py"
+        external = self.root / "independently-held-entry.py"
+        os.link(entry, external)
+        before, inode = external.read_bytes(), external.stat().st_ino
+        self.install(self.changed_bundle(change_entry=True))
+        self.assertEqual(external.read_bytes(), before)
+        self.assertEqual(external.stat().st_ino, inode)
+        self.assertNotEqual(entry.stat().st_ino, inode)
+        self.assertNotEqual(entry.read_bytes(), before)
         self.assert_unrelated_preserved()
 
     def test_each_module_installs_alone_then_update_replaces_owned_subset(self) -> None:
@@ -1049,7 +1155,7 @@ class SyntheticInstallationTests(BundleCase):
         with self.assertRaises(InstallError):
             self.install(updated)
         self.assertEqual(snapshot(self.home), before)
-        self.assertEqual(self.receipt()["version"], "1.1.0")
+        self.assertEqual(self.receipt()["version"], "1.2.0")
         self.assert_unrelated_preserved()
 
     def test_native_cache_mismatch_is_rejected_and_compensated(self) -> None:

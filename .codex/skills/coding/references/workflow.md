@@ -132,9 +132,13 @@ Un cambio de artefactos, entradas, contrato o checks puede invalidar la evidenci
 consulta el estado vigente y renueva lo necesario. Los controles automáticos de
 vigencia difieren entre el contrato Git y el portátil; comprueba expresamente
 las dependencias semánticas que el receptor no fija. Las rondas posteriores cubren
-el delta y sus consecuencias sin perder hallazgos pendientes. El máximo es tres
-rondas por tarea; replanificar o cambiar de sesión no permite reiniciarlo. Si no
-converge, conserva las obligaciones abiertas y explica el impedimento concreto.
+el delta y sus consecuencias sin perder hallazgos pendientes. La admisión de
+nuevas rondas depende del presupuesto explícito y de las señales de repetición,
+sin un máximo universal de tres. Un presupuesto no declarado es desconocido.
+Cuando el motor exija continuación, declara el motivo y una acción concreta.
+Replanificar conserva el historial, los hallazgos, la autoría y los mínimos;
+no permite eludir un plazo agotado. Con obligaciones pendientes, conserva el
+estado abierto y explica el impedimento concreto.
 
 ## Integrar y entregar
 

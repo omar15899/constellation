@@ -5,6 +5,7 @@ The suite requires no Git repository, server, third-party package or network.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import importlib
 import importlib.util
@@ -23,7 +24,7 @@ from unittest.mock import patch
 from helpers import (AVAILABLE_PROFILES, CODEX_DIR, COORDINATOR, DEFAULT_PROFILE,
                      PYTHON, REVIEWERS, SOURCE_DIR, WORKER,
                      Scenario, check_definition, finish_request, requirement, start_request)
-from ecosystem.core import Engine, gate
+from ecosystem.core import Engine, default_state_dir, gate
 from ecosystem.storage import Error
 
 
@@ -95,6 +96,134 @@ class FixtureCase(unittest.TestCase):
 
 
 class CoreTests(FixtureCase):
+    def test_review_budget_requires_coordinator_exact_fields_and_current_revisions(self):
+        scenario = self.scenario()
+        scenario.plan()
+        original = scenario.call("status")
+        token = scenario.call("review-context")["token"]
+        self.assertEqual(original["budget"], {"revision": 0, "deadline_at": None, "status": "unknown"})
+        fields = {"expected_budget_revision": 0, "deadline_at": "2099-01-01T00:00:00Z",
+                  "reason": "Reserve time for the declared independent checks."}
+        for actor in (WORKER, REVIEWERS[0]):
+            with self.subTest(actor=actor), self.assertRaisesRegex(Error, "frozen coordinator"):
+                scenario.call("review-budget", actor=actor, **fields)
+        malformed = [
+            {name: value for name, value in fields.items() if name != required}
+            for required in fields
+        ] + [
+            {**fields, "unrecognized": True},
+            {**fields, "expected_budget_revision": True},
+            {**fields, "expected_budget_revision": -1},
+            {**fields, "deadline_at": "2099-01-01T00:00:00"},
+            {**fields, "deadline_at": "2099-01-01T00:00:00+01:00"},
+            {**fields, "deadline_at": "2099-02-30T00:00:00Z"},
+            {**fields, "reason": " "},
+            {**fields, "reason": False},
+        ]
+        for payload in malformed:
+            with self.subTest(payload=payload), self.assertRaises(Error):
+                scenario.call("review-budget", **payload)
+        self.assertEqual(scenario.call("status"), original)
+        updated = scenario.call("review-budget", request_id="fixture-budget-update", **fields)
+        self.assertEqual(updated["budget"], {"revision": 1, "deadline_at": fields["deadline_at"],
+                                           "status": "available"})
+        self.assertEqual(updated["revision"], original["revision"] + 1)
+        self.assertEqual(scenario.call("review-context")["token"], token)
+        replayed = scenario.call("review-budget", request_id="fixture-budget-update", **fields)
+        self.assertTrue(replayed["replayed"])
+        self.assertEqual(replayed["revision"], updated["revision"])
+        retried = scenario.call("review-budget", **fields)
+        self.assertTrue(retried["unchanged"])
+        self.assertEqual(retried["budget"], updated["budget"])
+        for payload in ({**fields, "deadline_at": "2099-01-02T00:00:00Z"},
+                        {**fields, "expected_budget_revision": 1,
+                         "request_id": "fixture-budget-update"}):
+            with self.subTest(payload=payload), self.assertRaises(Error):
+                scenario.call("review-budget", **payload)
+        status = scenario.call("status")
+        self.assertEqual(status["revision"], retried["revision"])
+        record = status["gate"]["review_budget"]
+        self.assertEqual(record["author"], COORDINATOR)
+        self.assertEqual(len(record["history"]), 1)
+        self.assertEqual(record["history"][0]["reason"], fields["reason"])
+
+    def test_review_budget_preserves_evidence_and_expiry_only_blocks_new_versions(self):
+        scenario = self.ready()
+        original = scenario.call("status")
+        token = scenario.call("review-context")["token"]
+        with patch.object(gate, "_utc_now", return_value=datetime(2030, 1, 1, tzinfo=timezone.utc)):
+            updated = scenario.call("review-budget", expected_budget_revision=0,
+                                    deadline_at="2030-01-02T00:00:00+00:00",
+                                    reason="Allow one more day for verification.")
+            self.assertEqual(updated["budget"]["status"], "available")
+            self.assertEqual(updated["budget"]["deadline_at"], "2030-01-02T00:00:00Z")
+        with patch.object(gate, "_utc_now", return_value=datetime(2030, 1, 2, tzinfo=timezone.utc)):
+            current = scenario.call("status")
+            self.assertEqual(current["budget"]["status"], "exhausted")
+            self.assertEqual(current["revision"], updated["revision"])
+            self.assertEqual(current["checks"], original["checks"])
+            self.assertEqual(current["gate"]["review_gate"], original["gate"]["review_gate"])
+            self.assertEqual(scenario.call("review-context")["token"], token)
+            self.assertTrue(scenario.start()["unchanged"])
+            self.assertEqual(scenario.close()["status"], "complete")
+            scenario.plan()
+            self.assertEqual(scenario.call("status")["gate"]["review_budget"], current["gate"]["review_budget"])
+            scenario.check()
+            with self.assertRaises(Error):
+                scenario.call("review-start", continuation={
+                    "reason": "Recheck the current evidence after replanning.",
+                    "next_action": "Inspect the changed check generation."})
+            renewed = scenario.call("review-budget", expected_budget_revision=1,
+                                    deadline_at="2030-01-03T00:00:00Z",
+                                    reason="Renew the review window for the pending version.")
+            self.assertEqual(renewed["budget"]["revision"], 2)
+            self.assertEqual(scenario.call("review-start", continuation={
+                "reason": "The renewed window permits the pending review.",
+                "next_action": "Review the new check generation."})["round"], 2)
+            self.rejected_close(scenario)
+
+    def test_review_continuation_requires_coordinator_and_valid_current_checks(self):
+        scenario = self.scenario()
+        scenario.plan()
+        continuation = {"reason": "Review the declared boundary conditions.",
+                        "next_action": "Inspect the current artifact and check evidence."}
+        with self.assertRaisesRegex(Error, "Review cannot start"):
+            scenario.call("review-start", continuation=continuation)
+        scenario.check()
+        with self.assertRaisesRegex(Error, "frozen coordinator"):
+            scenario.call("review-start", actor=WORKER, continuation=continuation)
+        before = scenario.call("status")
+        for malformed in (False, "continue", {}, {"reason": "Only a reason"},
+                          {**continuation, "unexpected": True}, {**continuation, "next_action": " "}):
+            with self.subTest(continuation=malformed), self.assertRaises(Error):
+                scenario.call("review-start", continuation=malformed)
+        self.assertEqual(scenario.call("status"), before)
+        first = scenario.start()
+        self.assertEqual(first["budget"]["status"], "unknown")
+        self.assertEqual(first["round"], 1)
+        scenario.check()
+        with self.assertRaises(Error):
+            scenario.start()
+        self.assertEqual(scenario.call("review-start", continuation=continuation)["round"], 2)
+
+    def test_review_budget_can_change_after_closure_without_reopening_task(self):
+        for mode in ("complete", "partial"):
+            with self.subTest(mode=mode):
+                scenario = self.ready()
+                scenario.close(mode)
+                original = scenario.call("status")
+                token = scenario.call("review-context")["token"]
+                scenario.call("review-budget", expected_budget_revision=0,
+                              deadline_at="2099-01-01T00:00:00Z",
+                              reason="Record the remaining review window without reopening the task.")
+                updated = scenario.call("status")
+                for field in ("status", "closure", "closure_current", "checks", "pending"):
+                    self.assertEqual(updated[field], original[field])
+                self.assertEqual(updated["gate"]["review_gate"], original["gate"]["review_gate"])
+                self.assertEqual(scenario.call("review-context")["token"], token)
+                with self.assertRaisesRegex(Error, "Task is closed"):
+                    scenario.start()
+
     def test_quick_code_embedded_api_respects_current_receiver_consent(self):
         for consent in ("absent", False, "tightened-after-report"):
             with self.subTest(consent=consent):
@@ -379,22 +508,34 @@ class CoreTests(FixtureCase):
         scenario.report(5, focus=["security"], assessments=[])
         self.assertEqual(scenario.close()["status"], "complete")
 
-    def test_three_round_cap_and_findings_survive_replanning(self):
+    def test_adaptive_rounds_preserve_budget_and_findings_across_replanning(self):
         scenario = self.scenario()
         scenario.plan()
+        scenario.call("review-budget", expected_budget_revision=0,
+                      deadline_at="2099-01-01T00:00:00Z",
+                      reason="Allow the declared multi-round verification.")
         scenario.check()
         self.assertEqual(scenario.start()["round"], 1)
         scenario.report(0, findings=[finding()])
         self.assertTrue(scenario.start()["unchanged"])
-        for number in (2, 3):
+        for number in (2, 3, 4):
             scenario.check()
-            self.assertEqual(scenario.start()["round"], number)
+            context = scenario.call("review-start", continuation={
+                "reason": "The boundary finding still needs a verified correction.",
+                "next_action": f"Check the boundary evidence for fixture version {number}."})
+            self.assertEqual(context["round"], number)
+        previous = scenario.call("status")["gate"]
         scenario.plan(requirements=[requirement(text="The same result with explicit assumptions.")], risk="quick")
+        replanned = scenario.call("status")["gate"]
+        self.assertEqual(replanned["review_budget"], previous["review_budget"])
+        self.assertEqual(replanned["review_gate"], previous["review_gate"])
         scenario.check()
-        with self.assertRaises(Error):
-            scenario.start()
+        context = scenario.call("review-start", continuation={
+            "reason": "Explicit assumptions need independent examination.",
+            "next_action": "Review the updated requirement and its boundary evidence."})
+        self.assertEqual(context["round"], 5)
         ledger = scenario.call("status")["gate"]["review_gate"]
-        self.assertEqual(len(ledger["rounds"]), 3)
+        self.assertEqual(len(ledger["rounds"]), 5)
         self.assertEqual(ledger["findings"][finding()["id"]]["status"], "open")
         self.rejected_close(scenario)
 
@@ -482,7 +623,9 @@ class CoreTests(FixtureCase):
             scenario.report(0, assessments=formal)
         scenario.plan(checks=[check_definition("c1", scenario.argv, "formal")])
         scenario.check()
-        scenario.start()
+        scenario.call("review-start", continuation={
+            "reason": "The formal assessment now has its required declared check.",
+            "next_action": "Review the proof and the newly formal check evidence."})
         scenario.report(0, assessments=formal)
         self.assertEqual(scenario.close()["status"], "complete")
 
@@ -601,7 +744,7 @@ class CoreTests(FixtureCase):
     @unittest.skipUnless("writter" in AVAILABLE_PROFILES, "Standalone writter requires its distributed profile.")
     def test_standalone_writter_tracks_its_technical_agents_and_resource_catalog(self):
         for relative in ("ecosystem/agents/coder.toml", "ecosystem/agents/mathematician.toml",
-                         "ecosystem/build.py"):
+                         "ecosystem/build.py", "ecosystem/hook_entry.py"):
             with self.subTest(resource=relative):
                 scenario = self.scenario()
                 runtime, core = self.isolated_runtime(scenario, profiles=("writter",))
@@ -622,35 +765,41 @@ class CoreTests(FixtureCase):
                 scenario.approve()
                 self.assertEqual(scenario.close()["status"], "complete")
 
-    def test_policy_change_cannot_extend_round_cap_or_lower_established_quorum(self):
+    def test_policy_change_preserves_adaptive_history_and_established_quorum(self):
         scenario = self.scenario()
         runtime, core = self.isolated_runtime(scenario)
         scenario.plan(risk="deep")
         for number in (1, 2):
             scenario.check()
-            self.assertEqual(scenario.start()["round"], number)
+            context = scenario.call("review-start", continuation={
+                "reason": "The current version requires complete Deep coverage.",
+                "next_action": f"Inspect fixture version {number} with the retained quorum."})
+            self.assertEqual(context["round"], number)
         policy_path = runtime / "ecosystem/runtime/review-policy.json"
         policy = json.loads(policy_path.read_text())
-        policy["max_rounds"] = 10
         policy["modes"]["standard"] = {"reviewers": 1, "focus": {"correctness": 1}}
         policy["modes"]["deep"] = {"reviewers": 2, "focus": {"correctness": 1, "security": 1}}
         policy_path.write_text(json.dumps(policy))
         scenario.check()
-        context = scenario.start()
+        context = scenario.call("review-start", continuation={
+            "reason": "The changed policy must retain the established quorum.",
+            "next_action": "Review the new resource snapshot with the original Deep coverage."})
         self.assertEqual(context["round"], 3)
-        self.assertEqual(context["max_rounds"], 3)
+        self.assertNotIn("max_rounds", context)
         self.assertEqual(context["required_focus"], {"correctness": 3, "security": 2})
         self.assertEqual(context["required_reviewers"], 5)
         scenario.check()
         with self.assertRaises(core.Error):
             scenario.start()
+        continued = scenario.call("review-start", continuation={
+            "reason": "The fourth version still needs the declared independent review.",
+            "next_action": "Inspect the updated checks and collect the full Deep quorum."})
+        self.assertEqual(continued["round"], 4)
+        self.assertEqual(continued["required_focus"], context["required_focus"])
 
 
 class GateCompatibilityTests(unittest.TestCase):
-    def test_optional_context_preserves_the_existing_token_when_absent(self):
-        # Golden value captured from the pre-extension gate at HEAD; this test
-        # does not invoke Git or reconstruct the implementation's token formula.
-        legacy_token = "f9c1c1f27c6fed581122e064ea15c68055603a142d5b90ad01945eb673f6161c"
+    def test_legacy_policy_normalizes_and_optional_context_changes_the_token(self):
         policy = {"schema_version": 1, "max_rounds": 3,
                   "modes": {"quick": {"reviewers": 1, "focus": {"correctness": 1}},
                             "standard": {"reviewers": 3, "focus": {"correctness": 3}},
@@ -666,11 +815,16 @@ class GateCompatibilityTests(unittest.TestCase):
             policy_path.write_text(json.dumps(policy))
             with patch.object(gate, "_artifacts", return_value=artifacts):
                 original = gate.prepare(Path("/fixture/portable-review"), state, policy_path=policy_path)
-                self.assertEqual(original["token"], legacy_token)
+                self.assertNotIn("max_rounds", original)
                 self.assertNotIn("review_context_sha256", original)
+                policy.pop("max_rounds")
+                policy["schema_version"] = 2
+                policy_path.write_text(json.dumps(policy))
+                current = gate.prepare(Path("/fixture/portable-review"), state, policy_path=policy_path)
+                self.assertEqual(current["token"], original["token"])
                 state["review_context_sha256"] = "b" * 64
                 changed = gate.prepare(Path("/fixture/portable-review"), state, policy_path=policy_path)
-                self.assertNotEqual(changed["token"], legacy_token)
+                self.assertNotEqual(changed["token"], original["token"])
                 self.assertEqual(changed["review_context_sha256"], "b" * 64)
                 for invalid in (None, "", "A" * 64, "f" * 63, 42):
                     with self.subTest(invalid=invalid), self.assertRaises(gate.ReviewError):
@@ -846,6 +1000,90 @@ class ConcurrencyTests(FixtureCase):
 
 
 class StateBoundaryTests(FixtureCase):
+    def test_default_state_location_retains_defaults_and_allows_process_override(self):
+        scenario = self.scenario()
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(default_state_dir(), Path.home() / ".codex/constellation/state")
+        codex_home = scenario.base / "codex-home"
+        with patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}, clear=True):
+            self.assertEqual(default_state_dir(), codex_home / "constellation/state")
+            with patch.dict(os.environ, {"CONSTELLATION_STATE_DIR": ""}):
+                self.assertEqual(default_state_dir(), codex_home / "constellation/state")
+            with patch.dict(os.environ, {"CONSTELLATION_STATE_DIR": str(scenario.state_dir)}):
+                self.assertEqual(default_state_dir(), scenario.state_dir)
+
+    def test_cli_and_hooks_share_environment_state_without_global_writes(self):
+        scenario = self.scenario()
+        codex_home = scenario.base / "unused-codex-home"
+        payload_state = scenario.base / "ignored-payload-state"
+        environment = {**os.environ, "CODEX_HOME": str(codex_home),
+                       "CONSTELLATION_STATE_DIR": str(scenario.state_dir)}
+
+        def run(script: str, arguments: list[str], payload: dict) -> dict:
+            result = subprocess.run(
+                [PYTHON, "-I", "-B", str(SOURCE_DIR / script), *arguments],
+                input=json.dumps(payload), text=True, capture_output=True,
+                cwd=scenario.root, env=environment, timeout=15, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            self.assertEqual(result.stderr, "")
+            return json.loads(result.stdout)
+
+        plan = run("cli.py", ["--root", str(scenario.root), "plan"],
+                   scenario.payload(**scenario.contract))
+        self.assertTrue(plan["planned"])
+        self.assertTrue((scenario.state_dir / "ecosystem.sqlite3").is_file())
+        event = {"session_id": scenario.session, "cwd": str(scenario.root),
+                 "hook_event_name": "SubagentStart", "turn_id": "fixture-state-override-turn",
+                 "agent_id": "fixture-env-observed-worker", "state_dir": str(payload_state)}
+        observed = run("hooks.py", ["SubagentStart"], event)
+        self.assertIn("observed this native subagent", observed["hookSpecificOutput"]["additionalContext"])
+        current = run("cli.py", ["--root", str(scenario.root), "status"], scenario.payload())
+        self.assertEqual(current["observed_agents"], {event["agent_id"]: "start"})
+        self.assertEqual(current["revision"], plan["revision"] + 1)
+        explicit_state = scenario.base / "explicit-cli-state"
+        run("cli.py", ["--root", str(scenario.root), "--state-dir", str(explicit_state), "plan"],
+            scenario.payload(**scenario.contract))
+        self.assertTrue((explicit_state / "ecosystem.sqlite3").is_file())
+        self.assertEqual(scenario.call("status")["revision"], current["revision"])
+        self.assertFalse(codex_home.exists())
+        self.assertFalse(payload_state.exists())
+
+    def test_environment_state_override_retains_store_safety_checks(self):
+        scenario = self.scenario()
+        codex_home = scenario.base / "unused-codex-home"
+        target = scenario.base / "real-state"
+        target.mkdir()
+        linked = scenario.base / "linked-state"
+        linked.symlink_to(target, target_is_directory=True)
+        environment = {**os.environ, "CODEX_HOME": str(codex_home),
+                       "CONSTELLATION_STATE_DIR": str(linked)}
+        result = subprocess.run(
+            [PYTHON, "-I", "-B", str(SOURCE_DIR / "cli.py"), "--root", str(scenario.root), "plan"],
+            input=json.dumps(scenario.payload(**scenario.contract)), text=True, capture_output=True,
+            cwd=scenario.root, env=environment, timeout=15, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("symbolic links", json.loads(result.stdout)["error"])
+        self.assertFalse((target / "ecosystem.sqlite3").exists())
+        self.assertFalse(codex_home.exists())
+
+    def test_state_override_does_not_relocate_progress_authorization_policy(self):
+        scenario = self.scenario()
+        codex_home = scenario.base / "codex-home"
+        codex_home.mkdir()
+        policy = {"fixture_authorization_source": "codex-home"}
+        (codex_home / "progress-journal.json").write_text(json.dumps(policy))
+        environment = {"CODEX_HOME": str(codex_home),
+                       "CONSTELLATION_STATE_DIR": str(scenario.base / "isolated/nested/state")}
+        with patch.dict(os.environ, environment), patch.object(
+                scenario.engine, "_execute", return_value={"acknowledged": True}) as operation:
+            result = scenario.engine.execute("progress-ack", scenario.payload())
+        self.assertTrue(result["acknowledged"])
+        self.assertEqual(operation.call_args.kwargs["progress_policy"], policy)
+        self.assertFalse((scenario.base / "isolated").exists())
+        self.assertFalse((codex_home / "constellation").exists())
+
     def test_private_payloads_commands_and_outputs_are_not_persisted(self):
         scenario = self.scenario()
         sentinel = "PRIVATE-FIXTURE-SENTINEL-DO-NOT-PERSIST"

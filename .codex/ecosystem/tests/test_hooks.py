@@ -206,7 +206,7 @@ finally:
                         command = shlex.split(hook["command"])
                         self.assertEqual(hook["type"], "command")
                         self.assertIn("-I", command)
-                        self.assertIn("${PLUGIN_ROOT}/ecosystem/hooks.py", command)
+                        self.assertIn("${CODEX_HOME:-$HOME/.codex}/constellation/hook.py", command)
                         self.assertEqual(command[-1], event)
                         self.assertGreaterEqual(hook["timeout"], 9)
                         self.assertLessEqual(hook["timeout"], 15)

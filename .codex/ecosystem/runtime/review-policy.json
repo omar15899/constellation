@@ -1,6 +1,5 @@
 {
-  "schema_version": 1,
-  "max_rounds": 3,
+  "schema_version": 2,
   "allow_quick_code": true,
   "modes": {
     "quick": {"reviewers": 1, "focus": {"correctness": 1}},

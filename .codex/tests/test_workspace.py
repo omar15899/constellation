@@ -104,6 +104,76 @@ class WorkspaceFixture(unittest.TestCase):
         with self.assertRaisesRegex(ws.Blocked, "cannot be lowered"):
             self.workspace.review_operation("Shared", "start", {"risk": "standard"})
 
+    def test_review_budget_cli_changes_only_selected_repository_budget(self):
+        paths = ["Shared/answer.md", "Sibling/answer.md"]
+        self.plan(paths)
+        self.write_and_review(paths)
+        child = ws.Workflow(self.root / "Shared", "test-workspace")
+        sibling = ws.Workflow(self.root / "Sibling", "test-workspace")
+        state = self.workspace.load()
+        state["finished"] = {"completed": True}
+        self.workspace.save(state)
+        state = child.load()
+        state["finished"] = {"head": ws.git(child.root, "rev-parse", "HEAD")}
+        child.save(state)
+        before_workspace = self.workspace.path.read_bytes()
+        before_child = child.load()
+        before_sibling = sibling.path.read_bytes()
+        token = self.workspace.review_operation("Shared", "prepare")["token"]
+        payload = {"expected_budget_revision": 0, "deadline_at": "9999-01-01T00:00:00Z",
+                   "reason": "Reserve time for the selected repository review."}
+        argv = ["--root", str(self.root), "--session", "test-workspace", "review-budget", "--repo", "Shared"]
+        with patch("sys.stdin", io.StringIO(json.dumps(payload))), patch("sys.stdout", new=io.StringIO()) as output:
+            self.assertEqual(ws.main(argv), 0)
+        self.assertEqual(json.loads(output.getvalue())["budget"]["status"], "available")
+        after_child = child.load()
+        self.assertEqual(after_child.pop("review_budget")["revision"], 1)
+        self.assertEqual(after_child, before_child)
+        self.assertEqual(self.workspace.path.read_bytes(), before_workspace)
+        self.assertEqual(sibling.path.read_bytes(), before_sibling)
+        self.assertEqual(self.workspace.review_operation("Shared", "prepare")["token"], token)
+        child.independent_reviewed(child.load())
+        self.workspace.review_operation("Shared", "budget", {"expected_budget_revision": 1,
+            "deadline_at": "2000-01-01T00:00:00Z", "reason": "The reviewed work has no remaining review time."})
+        before_child = child.path.read_bytes()
+        report = child.load()["review_gate"]["rounds"][-1]["reports"]["fixture-Shared-correctness-0"]
+        for operation, request in (("start", None), ("report", report)):
+            with self.subTest(operation=operation):
+                self.assertTrue(self.workspace.review_operation("Shared", operation, request)["unchanged"])
+                self.assertEqual(self.workspace.path.read_bytes(), before_workspace)
+                self.assertEqual(child.path.read_bytes(), before_child)
+
+    def test_review_budget_survives_replan_and_rejects_nonparticipant(self):
+        paths = ["Shared/answer.md"]
+        self.plan(paths)
+        (self.root / paths[0]).write_text("answer\n")
+        payload = {"expected_budget_revision": 0, "deadline_at": "9999-01-01T00:00:00Z",
+                   "reason": "Allocate review time before expanding the plan."}
+        result = self.workspace.review_operation("Shared", "budget", payload)
+        before_workspace = self.workspace.path.read_bytes()
+        with self.assertRaisesRegex(ws.Blocked, "does not participate"):
+            self.workspace.review_operation("Sibling", "budget", payload)
+        self.assertEqual(self.workspace.path.read_bytes(), before_workspace)
+        self.plan(paths + ["Shared/detail.md"], extend_existing=True)
+        child = ws.Workflow(self.root / "Shared", "test-workspace")
+        self.assertEqual(child.load()["review_budget"]["revision"], result["budget"]["revision"])
+        self.assertEqual(self.workspace.review_operation("Shared", "prepare")["budget"], result["budget"])
+
+    def test_review_start_cli_forwards_continuation_and_requires_both_flags(self):
+        argv = ["--root", str(self.root), "--session", "test-workspace", "review-start", "--repo", "Shared"]
+        with patch.object(ws.Workspace, "review_operation", return_value={"token": "version"}) as start, \
+                patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(ws.main(argv + ["--continuation-reason", "Investigate an unresolved case.",
+                                            "--continuation-next-action", "Review its new regression test."]), 0)
+        self.assertEqual(start.call_args.args, ("Shared", "start", {
+            "risk": None, "quick_code_reason": None,
+            "continuation": {"reason": "Investigate an unresolved case.",
+                             "next_action": "Review its new regression test."}}))
+        for flag in ("--continuation-reason", "--continuation-next-action"):
+            with self.subTest(flag=flag), patch("sys.stderr", new=io.StringIO()), self.assertRaises(SystemExit) as exc:
+                ws.main(argv + [flag, "Partial continuation"])
+            self.assertEqual(exc.exception.code, 2)
+
     def test_second_repository_review_failure_prevents_first_publication(self):
         self.plan(["answer.md", "Shared/answer.md"])
         self.write_and_review(["answer.md", "Shared/answer.md"])

@@ -296,13 +296,16 @@ class GitFixture(unittest.TestCase):
         state["finished"] = {"head": w.git(self.root, "rev-parse", "HEAD")}
         self.flow.save(state)
         engine = w.review_engine()
+        policy = json.loads((RUNTIME / "review-policy.json").read_text())
         payload = {"author": "native-worker-id", "paths": ["answer.md"]}
         argv = [str(MODULE), "--root", str(self.root), "--session", "test-session", "review-author"]
-        with patch.object(engine, "author", return_value={"registered": True}, create=True) as register, \
+        with patch.object(engine, "author", wraps=engine.author) as register, \
+                patch.object(engine, "policy_for", return_value=policy), \
                 patch("sys.argv", argv), patch("sys.stdin", io.StringIO(json.dumps(payload))), \
                 patch("sys.stdout", new=io.StringIO()) as output:
             self.assertEqual(w.main(), 0)
-        self.assertEqual(json.loads(output.getvalue()), {"registered": True})
+        self.assertEqual(json.loads(output.getvalue()), {"registered": "native-worker-id",
+                                                       "paths": ["answer.md"], "unchanged": False})
         self.assertEqual(register.call_args.args[0], self.root.resolve())
         self.assertEqual(register.call_args.args[2], payload)
         self.assertIsNone(self.flow.load()["review"])
@@ -316,6 +319,125 @@ class GitFixture(unittest.TestCase):
             with self.assertRaisesRegex(w.Blocked, "Undeclared author path"):
                 self.flow.review_operation("author", {"author": "worker", "paths": ["other.md"]})
         self.assertEqual(self.flow.path.read_bytes(), before)
+
+    def test_review_budget_cli_preserves_evidence_and_replan_preserves_budget(self):
+        engine = w.review_engine()
+        policy = json.loads((RUNTIME / "review-policy.json").read_text())
+        self.flow.begin("adaptive budget")
+        spec = {"requirements": ["answer is present"], "paths": ["answer.md"]}
+        self.flow.plan(spec)
+        (self.root / "answer.md").write_text("answer\n")
+        with patch.object(engine, "policy_for", return_value=policy):
+            context = self.flow.review_operation("start")
+            self.assertEqual(context["budget"], {"revision": 0, "deadline_at": None, "status": "unknown"})
+            self.flow.review_operation("report", {
+                "token": context["token"], "reviewer": "independent-reviewer", "role": "reviewer",
+                "focus": ["correctness"], "paths": ["answer.md"], "summary": "Answer satisfies its requirement.",
+                "evidence": "Read the declared file and checked its content.", "findings": [],
+            })
+            self.flow.review({"answer is present": "Read the declared answer."})
+            state = self.flow.load()
+            state["finished"] = {"head": w.git(self.root, "rev-parse", "HEAD")}
+            self.flow.save(state)
+            before = self.flow.load()
+            payload = {"expected_budget_revision": 0, "deadline_at": "9999-01-01T00:00:00Z",
+                       "reason": "Continue the bounded independent review."}
+            argv = ["--root", str(self.root), "--session", "test-session", "review-budget"]
+            with patch("sys.stdin", io.StringIO(json.dumps(payload))), patch("sys.stdout", new=io.StringIO()) as output:
+                self.assertEqual(w.main(argv), 0)
+            self.assertEqual(json.loads(output.getvalue())["budget"]["revision"], 1)
+            updated = self.flow.load()
+            budget = updated.pop("review_budget")
+            self.assertEqual(updated, before)
+            self.assertEqual(self.flow.review_operation("prepare")["token"], context["token"])
+            self.flow.independent_reviewed(self.flow.load())
+            replanned = self.flow.plan(spec)
+            self.assertEqual(replanned["review_budget"], budget)
+            self.assertEqual(replanned["review_gate"], before["review_gate"])
+
+    def test_review_budget_rejects_stale_or_malformed_updates_without_saving(self):
+        engine = w.review_engine()
+        policy = json.loads((RUNTIME / "review-policy.json").read_text())
+        self.task()
+        payload = {"expected_budget_revision": 0, "deadline_at": "9999-01-01T00:00:00Z",
+                   "reason": "Declare the available review time."}
+        with patch.object(engine, "policy_for", return_value=policy):
+            self.flow.review_operation("budget", payload)
+            before = self.flow.path.read_bytes()
+            self.assertTrue(self.flow.review_operation("budget", payload)["unchanged"])
+            self.assertEqual(self.flow.path.read_bytes(), before)
+            for invalid in ({**payload, "reason": "A competing update with stale revision."},
+                            {**payload, "expected_budget_revision": True},
+                            {**payload, "expected_budget_revision": 1, "deadline_at": None},
+                            {**payload, "expected_budget_revision": 1, "extra": "ignored?"}, []):
+                with self.subTest(payload=invalid), self.assertRaises(w.Blocked):
+                    self.flow.review_operation("budget", invalid)
+                self.assertEqual(self.flow.path.read_bytes(), before)
+
+    def test_review_budget_requires_coordinator_and_does_not_reassign_frozen_author(self):
+        self.task()
+        state = self.flow.load()
+        state["author"] = "another-coordinator"
+        self.flow.save(state)
+        before = self.flow.path.read_bytes()
+        with self.assertRaisesRegex(w.Blocked, "frozen coordinator"):
+            self.flow.review_operation("budget", {"expected_budget_revision": 0,
+                "deadline_at": "9999-01-01T00:00:00Z", "reason": "A worker cannot choose the budget."})
+        self.assertEqual(self.flow.path.read_bytes(), before)
+        frozen = {"author": self.flow.key, "review_budget": {"revision": 1}}
+        self.flow.identify_author(frozen)
+        self.assertEqual(frozen["author"], self.flow.key)
+
+    def test_review_start_cli_forwards_continuation_and_rejects_partial_pair(self):
+        self.task()
+        engine = w.review_engine()
+        argv = ["--root", str(self.root), "--session", "test-session", "review-start"]
+        with patch.object(engine, "start", return_value={"token": "reviewed-version"}) as start, \
+                patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(w.main(argv + ["--continuation-reason", "Resolve the remaining finding.",
+                                           "--continuation-next-action", "Inspect the corrected failure case."]), 0)
+        self.assertEqual(start.call_args.kwargs["continuation"], {
+            "reason": "Resolve the remaining finding.", "next_action": "Inspect the corrected failure case."})
+        before = self.flow.path.read_bytes()
+        for flag in ("--continuation-reason", "--continuation-next-action"):
+            with self.subTest(flag=flag), patch("sys.stderr", new=io.StringIO()), self.assertRaises(SystemExit) as exc:
+                w.main(argv + [flag, "Incomplete continuation"])
+            self.assertEqual(exc.exception.code, 2)
+            self.assertEqual(self.flow.path.read_bytes(), before)
+
+    def test_review_retries_after_deadline_preserve_evidence_and_completion(self):
+        engine = w.review_engine()
+        policy = json.loads((RUNTIME / "review-policy.json").read_text())
+        self.flow.begin("review retry")
+        self.flow.plan({"requirements": ["answer is present"], "paths": ["answer.md"]})
+        (self.root / "answer.md").write_text("answer\n")
+        author = {"author": "native-worker", "paths": ["answer.md"]}
+        with patch.object(engine, "policy_for", return_value=policy):
+            self.flow.review_operation("author", author)
+            context = self.flow.review_operation("start")
+            report = {"token": context["token"], "reviewer": "independent-reviewer", "role": "reviewer",
+                      "focus": ["correctness"], "paths": ["answer.md"], "summary": "Check the answer's content.",
+                      "evidence": "Read the complete declared file.", "findings": [{
+                          "id": "answer-content", "path": "answer.md", "line": 1, "severity": "medium",
+                          "origin": "introduced", "scenario": "A reader could interpret the answer as missing.",
+                          "consequence": "The requested content would be absent.",
+                          "evidence": "Inspect the exact first line against the requirement."}]}
+            self.flow.review_operation("report", report)
+            resolution = {"token": context["token"], "id": "answer-content", "verifier": "independent-verifier",
+                          "disposition": "dismissed", "evidence": "The declared answer is present on the first line."}
+            self.flow.review_operation("resolve", resolution)
+            self.flow.review({"answer is present": "Read the answer and its independent verification."})
+            state = self.flow.load()
+            state["finished"] = {"head": w.git(self.root, "rev-parse", "HEAD")}
+            self.flow.save(state)
+            self.flow.review_operation("budget", {"expected_budget_revision": 0,
+                "deadline_at": "2000-01-01T00:00:00Z", "reason": "The review time has ended."})
+            before = self.flow.path.read_bytes()
+            for operation, payload in (("start", None), ("report", report), ("resolve", resolution), ("author", author)):
+                with self.subTest(operation=operation):
+                    self.assertTrue(self.flow.review_operation(operation, payload)["unchanged"])
+                    self.assertEqual(self.flow.path.read_bytes(), before)
+            self.flow.independent_reviewed(self.flow.load())
 
     def test_unrelated_staged_work_is_preserved(self):
         self.task()

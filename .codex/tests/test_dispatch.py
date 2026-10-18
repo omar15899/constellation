@@ -1,6 +1,7 @@
 """Dispatch plans are deterministic, bounded and cannot execute their packets."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -186,13 +187,30 @@ class DispatchTests(unittest.TestCase):
         self.agent_path.write_text(json.dumps(self.agent_policy))
         agent_policy = self.workspace.dispatch()
         self.assertNotEqual(executable["token"], agent_policy["token"])
-        self.review_policy["max_rounds"] = 2
+        self.review_policy["deep_patterns"].append("lib.py")
         self.policy_path.write_text(json.dumps(self.review_policy))
         review_policy = self.workspace.dispatch()
         self.assertNotEqual(agent_policy["token"], review_policy["token"])
         self.workspace.plan({"requirements": ["The selected artifacts satisfy the contract", "The new condition holds"],
                              "paths": ["Provider/lib.py"], "extend_existing": True})
         self.assertNotEqual(review_policy["token"], self.workspace.dispatch()["token"])
+
+    def test_budget_deadline_changes_plan_but_clock_crossing_does_not(self):
+        self.plan(["Provider/lib.py"])
+        original = self.workspace.dispatch()
+        flow = ws.Workflow(self.root / "Provider", self.workspace.session)
+        flow.review_operation("budget", {"expected_budget_revision": 0,
+                                        "deadline_at": "2030-01-01T00:00:00Z",
+                                        "reason": "Allocate time for independent review."})
+        with patch.object(self.engine, "_utc_now", return_value=datetime(2029, 1, 1, tzinfo=timezone.utc)):
+            before_deadline = self.workspace.dispatch()
+        with patch.object(self.engine, "_utc_now", return_value=datetime(2031, 1, 1, tzinfo=timezone.utc)):
+            after_deadline = self.workspace.dispatch()
+        self.assertNotEqual(original["token"], before_deadline["token"])
+        self.assertEqual(before_deadline, after_deadline)
+        review = before_deadline["repositories"]["Provider"]["review"]
+        self.assertEqual(review["budget"], {"revision": 1, "deadline_at": "2030-01-01T00:00:00Z"})
+        self.assertNotIn("max_rounds", review)
 
     def test_rejects_missing_or_changed_contract_and_upstream(self):
         with self.assertRaisesRegex(ws.Blocked, "No workspace contract"):

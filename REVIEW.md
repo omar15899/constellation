@@ -34,9 +34,20 @@ No uses una votación como sustituto de una reproducción o un argumento técnic
 La revisión inicial examina todo el cambio. Las posteriores se concentran en el
 delta y sus consecuencias, conservando los hallazgos pendientes. Corrige la clase
 de error completa. No repitas hallazgos ya resueltos salvo que reaparezcan con
-evidencia nueva. El máximo de tres rondas exige reconsiderar el enfoque si no se
-converge; no autoriza rebajar el riesgo, borrar el estado ni abrir otra sesión
-para eludirlo.
+evidencia nueva. No hay un máximo universal de rondas: continúa autónomamente
+cuando la siguiente acción esté justificada y quepa en el presupuesto real.
+El motor señala artefactos repetidos sin nuevas observaciones independientes;
+el coordinador juzga si existe progreso real. Registra la razón y la acción
+siguiente con `review-start` cuando las requiera. Repetir una declaración sin
+nueva base no desbloquea un ciclo. Conserva historial, hallazgos y mínimos; no
+abras otra sesión para ocultarlos. Un presupuesto agotado detiene nuevas rondas,
+sin impedir registrar informes o resolver hallazgos de la ronda vigente.
+
+El plazo de revisión se declara mediante `review-budget`; su ausencia se informa
+como desconocida, no como tiempo o tokens ilimitados. Una ampliación explícita
+con motivo conserva el historial. Este presupuesto local no modifica los límites
+ni permisos nativos del cliente. [WORKSPACE.md](.codex/WORKSPACE.md) contiene el
+contrato de los comandos; las reglas del receptor pueden imponer otros límites.
 
 En este hub, revisa especialmente:
 

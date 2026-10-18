@@ -1,4 +1,38 @@
-# Migración 1.1: inventario y decisiones
+# Migraciones de Constellation
+
+## Fase adaptativa 1.2
+
+La revisión mantiene el algoritmo común, sus pisos de riesgo, independencia y
+hallazgos acumulados. Sustituye el máximo universal de tres rondas por continuidad
+justificada y presupuesto temporal explícito. Las políticas de esquema 1 siguen
+siendo legibles y se normalizan sin `max_rounds`; el esquema 2 rechaza ese campo.
+Replanificar o cambiar de política conserva los mínimos de riesgo y cobertura,
+incluidos los más estrictos del receptor. `review-budget` registra cada plazo y ampliación;
+`review-start` recibe una razón y acción siguiente cuando la detección de ciclos
+o falta de progreso las exige. No se inventa un presupuesto de tokens a partir
+del contexto disponible. Consulta el
+[contrato compartido](references/protocol.md#review-continuity-and-budget).
+
+El hook pasa del comando de un caché versionado a
+`CODEX_HOME/constellation/hook.py`. El instalador mantiene la entrada y el recibo
+de esquema 3; el hook verifica la distribución bajo un lock compartido, mientras
+el instalador usa el mismo lock en exclusiva. El
+[contrato de instalación](README.md#instalar-y-actualizar) especifica rechazos,
+actualización desde recibos anteriores y límites de recuperación.
+
+La primera transición requiere reabrir los hilos que retengan el comando antiguo.
+No se editan hashes de confianza: si la nueva definición requiere una aprobación
+del cliente, se realiza mediante su interfaz nativa. La entrada estable evita
+depender de la ruta de un caché retirado en actualizaciones posteriores, pero no
+demuestra recarga de skills ni despacho exitoso por sí sola.
+
+El experimento nativo se prerregistra separando baseline de un agente, delegación
+nativa y Constellation, con controles de capacidad y recuperación. Su diseño y
+estado están en [EVALUATION.md](EVALUATION.md). Las pruebas deterministas del
+motor y del instalador no sustituyen esa comparación. No se atribuyen mejoras de
+calidad, latencia o coste antes de obtener y analizar los resultados.
+
+## Inventario histórico 1.1
 
 Auditoría inicial: 2026-10-18, Codex CLI 0.163.0. Se examinó la infraestructura
 de los 21 repositorios registrados, OmarOS, configuración nativa y distribución

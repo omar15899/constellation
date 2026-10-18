@@ -351,7 +351,7 @@ class _Validator:
             if event == "PreToolUse" and group["matcher"] != PRE_TOOL_MATCHER:
                 self.error(relative, "PreToolUse matcher differs from the declared package contract")
             hooks = group["hooks"]
-            command = f'python3 -I "${{PLUGIN_ROOT}}/ecosystem/hooks.py" {event}'
+            command = f'python3 -I "${{CODEX_HOME:-$HOME/.codex}}/constellation/hook.py" {event}'
             if not isinstance(hooks, list) or len(hooks) != 1 or not isinstance(hooks[0], dict):
                 self.error(relative, f"{event} requires exactly one command hook")
             elif hooks[0] != {"type": "command", "command": command, "timeout": 10} or type(hooks[0].get("timeout")) is not int:

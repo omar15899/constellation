@@ -76,8 +76,11 @@ motor común. Abre una ronda con `workspace.py review-start --repo RUTA`, entreg
 su token y el diff a revisores distintos del autor, registra sus informes y
 resuelve cada hallazgo con evidencia independiente. Quick requiere un revisor;
 Standard, tres de corrección; Deep, tres de corrección y dos de seguridad.
-Cada archivo necesita esa cobertura por foco. El máximo son tres rondas;
-replanificar no borra hallazgos ni reinicia el contador. Una revisión de agente
+Cada archivo necesita esa cobertura por foco. Continúa mientras una nueva
+iteración aporte una acción justificada y respete el presupuesto real; no hay
+un máximo universal de tres rondas. Replanificar conserva historial, hallazgos
+y mínimos. Ante repetición sin progreso, cambia el enfoque y registra por qué
+la siguiente acción puede resolverla. Una revisión de agente
 no sustituye una aprobación humana exigida por el proyecto o el servidor.
 
 ## Ejecución y evidencia

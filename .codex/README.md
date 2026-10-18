@@ -125,6 +125,11 @@ La confianza se administra en `/hooks`; instalar no la concede. Comprueba
 descubrimiento, habilitación, confianza y ejecución por separado. No edites
 hashes de confianza ni uses opciones para eludirla. Una sesión nueva carga las
 definiciones actuales sin los eventos duplicados del hub.
+El plugin 1.2 usa `CODEX_HOME/constellation/hook.py` como entrada estable y
+comparte el lock de instalación para validar el paquete antes de ejecutarlo.
+La primera transición desde un comando capturado del caché 1.1 requiere reabrir
+el hilo; consulta el contrato de
+[instalación y actualización](ecosystem/README.md#instalar-y-actualizar).
 [Documentación oficial de hooks](https://learn.chatgpt.com/docs/hooks).
 
 ## Alcance y límites
@@ -155,7 +160,12 @@ y dos de seguridad. Cada archivo necesita también el total de identidades
 distintas de su modo, aunque un informe cubra ambos focos. `review-author`
 registra contribuyentes por rutas e impide su autorrevisión; sus identidades
 siguen siendo declaraciones. Los IDs ambiguos de hallazgos se rechazan sin
-fusionar problemas distintos. El máximo de tres rondas permanece vigente.
+fusionar problemas distintos. Las rondas continúan de forma justificada dentro
+del presupuesto real, sin un máximo universal de tres. El historial, los
+hallazgos y los mínimos sobreviven a una replanificación. `review-budget` declara
+un plazo y registra sus ampliaciones; `review-start` acepta una razón y acción
+siguiente para salir de una repetición detectada. Consulta el contrato en
+[WORKSPACE.md](WORKSPACE.md#revisión-independiente).
 
 Los datos operativos viven en `git rev-parse --git-path constellation`, separados
 por sesión y protegidos con un bloqueo. Se registran estados, hashes y evidencia

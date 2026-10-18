@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import io
 import json
 from pathlib import Path
@@ -44,8 +45,8 @@ class ReviewFixture(unittest.TestCase):
     def call(self, name, *args):
         return getattr(gate, name)(self.root, self.state, *args, policy_path=self.policy_path)
 
-    def start(self):
-        return self.call("start")
+    def start(self, **options):
+        return gate.start(self.root, self.state, policy_path=self.policy_path, **options)
 
     def payload(self, reviewer="reviewer-a", findings=None, **changes):
         return {"token": self.call("prepare")["token"], "reviewer": reviewer, "role": "reviewer",
@@ -156,7 +157,8 @@ class ReviewFixture(unittest.TestCase):
         self.state["review_risk"] = "quick"
         self.assertEqual(self.call("prepare")["mode"], "standard")
         self.state["review_risk"] = "deep"
-        self.assertEqual(self.start()["mode"], "deep")
+        self.assertEqual(self.start(continuation={"reason": "Risk classification increased.",
+                                                   "next_action": "Obtain the required security review."})["mode"], "deep")
 
     def test_quick_code_rejects_sensitive_artifacts_and_documentation(self):
         for name, mode in (("auth.py", "deep"), ("AGENTS.md", "deep"), ("guide.md", "quick")):
@@ -192,7 +194,7 @@ class ReviewFixture(unittest.TestCase):
                     self.state["review_authors"] = {"worker": ["tool.py"]}
                 elif mutation == "policy":
                     policy = deepcopy(DEFAULT_POLICY)
-                    policy["max_rounds"] = 2
+                    policy["deep_patterns"].append("another_sensitive.py")
                     self.policy_path.write_text(json.dumps(policy))
                 elif mutation == "context":
                     self.state["review_context_sha256"] = "a" * 64
@@ -209,7 +211,8 @@ class ReviewFixture(unittest.TestCase):
                 with self.assertRaises(gate.ReviewError):
                     self.quick_code()
                 if mutation != "author":
-                    self.assertEqual(self.start()["mode"], "standard")
+                    self.assertEqual(self.start(continuation={"reason": "The review contract changed.",
+                                                           "next_action": "Reassess its affected obligations."})["mode"], "standard")
 
     def test_quick_code_stale_round_cannot_replay_declaration_after_revert(self):
         original = (self.root / "tool.py").read_text()
@@ -271,7 +274,9 @@ class ReviewFixture(unittest.TestCase):
             workflow.main([*prefix, "review-start", "--quick-code-reason", reason])
         self.assertTrue(json.loads(output.getvalue())["unchanged"])
         with patch("sys.stdout", io.StringIO()):
-            workflow.main([*prefix, "review-start", "--risk", "deep"])
+            workflow.main([*prefix, "review-start", "--risk", "deep",
+                           "--continuation-reason", "Risk increased",
+                           "--continuation-next-action", "Obtain security review"])
         self.assertEqual(coordinator.review_operation(".", "prepare")["mode"], "deep")
         with self.assertRaisesRegex(workflow.Blocked, "cannot be lowered"):
             workflow.main([*prefix, "review-start", "--risk", "quick"])
@@ -437,17 +442,24 @@ class ReviewFixture(unittest.TestCase):
                        cwd=self.root, check=True)
         self.call("validate")
 
-    def test_round_start_is_idempotent_and_replan_cannot_reset_cap(self):
+    def test_twelve_rounds_preserve_findings_and_quorums_without_universal_cap(self):
         self.assertEqual(self.start()["round"], 1)
         self.assertTrue(self.start()["unchanged"])
-        for number in (2, 3):
+        self.call("report", self.payload(findings=[self.finding(severity="critical")]))
+        for number in range(2, 13):
+            (self.root / "tool.py").write_text(f"print({number})\n")
             self.state["requirements"] = [f"Contract revision {number}"]
             self.assertEqual(self.start()["round"], number)
-        self.state["requirements"] = ["Contract revision 4"]
-        before = deepcopy(self.state)
-        with self.assertRaisesRegex(gate.ReviewError, "round limit"):
-            self.start()
-        self.assertEqual(self.state, before)
+            self.assertEqual(len(self.state["review_gate"]["rounds"]), number)
+            finding = self.state["review_gate"]["findings"]["empty-input"]
+            self.assertEqual((finding["severity"], finding["status"]), ("critical", "open"))
+        with self.assertRaisesRegex(gate.ReviewError, "distinct reviewers"):
+            self.call("validate")
+        self.call("report", self.payload())
+        with self.assertRaisesRegex(gate.ReviewError, "Unresolved"):
+            self.call("validate")
+        self.call("resolve", self.resolution())
+        self.call("validate")
 
     def test_open_findings_survive_clean_report_and_replan(self):
         self.start()
@@ -459,6 +471,198 @@ class ReviewFixture(unittest.TestCase):
             self.call("validate")
         self.call("resolve", self.resolution())
         self.call("validate")
+
+    def test_legacy_policy_and_three_round_ledger_continue_with_all_other_floors(self):
+        legacy = {**deepcopy(MINIMAL_POLICY), "schema_version": 1, "max_rounds": 3,
+                  "allow_quick_code": False}
+        legacy["modes"]["standard"] = {"reviewers": 2, "focus": {"correctness": 2}}
+        legacy["modes"]["deep"] = {"reviewers": 3, "focus": {"correctness": 2, "security": 1}}
+        legacy["deep_patterns"].append("payments.py")
+        legacy["documentation_extensions"].remove(".txt")
+        self.policy_path.write_text(json.dumps(legacy))
+        for number in range(1, 4):
+            (self.root / "tool.py").write_text(f"version = {number}\n")
+            self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        ledger = self.state["review_gate"]
+        ledger["schema_version"] = 1
+        ledger["policy_floor"] = deepcopy(legacy)
+        for revision in ledger["rounds"]:
+            revision.pop("artifact_fingerprint")
+            revision.pop("independent_basis")
+            revision.pop("stale_resolutions")
+        previous = deepcopy(ledger["rounds"])
+        self.policy_path.write_text(json.dumps(MINIMAL_POLICY))
+        (self.root / "tool.py").write_text("version = 4\n")
+        current = self.start()
+        self.assertEqual(current["round"], 4)
+        self.assertEqual(current["adaptation"]["signal"], "legacy_baseline")
+        self.assertFalse(current["adaptation"]["history_complete"])
+        self.assertEqual(current["required_reviewers"], 2)
+        self.assertEqual(current["required_focus"], {"correctness": 2})
+        floor = self.state["review_gate"]["policy_floor"]
+        self.assertEqual(floor["schema_version"], 2)
+        self.assertNotIn("max_rounds", floor)
+        self.assertFalse(floor["allow_quick_code"])
+        self.assertIn("payments.py", floor["deep_patterns"])
+        self.assertNotIn(".txt", floor["documentation_extensions"])
+        self.assertEqual(self.state["review_gate"]["rounds"][:3], previous)
+        self.assertEqual(self.state["review_gate"]["findings"]["empty-input"]["status"], "open")
+
+    def test_cycles_require_continuation_and_reject_exact_replay_without_progress(self):
+        declaration = {"reason": "Two candidate implementations oscillate.",
+                       "next_action": "Check their boundary assumptions independently."}
+        self.start()
+        original = (self.root / "tool.py").read_text()
+        (self.root / "tool.py").write_text("alternative = True\n")
+        self.start()
+        (self.root / "tool.py").write_text(original)
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "continuation"):
+            self.start()
+        self.assertEqual(self.state, before)
+        self.assertTrue(self.call("prepare")["adaptation"]["continuation_required"])
+        self.assertEqual(self.start(continuation=declaration)["round"], 3)
+        self.assertTrue(self.start(continuation=declaration)["unchanged"])
+        self.state["requirements"] = ["Same artifacts under another wording"]
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "replay"):
+            self.start(continuation=declaration)
+        self.assertEqual(self.state, before)
+        # A genuinely recorded independent observation supplies a new basis.
+        self.state["requirements"] = ["The requested behavior works"]
+        self.call("report", self.payload())
+        self.state["requirements"] = ["Same artifacts under another wording"]
+        self.assertEqual(self.start(continuation=declaration)["round"], 4)
+
+    def test_tokens_checks_and_timestamps_are_not_independent_progress(self):
+        self.start()
+        self.call("report", self.payload())
+        self.state["review_context_sha256"] = "a" * 64
+        self.start()
+        basis = self.call("prepare")["adaptation"]["independent_basis"]
+        self.call("report", self.payload())
+        self.assertEqual(self.call("prepare")["adaptation"]["independent_basis"], basis)
+        self.state["review_context_sha256"] = "b" * 64
+        self.state["checked_at"] = "a new timestamp"
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "continuation"):
+            self.start()
+        self.assertEqual(self.state, before)
+
+    def test_initial_continuation_cannot_be_replayed_when_artifacts_return(self):
+        declaration = {"reason": "Compare the two implementations.",
+                       "next_action": "Inspect the boundary assumptions independently."}
+        original = (self.root / "tool.py").read_text()
+        self.start(continuation=declaration)
+        (self.root / "tool.py").write_text("alternative = True\n")
+        self.start()
+        (self.root / "tool.py").write_text(original)
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "replay"):
+            self.start(continuation=declaration)
+        self.assertEqual(self.state, before)
+
+    def test_stale_resolution_is_not_an_independently_observed_recurrence(self):
+        self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        self.call("resolve", self.resolution())
+        (self.root / "tool.py").write_text("changed = True\n")
+        self.start()
+        self.assertEqual(self.state["review_gate"]["rounds"][-1]["stale_resolutions"], ["empty-input"])
+        self.assertEqual(self.call("prepare")["adaptation"]["recurring_findings"], [])
+        self.call("report", self.payload("reviewer-b", findings=[self.finding()]))
+        self.assertEqual(self.call("prepare")["adaptation"]["recurring_findings"], ["empty-input"])
+
+    def test_continuation_rejects_malformed_payloads_atomically(self):
+        self.start()
+        self.state["requirements"].append("Expanded requirement")
+        before = deepcopy(self.state)
+        for invalid in ({}, [], {"reason": "Reason"}, {"reason": "Reason", "next_action": ""},
+                        {"reason": "Reason", "next_action": "Action", "override": True}):
+            with self.subTest(invalid=invalid), self.assertRaises(gate.ReviewError):
+                self.start(continuation=invalid)
+            self.assertEqual(self.state, before)
+
+    def budget_payload(self, revision=0, **changes):
+        return {"expected_budget_revision": revision, "deadline_at": "2099-01-01T00:00:00Z",
+                "reason": "Time explicitly allocated to this review.", **changes}
+
+    def test_budget_unknown_is_not_a_fabricated_resource_limit(self):
+        self.assertEqual(self.call("prepare")["budget"],
+                         {"revision": 0, "deadline_at": None, "status": "unknown"})
+        self.assertNotIn("review_budget", self.state)
+
+    def test_budget_expiry_preserves_current_reports_resolutions_and_idempotence(self):
+        self.start()
+        token = self.call("prepare")["token"]
+        self.call("budget", self.budget_payload(deadline_at="2000-01-01T00:00:00Z"))
+        self.assertEqual(self.call("prepare")["token"], token)
+        self.assertTrue(self.start()["unchanged"])
+        self.call("report", self.payload(findings=[self.finding()]))
+        self.call("resolve", self.resolution())
+        self.call("validate")
+        self.state.update(review={"approved": True}, finished="done")
+        original_artifact = (self.root / "tool.py").read_text()
+        (self.root / "tool.py").write_text("stale_resolution = True\n")
+        before_rejection = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "exhausted"):
+            self.start()
+        self.assertEqual(self.state, before_rejection)
+        (self.root / "tool.py").write_text(original_artifact)
+        frozen = deepcopy(self.state)
+        self.call("budget", self.budget_payload(1))
+        for key in ("review_gate", "review", "finished"):
+            self.assertEqual(self.state[key], frozen[key])
+        self.call("validate")
+
+    def test_expired_budget_survives_reload_replan_and_extension_preserves_history(self):
+        self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        payload = self.budget_payload(deadline_at="2000-01-01T00:00:00Z")
+        self.call("budget", payload)
+        self.assertTrue(self.call("budget", payload)["unchanged"])
+        self.state = json.loads(json.dumps(self.state))
+        self.state["requirements"].append("Expanded requirement")
+        (self.root / "tool.py").write_text("new_version = True\n")
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "deadline is exhausted"):
+            self.start()
+        self.assertEqual(self.state, before)
+        self.call("budget", self.budget_payload(1, reason="Explicitly extend the allocated time."))
+        self.assertEqual(self.state["review_budget"]["history"][:1], before["review_budget"]["history"])
+        self.assertEqual(self.start()["round"], 2)
+        self.assertEqual(self.state["review_gate"]["findings"], before["review_gate"]["findings"])
+
+    def test_budget_deadline_is_measured_against_current_utc_clock(self):
+        self.call("budget", self.budget_payload(deadline_at="2030-01-01T00:00:00Z"))
+        with patch.object(gate, "_utc_now", return_value=datetime(2029, 1, 1, tzinfo=timezone.utc)):
+            self.assertEqual(self.call("prepare")["budget"]["status"], "available")
+            self.start()
+        (self.root / "tool.py").write_text("new_version = True\n")
+        with patch.object(gate, "_utc_now", return_value=datetime(2030, 1, 1, tzinfo=timezone.utc)):
+            with self.assertRaisesRegex(gate.ReviewError, "exhausted"):
+                self.start()
+
+    def test_budget_invalid_updates_and_author_changes_leave_state_untouched(self):
+        self.start()
+        self.call("budget", self.budget_payload())
+        cases = [self.budget_payload(), self.budget_payload(3), self.budget_payload(True),
+                 self.budget_payload(1, deadline_at=None), self.budget_payload(1, deadline_at="2030-01-01"),
+                 self.budget_payload(1, deadline_at="2030-01-01T00:00:00+01:00"),
+                 self.budget_payload(1, deadline_at="2030-02-30T00:00:00Z"),
+                 self.budget_payload(1, reason=""), {**self.budget_payload(1), "tokens": 10}]
+        cases[0]["reason"] = "Not an idempotent retry"
+        for invalid in cases:
+            before = deepcopy(self.state)
+            with self.subTest(invalid=invalid), self.assertRaises(gate.ReviewError):
+                self.call("budget", invalid)
+            self.assertEqual(self.state, before)
+        self.state["author"] = "another-coordinator"
+        before = deepcopy(self.state)
+        with self.assertRaisesRegex(gate.ReviewError, "author identity changed"):
+            self.call("budget", self.budget_payload(1))
+        self.assertEqual(self.state, before)
 
     def test_preexisting_findings_also_require_explicit_disposition(self):
         self.start()
@@ -754,12 +958,12 @@ class ReviewFixture(unittest.TestCase):
         self.start()
         self.call("report", self.payload(findings=[self.finding()]))
         policy["modes"]["standard"]["reviewers"] = 1
-        policy["max_rounds"] = 10
+        policy.update(schema_version=1, max_rounds=10)
         policy["documentation_extensions"].append(".py")
         self.policy_path.write_text(json.dumps(policy))
         context = self.start()
         self.assertEqual(context["required_reviewers"], 2)
-        self.assertEqual(context["max_rounds"], 3)
+        self.assertNotIn("max_rounds", context)
         self.assertEqual(context["mode"], "standard")
         self.assertEqual(self.state["review_gate"]["findings"]["empty-input"]["status"], "open")
 
@@ -899,7 +1103,7 @@ class ReviewFixture(unittest.TestCase):
         config = self.root / ".codex"
         config.mkdir()
         strict = deepcopy(DEFAULT_POLICY)
-        strict["max_rounds"] = 2
+        strict.update(schema_version=1, max_rounds=2)
         strict["deep_patterns"].append("tool.py")
         (config / "review-policy.json").write_text(json.dumps(strict))
         for git_owner in (False, True):
@@ -908,20 +1112,20 @@ class ReviewFixture(unittest.TestCase):
                     subprocess.run(["git", "init", "-q", str(self.root)], check=True)
                 context = gate.prepare(self.root, self.state)
                 self.assertEqual(context["mode"], "deep")
-                self.assertEqual(context["max_rounds"], 2)
+                self.assertNotIn("max_rounds", context)
                 self.assertFalse((config / "repositories.json").exists())
 
     def test_standalone_local_policy_cannot_weaken_packaged_minimums(self):
         config = self.root / ".codex"
         config.mkdir()
         weakened = deepcopy(MINIMAL_POLICY)
-        weakened["max_rounds"] = 10
+        weakened.update(schema_version=1, max_rounds=10)
         weakened["documentation_extensions"].append(".py")
         (config / "review-policy.json").write_text(json.dumps(weakened))
         context = gate.prepare(self.root, self.state)
         self.assertEqual(context["mode"], "standard")
         self.assertEqual(context["required_reviewers"], 3)
-        self.assertEqual(context["max_rounds"], 3)
+        self.assertNotIn("max_rounds", context)
 
     def test_standalone_rejects_invalid_or_linked_local_policy(self):
         config = self.root / ".codex"
@@ -975,6 +1179,13 @@ class ReviewFixture(unittest.TestCase):
                 self.assertIsNone(gate.policy_for(child))
                 self.assertEqual(gate.prepare(child, self.state), {"enabled": False})
                 gate.validate(child, self.state)
+                (child / "tool.py").write_text("answer = 42\n")
+                before = deepcopy(self.state)
+                with self.assertRaisesRegex(gate.ReviewError, "policy"):
+                    gate.start(child, self.state, policy_path=self.policy_path,
+                               quick_code_reason="Only a constant return value changes.")
+                self.assertEqual(self.state, before)
+                self.assertEqual(gate.prepare(child, self.state, policy_path=self.policy_path)["mode"], "standard")
 
 
 class ReviewPolicyDiscoveryTests(unittest.TestCase):
@@ -1020,14 +1231,14 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
         with self.assertRaises(gate.ReviewError):
             gate.validate(self.root, self.state)
 
-    def test_implicit_policy_cannot_reduce_packaged_quorums_or_raise_round_limit(self):
+    def test_implicit_legacy_policy_cannot_reduce_packaged_quorums(self):
         weakened = deepcopy(MINIMAL_POLICY)
-        weakened["max_rounds"] = 10
+        weakened.update(schema_version=1, max_rounds=10)
         self.register(self.hub, [{"path": "child", "management": "native"}], weakened)
         context = gate.prepare(self.root, self.state)
         self.assertEqual(context["required_reviewers"], 3)
         self.assertEqual(context["required_focus"], {"correctness": 3})
-        self.assertEqual(context["max_rounds"], 3)
+        self.assertNotIn("max_rounds", context)
         self.state["review_risk"] = "deep"
         context = gate.prepare(self.root, self.state)
         self.assertEqual(context["required_reviewers"], 5)
@@ -1050,7 +1261,7 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
 
     def test_nested_native_registry_retains_stricter_ancestor_policy(self):
         strict = deepcopy(DEFAULT_POLICY)
-        strict["max_rounds"] = 2
+        strict.update(schema_version=1, max_rounds=2)
         strict["modes"]["quick"] = {"reviewers": 2, "focus": {"correctness": 2}}
         strict["modes"]["standard"] = {"reviewers": 4, "focus": {"correctness": 4}}
         strict["modes"]["deep"] = {"reviewers": 6, "focus": {"correctness": 4, "security": 2}}
@@ -1061,7 +1272,7 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
         context = gate.prepare(self.root, self.state)
         self.assertEqual(context["required_reviewers"], 4)
         self.assertEqual(context["required_focus"], {"correctness": 4})
-        self.assertEqual(context["max_rounds"], 2)
+        self.assertNotIn("max_rounds", context)
         for name, mode, reviewers in [("guide.md", "quick", 2), ("guide.txt", "standard", 4),
                                       ("sensitive.py", "deep", 6)]:
             with self.subTest(name=name):
@@ -1080,12 +1291,12 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
     def test_external_child_can_explicitly_adopt_its_own_native_policy(self):
         self.register(self.hub, [{"path": "child", "management": "external"}])
         strict = deepcopy(DEFAULT_POLICY)
-        strict["max_rounds"] = 2
+        strict.update(schema_version=1, max_rounds=2)
         self.register(self.root, [{"path": ".", "management": "native"}], strict)
         context = gate.prepare(self.root, self.state)
         self.assertTrue(context["enabled"])
         self.assertEqual(context["required_reviewers"], 3)
-        self.assertEqual(context["max_rounds"], 2)
+        self.assertNotIn("max_rounds", context)
 
     def test_unrelated_nested_workspace_policy_does_not_apply_to_owner(self):
         intermediate = self.hub / "intermediate"
@@ -1104,20 +1315,20 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
         config = self.root / ".codex"
         config.mkdir()
         strict = deepcopy(DEFAULT_POLICY)
-        strict["max_rounds"] = 2
+        strict.update(schema_version=1, max_rounds=2)
         strict["deep_patterns"].append("tool.py")
         (config / "review-policy.json").write_text(json.dumps(strict))
         context = gate.prepare(self.root, self.state)
         self.assertEqual(context["mode"], "deep")
-        self.assertEqual(context["max_rounds"], 2)
+        self.assertNotIn("max_rounds", context)
         self.assertFalse((config / "repositories.json").exists())
 
     def test_ancestor_policy_does_not_apply_to_nonmatching_native_owner(self):
         strict = deepcopy(DEFAULT_POLICY)
-        strict["max_rounds"] = 1
+        strict.update(schema_version=1, max_rounds=1)
         self.register(self.hub, [{"path": "other", "management": "native"}], strict)
         self.register(self.root, [{"path": ".", "management": "native"}])
-        self.assertEqual(gate.prepare(self.root, self.state)["max_rounds"], 3)
+        self.assertNotIn("max_rounds", gate.prepare(self.root, self.state))
 
     def test_shadowed_native_registration_still_requires_exact_git_root(self):
         nested = self.root / "nested"

@@ -455,7 +455,7 @@ class Workspace:
             with self.flows(state["roots"]) as flows:
                 self.validate(state, flows)
                 result = flows[repo].review_operation(operation, payload)
-                if operation != "prepare":
+                if operation not in {"prepare", "budget"} and not result.get("unchanged"):
                     state.update(finished=None, operation="review-" + operation)
                     state["progress"][repo] = {"operation": state["operation"], "at": now()}
                     self.save(state)
@@ -598,12 +598,14 @@ def main(argv: list[str] | None = None, *, default_root: Path | None = None) -> 
             command.add_argument("--policy", type=Path)
     publish = sub.add_parser("publish", help="Publish and verify current HEAD without creating a commit.")
     publish.add_argument("--repo", required=True)
-    for name in ("review-context", "review-start", "review-report", "review-resolve", "review-author"):
+    for name in ("review-context", "review-start", "review-report", "review-resolve", "review-author", "review-budget"):
         command = sub.add_parser(name)
         command.add_argument("--repo", required=True)
         if name == "review-start":
             command.add_argument("--risk", choices=("quick", "standard", "deep"))
             command.add_argument("--quick-code-reason", help="Justify a trivial ordinary code change before its first review round.")
+            command.add_argument("--continuation-reason", help="Explain why another review iteration is useful.")
+            command.add_argument("--continuation-next-action", help="Describe the concrete next review action.")
     check = sub.add_parser("check")
     check.add_argument("--repo", required=True)
     check.add_argument("--timeout", type=int, default=300)
@@ -614,6 +616,8 @@ def main(argv: list[str] | None = None, *, default_root: Path | None = None) -> 
                         help="Commit only selected files while preserving disjoint staged work.")
     commit.add_argument("paths", nargs="+")
     args = parser.parse_args(argv)
+    if args.command == "review-start" and ((args.continuation_reason is None) != (args.continuation_next_action is None)):
+        parser.error("--continuation-reason and --continuation-next-action must be supplied together.")
     workspace = Workspace(args.root, args.session)
     if args.command == "route":
         result = workspace.route(args.paths)
@@ -636,10 +640,13 @@ def main(argv: list[str] | None = None, *, default_root: Path | None = None) -> 
     elif args.command == "check":
         result = workspace.check(args.repo, args.argv[1:] if args.argv[:1] == ["--"] else args.argv, timeout=args.timeout)
     elif args.command.startswith("review-"):
-        payload = json.load(sys.stdin) if args.command in {"review-report", "review-resolve", "review-author"} else None
+        payload = json.load(sys.stdin) if args.command in {"review-report", "review-resolve", "review-author", "review-budget"} else None
         operation = args.command.removeprefix("review-")
         if operation == "start":
             payload = {"risk": args.risk, "quick_code_reason": args.quick_code_reason}
+            if args.continuation_reason is not None:
+                payload["continuation"] = {"reason": args.continuation_reason,
+                                           "next_action": args.continuation_next_action}
         result = workspace.review_operation(args.repo, "prepare" if operation == "context" else operation, payload)
     elif args.command == "commit":
         result = workspace.commit(args.paths, args.message, preserve_index=args.preserve_index)

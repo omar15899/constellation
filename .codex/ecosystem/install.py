@@ -106,8 +106,11 @@ def _load_receipt(path: Path) -> dict | None:
         raise InstallError("Installation receipt must be a regular file")
     try:
         value = _read_object(path)
-        if (set(value) != {"schema", "modules", "version", "catalog", "cache", "agents"}
-                or type(value.get("schema")) is not int or value["schema"] not in (1, 2)):
+        schema = value.get("schema")
+        fields = {"schema", "modules", "version", "catalog", "cache", "agents"}
+        if schema == 3:
+            fields.add("hook")
+        if (set(value) != fields or type(schema) is not int or schema not in (1, 2, 3)):
             raise ValueError("schema")
         if (not isinstance(value["modules"], list)
                 or not all(isinstance(module, str) for module in value["modules"])):
@@ -120,6 +123,12 @@ def _load_receipt(path: Path) -> dict | None:
             raise ValueError("unsupported legacy release")
         for group in ("catalog", "cache", "agents"):
             _check_records(value[group])
+        if schema == 3:
+            _check_records({"hook.py": value["hook"]})
+            if (value["hook"]["mode"] != 0o644
+                    or value["hook"]["sha256"] !=
+                    value["cache"].get("ecosystem/hook_entry.py", {}).get("sha256")):
+                raise ValueError("stable hook and catalog differ")
         if value["schema"] == 1:
             files = _legacy_receipt_files(modules)
         else:
@@ -247,9 +256,15 @@ def _preflight(home: Path, selected: tuple[str, ...], client: NativeClient,
         if not managed.is_dir():
             raise InstallError("Installation directory is not a directory")
         # The runtime owns state independently; installation never traverses it.
-        if any(p.name not in {"catalog", "receipt.json", ".install.lock", "state"}
+        if any(p.name not in {"catalog", "receipt.json", ".install.lock", "state", "hook.py"}
                for p in managed.iterdir()):
             raise InstallError("Installation directory contains independently owned files")
+    entry = _no_links(home, "constellation/hook.py")
+    if receipt is not None and receipt["schema"] == 3:
+        if not entry.is_file() or file_record(entry) != receipt["hook"]:
+            raise InstallError("Stable hook entry was modified or is missing")
+    elif entry.exists():
+        raise InstallError("Stable hook entry belongs to another owner")
     if _disabled_in_config(home):
         raise InstallError("The plugin is disabled; preserve that decision and enable it explicitly in Codex")
     cache_parent = _no_links(home, "plugins/cache/constellation/constellation")
@@ -300,7 +315,7 @@ def _lock(home: Path) -> Iterator[None]:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise InstallError("Another Constellation installation is running") from exc
+            raise InstallError("A Constellation installation or hook is running; retry after it finishes") from exc
         yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -378,9 +393,15 @@ def install_bundle(bundle: Path, codex_home: Path, modules: Iterable[str] | None
             previous_agents = {name: ((home / "agents" / name).read_bytes(),
                                      stat.S_IMODE((home / "agents" / name).stat().st_mode))
                                for name in (receipt["agents"] if receipt else ())}
+            entry = managed / "hook.py"
+            previous_entry = (entry.read_bytes(), stat.S_IMODE(entry.stat().st_mode)) if entry.exists() else None
+            receipt_path = managed / "receipt.json"
+            previous_receipt = ((receipt_path.read_bytes(), stat.S_IMODE(receipt_path.stat().st_mode))
+                                if receipt is not None else None)
             attempted_marketplace = False
             attempted_plugin = False
             changed_agents = False
+            changed_entry = False
             # Recheck immediately before replacing files after building the payload.
             _preflight(home, selected, backend)
             try:
@@ -409,16 +430,29 @@ def install_bundle(bundle: Path, codex_home: Path, modules: Iterable[str] | None
                     _replace_bytes(target, source.read_bytes(), 0o644)
                 for name in set(previous_agents) - set(agent_sources):
                     (agents_dir / name).unlink()
-                result = {"schema": 2, "modules": list(selected), "version": version,
+                changed_entry = True
+                _replace_bytes(entry, (payload / "ecosystem/hook_entry.py").read_bytes(), 0o644)
+                result = {"schema": 3, "modules": list(selected), "version": version,
                           "catalog": _inventory(catalog), "cache": _inventory(cache),
-                          "agents": {name: file_record(agents_dir / name) for name in sorted(agent_sources)}}
-                _write_json(managed / "receipt.json", result)
+                          "agents": {name: file_record(agents_dir / name) for name in sorted(agent_sources)},
+                          "hook": file_record(entry)}
+                _write_json(receipt_path, result)
                 return {"status": "updated" if receipt else "installed", "modules": list(selected),
                         "version": version, "agents": sorted(agent_sources), "catalog": str(catalog),
+                        "hook_entry": str(entry),
                         "hooks": "Review and trust the plugin hooks in Codex; trust was not changed."}
             except Exception as failure:
                 rollback_errors = []
                 try:
+                    if changed_entry:
+                        if previous_entry is None:
+                            entry.unlink(missing_ok=True)
+                        else:
+                            _replace_bytes(entry, *previous_entry)
+                    if previous_receipt is None:
+                        receipt_path.unlink(missing_ok=True)
+                    else:
+                        _replace_bytes(receipt_path, *previous_receipt)
                     if receipt:
                         if catalog.exists():
                             shutil.rmtree(catalog)

@@ -12,14 +12,14 @@ un servicio de selección semántica.
 | Descubrimiento y carga de skills | Codex; catálogo de la sesión y APIs nativas | Configuración nativa, ámbito y plugin | Coordinador y agentes según su superficie |
 | Selección y composición | Modelo, descripciones nativas e instrucciones de las skills | Requisitos de la tarea; sin registro paralelo | Cada tarea |
 | Diagnóstico de capacidades | `ecosystem/native.py`, sobre APIs y CLI nativos | Snapshot de lectura; no base de datos | Usuario, instalación y mantenimiento |
-| Revisión independiente | `ecosystem/runtime/review_gate.py` | Política compartida `runtime/review-policy.json`; extensiones del receptor | Adaptadores Git, portable y OmarOS |
+| Revisión independiente y continuidad | `ecosystem/runtime/review_gate.py` | Política compartida, historial, presupuesto temporal y extensiones del receptor | Adaptadores Git, portable y OmarOS |
 | Entrega y publicación Git | `ecosystem/runtime/workflow.py` | Contrato y evidencia privados en `.git/constellation` | Repositorios Git y coordinador |
 | Coordinación entre repositorios | `ecosystem/runtime/workspace.py` y `dispatch.py` | Registro declarativo del workspace y dependencias de la tarea | Hub y otros workspaces explícitos |
 | Evidencia matemática/editorial sin publicación | `ecosystem/core.py` | Contratos con hipótesis, checks, evaluaciones y SQLite privado | Trabajos de investigación y documentos |
 | Progreso recuperable | `ecosystem/runtime/progress.py`; adaptadores existentes | `task_progress` en el JSON Git o SQLite portable; sin almacén nuevo | Trabajo sustancial y reanudación |
 | Diario personal | Receptor `progress_journal.py` de OmarOS y renderizado compartido | Política personal exacta, notas curadas e índice privado mínimo | Sólo fuentes y checkpoints personales autorizados |
 | Personalización pedagógica | Skill de enseñanza disponible y perfil explícito del usuario | Perfil local provisional, editable y ajeno al paquete | Explicaciones y feedback intencional reutilizable |
-| Eventos Codex | `ecosystem/hooks.py` | Activación/confianza nativas; sólo contratos activos | Plugin instalado |
+| Eventos Codex | Entrada estable `CODEX_HOME/constellation/hook.py`, fuente `ecosystem/hook_entry.py`; adaptador `ecosystem/hooks.py` | Recibo e inventario verificados bajo lock; activación/confianza nativas; sólo contratos activos | Plugin instalado |
 | Distribución | `ecosystem/build.py` e `install.py` | Inventario y recibo de instalación; caché derivado | Codex local y receptores |
 | Dominio | `AGENTS.md`, herramientas y validadores del proyecto | Archivos propios del receptor | Su trabajo especializado |
 
@@ -128,9 +128,22 @@ por proyecto no se suman. Un reparto describe dependencias; no demuestra que
 sus agentes se hayan lanzado. Las pruebas con identidades sintéticas verifican
 el mecanismo, no la calidad de una revisión realizada por un modelo.
 
+La revisión adapta su continuidad a progreso observable y presupuesto real,
+sin tope universal de tres rondas. El algoritmo común conserva independencia,
+historia, hallazgos y mínimos; las ampliaciones de presupuesto y continuaciones
+quedan explícitas. No incorpora otro clasificador ni planificador de agentes.
+El [protocolo](references/protocol.md#review-continuity-and-budget) define esos
+campos; los receptores mantienen las restricciones que añadan.
+
 Los hooks del plugin observan contratos activos. No convierten cualquier
 pregunta en un contrato, no hacen fetch al recibir un prompt y no publican.
 Las definiciones del hub quedan retiradas para evitar eventos duplicados.
+El comando del plugin apunta a la entrada estable fuera del caché versionado.
+Un lock compartido protege validación y ejecución del hook; el instalador usa
+el mismo lock en exclusiva para actualizar. Una colisión o instalación incoherente
+produce una respuesta controlada, sin ejecutar código parcialmente actualizado.
+El contrato de instalación, confianza y primera recarga está en
+[README.md](README.md#instalar-y-actualizar).
 El guard de patches no intercepta todas las escrituras por shell o MCP.
 Un puente acotado de migración reconoce contratos OmarOS activos como datos
 para autorizar únicamente sus rutas explícitas en la misma sesión y destino

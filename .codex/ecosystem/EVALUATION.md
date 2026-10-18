@@ -1,6 +1,53 @@
 # Evaluación del ecosistema
 
-## Migración 1.1 — controles y experimentos separados
+## Fase adaptativa 1.2 — diseño y estado de validación
+
+La implementación elimina el tope universal de tres rondas, mantiene mínimos e
+historial e incorpora continuidad justificada y un plazo real de revisión. El
+hook estable verifica la instalación bajo el lock compartido con el instalador.
+Estas propiedades se comprueban con controles deterministas; no constituyen
+evidencia de mayor calidad, menor coste ni menor latencia de agentes.
+
+El arnés nativo y su informe descritos en esta sección pertenecen a una
+evaluación local independiente, pendiente de publicación; no se incluyen en
+la entrega del runtime 1.2 ni en su bundle. Los comandos siguientes requieren
+disponer además de esas fuentes de evaluación. Su descripción no acredita
+una serie ejecutada ni constituye un requisito de instalación del runtime.
+
+El harness nativo `evals/native_benchmark.py` separa prerregistro, preflight y
+serie. El plan congela escenarios, controles y 25 slots: 18 de la comparación
+principal, cuatro de capacidad y tres de recuperación. La comparación distingue
+A1 (un agente, plugin desactivado), B4 (delegación nativa, plugin desactivado) y
+C4 (Constellation activo), con controles B/C de capacidad 2. Son capacidades
+totales del ensayo: B4/C4 permiten coordinador y hasta tres subagentes; los
+controles de dos permiten uno, y A1 desactiva delegación. No son un objetivo de
+consumo. El modelo y esfuerzo
+del producto se siguen heredando; la configuración efectiva del ensayo debe
+quedar registrada antes de interpretar sus resultados.
+
+```sh
+python3 .codex/ecosystem/evals/native_benchmark.py plan
+python3 .codex/ecosystem/evals/native_benchmark.py preflight --output RUTA_NUEVA
+python3 .codex/ecosystem/evals/native_benchmark.py run \
+  --plan-sha256 SHA_DEL_PLAN --output OTRA_RUTA_NUEVA
+```
+
+El canario no sustituye la serie. `run` exige el hash del plan prerregistrado;
+cambiar el diseño exige otro prerregistro, sin ocultar intentos anteriores.
+La salida conserva metadata por intento y `attempts.jsonl` con métricas y estados
+reducidos. No publica prompts, conversaciones, texto de respuestas, argumentos
+de herramientas ni sus salidas. La cobertura de observación se declara: un
+contador desconocido no se transforma en cero y un fallo de observación no se
+confunde con fallo del agente. Se conservan intentos fallidos y resultados
+incompletos; no se selecciona sólo el mejor intento.
+
+En este snapshot documental la serie nativa 1.2 sigue pendiente. Los resultados
+de integración y despliegue se registran fuera del bundle medido en
+`.codex/ADAPTIVE_ORCHESTRATION_REPORT.md`, con el plan, versiones y límites reales.
+Los resultados 1.1 y 1.0 siguientes se conservan como historia y no se reutilizan
+como mediciones del candidato 1.2.
+
+## Migración histórica 1.1 — controles y experimentos separados
 
 El bloque `migration_1_1` de `evaluation.json` identifica las observaciones del
 18 de octubre de 2026. Conserva íntegra la evaluación histórica 1.0. El baseline

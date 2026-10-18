@@ -1,4 +1,4 @@
-"""Bounded, revision-specific independent review of declared artifacts.
+"""Adaptive, revision-specific independent review of declared artifacts.
 
 Reviewer identities are attestations, not cryptographic proof of independence.
 Only publishable engineering evidence belongs in reports: never conversation,
@@ -7,6 +7,8 @@ grant human approval, or replace a repository's CI and deployment controls.
 """
 from __future__ import annotations
 
+from copy import deepcopy
+from datetime import datetime, timezone
 import fnmatch
 import hashlib
 import json
@@ -74,15 +76,88 @@ def _read_json(path: Path, label: str) -> Any:
         raise ReviewError(f"Cannot read {label}: {type(exc).__name__}.") from None
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _deadline(value: Any) -> datetime:
+    text = _text(value, "Review budget deadline", 64)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)", text) is None:
+        raise ReviewError("Review budget deadline must be an explicit UTC ISO 8601 timestamp.")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise ReviewError("Review budget deadline must be a valid UTC timestamp.") from None
+
+
+def _budget_context(state: dict[str, Any]) -> dict[str, Any]:
+    record = state.get("review_budget")
+    if record is None:
+        return {"revision": 0, "deadline_at": None, "status": "unknown"}
+    _object(record, "Stored review budget", {"revision", "deadline_at", "author", "history"})
+    revision = _integer(record["revision"], "Review budget revision", high=2**63 - 1)
+    deadline = _deadline(record["deadline_at"])
+    if record["author"] != _author(state):
+        raise ReviewError("Task author identity changed during review budgeting.")
+    if not isinstance(record["history"], list) or len(record["history"]) != revision:
+        raise ReviewError("Review budget history must retain every revision.")
+    for number, entry in enumerate(record["history"], 1):
+        _object(entry, "Review budget history entry", {"revision", "deadline_at", "reason", "author", "recorded_at"})
+        if type(entry["revision"]) is not int or entry["revision"] != number or entry["author"] != record["author"]:
+            raise ReviewError("Review budget history or frozen author is inconsistent.")
+        _deadline(entry["deadline_at"])
+        _deadline(entry["recorded_at"])
+        _text(entry["reason"], "Review budget reason", 1000)
+    if record["history"][-1]["deadline_at"] != record["deadline_at"]:
+        raise ReviewError("Review budget deadline does not match its history.")
+    return {"revision": revision, "deadline_at": record["deadline_at"],
+            "status": "exhausted" if _utc_now() >= deadline else "available"}
+
+
+def budget(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy_path: Path | None = None,
+           path_validator: Callable[[Path, str], Any] | None = None) -> dict[str, Any]:
+    """Persist an explicit wall-clock deadline without altering review evidence."""
+    _object(payload, "Review budget", {"expected_budget_revision", "deadline_at", "reason"})
+    expected = _integer(payload["expected_budget_revision"], "Expected budget revision", low=0, high=2**63 - 2)
+    deadline = _deadline(payload["deadline_at"]).isoformat().replace("+00:00", "Z")
+    reason = _text(payload["reason"], "Review budget reason", 1000)
+    context = prepare(root, state, policy_path=policy_path, path_validator=path_validator)
+    if not context["enabled"]:
+        raise ReviewError("Review budget requires an enabled independent review policy.")
+    previous = context["budget"]
+    if expected != previous["revision"]:
+        record = state.get("review_budget")
+        if record and expected == previous["revision"] - 1:
+            latest = record["history"][-1]
+            if latest["deadline_at"] == deadline and latest["reason"] == reason:
+                return {"budget": previous, "unchanged": True}
+        raise ReviewError("Review budget revision is stale; read the current budget before changing it.")
+    frozen_author = _author(state)
+    if state.get("review_gate") is not None:
+        ledger = _ledger(state, context, allow_policy_change=True)
+        if ledger["author"] != frozen_author:
+            raise ReviewError("Task author identity changed during independent review.")
+    history = deepcopy(state.get("review_budget", {}).get("history", []))
+    revision = expected + 1
+    history.append({"revision": revision, "deadline_at": deadline, "reason": reason,
+                    "author": frozen_author, "recorded_at": _utc_now().isoformat().replace("+00:00", "Z")})
+    state["review_budget"] = {"revision": revision, "deadline_at": deadline,
+                              "author": frozen_author, "history": history}
+    return {"budget": _budget_context(state), "unchanged": False}
+
+
 def _validated_policy(value: Any) -> dict[str, Any]:
-    _object(value, "Review policy", {"schema_version", "max_rounds", "modes",
+    _object(value, "Review policy", {"schema_version", "modes",
                                     "documentation_extensions", "documentation_names", "deep_patterns"},
-            {"allow_quick_code"})
+            {"allow_quick_code", "max_rounds"})
     if "allow_quick_code" in value and type(value["allow_quick_code"]) is not bool:
         raise ReviewError("allow_quick_code must be a boolean.")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] not in {1, 2}:
         raise ReviewError("Unsupported review policy schema_version.")
-    _integer(value["max_rounds"], "Maximum review rounds", high=10)
+    if value["schema_version"] == 1:
+        _integer(value.get("max_rounds"), "Legacy maximum review rounds", high=10)
+    elif "max_rounds" in value:
+        raise ReviewError("Schema 2 review policy does not accept max_rounds.")
     _object(value["modes"], "Review modes", set(MODES))
     previous_count = 0
     previous_focus: dict[str, int] = {}
@@ -103,16 +178,20 @@ def _validated_policy(value: Any) -> dict[str, Any]:
         _strings(value[key], key, empty=key != "deep_patterns")
     if any(not extension.startswith(".") or "/" in extension for extension in value["documentation_extensions"]):
         raise ReviewError("Documentation extensions must be filename suffixes beginning with a dot.")
-    return value
+    # Normalize legacy policy and ledger floors before hashing. The obsolete
+    # round cap is not a safety minimum; every other floor remains binding.
+    return {**{key: deepcopy(item) for key, item in value.items() if key != "max_rounds"},
+            "schema_version": 2}
 
 
 def _policy_floor(policy: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
     """Configuration changes may strengthen an active task, never weaken it."""
+    policy = _validated_policy(policy)
     if previous is None:
         return {**policy, **{name: sorted(policy[name]) for name in
                             ("documentation_extensions", "documentation_names", "deep_patterns")}}
-    _validated_policy(previous)
-    result = {**policy, "max_rounds": min(policy["max_rounds"], previous["max_rounds"]), "modes": {}}
+    previous = _validated_policy(previous)
+    result = {**policy, "modes": {}}
     if "allow_quick_code" in policy or "allow_quick_code" in previous:
         result["allow_quick_code"] = policy.get("allow_quick_code", False) and previous.get("allow_quick_code", False)
     for mode in MODES:
@@ -309,10 +388,12 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
                              quick_code_declaration=declaration)
         token_material.update(mode=mode, quick_code_declaration=declaration)
     token = _hash(token_material)
+    adaptation = _adaptation(ledger, artifacts, token)
     return {"enabled": True, "token": token, **extra_context, "mode": mode, "policy_sha256": policy_hash,
             "policy_floor": policy,
             "required_reviewers": policy["modes"][mode]["reviewers"],
-            "required_focus": policy["modes"][mode]["focus"], "max_rounds": policy["max_rounds"],
+            "required_focus": policy["modes"][mode]["focus"],
+            "budget": _budget_context(state), "adaptation": adaptation,
             "requirements": requirements, "author": _author(state), "review_authors": authors,
             "paths": paths, "deletions": deletions, "artifacts": artifacts,
             "identity_assurance": "declared identities; not cryptographically authenticated"}
@@ -320,7 +401,7 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
 
 def _ledger(state: dict[str, Any], context: dict[str, Any], *, allow_policy_change: bool = False) -> dict[str, Any]:
     ledger = state.get("review_gate")
-    if not isinstance(ledger, dict) or ledger.get("schema_version") != 1 or not isinstance(ledger.get("rounds"), list) or not isinstance(ledger.get("findings"), dict):
+    if not isinstance(ledger, dict) or ledger.get("schema_version") not in {1, 2} or not isinstance(ledger.get("rounds"), list) or not isinstance(ledger.get("findings"), dict):
         raise ReviewError("Start an independent review before submitting evidence or publishing.")
     if not allow_policy_change and ledger.get("policy_sha256") != context["policy_sha256"]:
         raise ReviewError("Review policy changed during this task; start a fresh round under its retained policy floor.")
@@ -332,6 +413,48 @@ def _current(state: dict[str, Any], context: dict[str, Any]) -> tuple[dict[str, 
     if not ledger["rounds"] or ledger["rounds"][-1]["token"] != context["token"]:
         raise ReviewError("Independent review is missing or stale; start a round for the current artifacts.")
     return ledger, ledger["rounds"][-1]
+
+
+def _independent_basis(ledger: dict[str, Any] | None) -> str:
+    """Fingerprint recorded observations, not token churn or a quality score."""
+    observations = set()
+    for revision in (ledger or {}).get("rounds", []):
+        for report in revision["reports"].values():
+            observations.add(_hash({"artifact_fingerprint": revision.get("artifact_fingerprint"),
+                                    "report": {key: value for key, value in report.items() if key != "token"}}))
+    for identifier, finding in (ledger or {}).get("findings", {}).items():
+        for resolution in finding.get("resolutions", []):
+            observations.add(_hash({"finding": identifier, "path": finding["path"],
+                                    "resolution": {key: value for key, value in resolution.items()
+                                                   if key not in {"token", "round", "review_context_sha256"}}}))
+    return _hash(sorted(observations))
+
+
+def _adaptation(ledger: dict[str, Any] | None, artifacts: dict[str, Any], token: str) -> dict[str, Any]:
+    fingerprint = _hash(artifacts)
+    rounds = (ledger or {}).get("rounds", [])
+    basis = _independent_basis(ledger)
+    matches = [revision for revision in rounds if revision.get("artifact_fingerprint") == fingerprint]
+    unchanged = bool(rounds and rounds[-1]["token"] == token)
+    repeat = matches[-1] if matches else None
+    no_progress = repeat is not None and repeat.get("independent_basis") == basis
+    findings = (ledger or {}).get("findings", {})
+    cycle = _hash({"artifacts": fingerprint, "findings": sorted(findings)})
+    recurring = []
+    if rounds:
+        observed = {item["id"] for report in rounds[-1]["reports"].values() for item in report["findings"]}
+        recurring = sorted(identifier for identifier in observed if any(
+            resolution["round"] < rounds[-1]["number"] for resolution in findings[identifier].get("resolutions", [])))
+    return {"artifact_fingerprint": fingerprint, "independent_basis": basis,
+            "signal": "unchanged" if unchanged else "repeated_without_new_observation" if no_progress
+                      else "new_independent_observation" if repeat
+                      else "legacy_baseline" if rounds and not any("artifact_fingerprint" in item for item in rounds)
+                      else "new_artifacts" if rounds else "initial",
+            "continuation_required": bool(no_progress and not unchanged),
+            "cycle_key": cycle, "repeated_round": repeat["number"] if repeat else None,
+            "recurring_findings": recurring, "observations_round": rounds[-1]["number"] if rounds else None,
+            "history_complete": all("artifact_fingerprint" in item for item in rounds),
+            "limits": "Exact artifact and recorded-observation comparison; not semantic progress or native resource telemetry."}
 
 
 def _author(state: dict[str, Any]) -> str:
@@ -377,12 +500,16 @@ def author(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy
 
 def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None,
           path_validator: Callable[[Path, str], Any] | None = None,
-          quick_code_reason: str | None = None) -> dict[str, Any]:
+          quick_code_reason: str | None = None, continuation: dict[str, Any] | None = None) -> dict[str, Any]:
+    if continuation is not None:
+        _object(continuation, "Review continuation", {"reason", "next_action"})
+        continuation = {key: _text(continuation[key], f"Continuation {key}", 1000)
+                        for key in ("reason", "next_action")}
     context = prepare(root, state, policy_path=policy_path, path_validator=path_validator,
                       _quick_code_reason=quick_code_reason)
     if not context["enabled"]:
-        if quick_code_reason is not None:
-            raise ReviewError("Quick code declaration requires an enabled independent review policy.")
+        if quick_code_reason is not None or continuation is not None:
+            raise ReviewError("Review declarations require an enabled independent review policy.")
         return context
     ledger = state.get("review_gate")
     declaration = None
@@ -402,7 +529,7 @@ def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None,
         if (path in context["deletions"]) != (artifact is None):
             raise ReviewError(f"Complete the declared artifact or deletion before review: {path}")
     if ledger is None:
-        ledger = {"schema_version": 1, "policy_sha256": context["policy_sha256"],
+        ledger = {"schema_version": 2, "policy_sha256": context["policy_sha256"],
                   "policy_floor": context["policy_floor"], "mode_floor": context["mode"],
                   "author": author, "rounds": [], "findings": {}}
         if declaration is not None:
@@ -413,8 +540,20 @@ def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None,
         raise ReviewError("Task author identity changed during independent review.")
     if ledger["rounds"] and ledger["rounds"][-1]["token"] == context["token"]:
         return {**context, "round": ledger["rounds"][-1]["number"], "unchanged": True}
-    if len(ledger["rounds"]) >= context["max_rounds"]:
-        raise ReviewError("Independent review round limit reached; reconsider the approach and report the unresolved blocker.")
+    if context["budget"]["status"] == "exhausted":
+        raise ReviewError("Declared review budget deadline is exhausted; record an explicit budget decision before a new round.")
+    adaptation = context["adaptation"]
+    if adaptation["continuation_required"] and continuation is None:
+        raise ReviewError("Repeated review artifacts without a new independent observation require continuation reason and next_action.")
+    decision = None
+    if continuation is not None:
+        decision = {**continuation, "cycle_key": adaptation["cycle_key"],
+                    "basis_key": adaptation["independent_basis"]}
+        if any(revision.get("continuation") == decision for revision in ledger["rounds"]):
+            raise ReviewError("Review continuation replay: this exact cycle, independent basis and declaration were already used.")
+    # Admission is transactional, including invalidated resolution statuses.
+    ledger = deepcopy(ledger)
+    stale_resolutions = []
     for finding in ledger["findings"].values():
         if finding["status"] != "open":
             resolution = finding["resolution"]
@@ -422,9 +561,16 @@ def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None,
                     or finding["path"] in context["review_authors"].get(resolution["verifier"], [])
                     or resolution.get("review_context_sha256") != context.get("review_context_sha256")):
                 finding["status"] = "open"
+                stale_resolutions.append(finding["id"])
     number = len(ledger["rounds"]) + 1
-    ledger.update(policy_sha256=context["policy_sha256"], policy_floor=context["policy_floor"], mode_floor=context["mode"])
-    ledger["rounds"].append({"number": number, "token": context["token"], "mode": context["mode"], "reports": {}})
+    ledger.update(schema_version=2, policy_sha256=context["policy_sha256"], policy_floor=context["policy_floor"], mode_floor=context["mode"])
+    revision = {"number": number, "token": context["token"], "mode": context["mode"], "reports": {},
+                "artifact_fingerprint": adaptation["artifact_fingerprint"],
+                "independent_basis": adaptation["independent_basis"],
+                "stale_resolutions": sorted(stale_resolutions)}
+    if decision is not None:
+        revision["continuation"] = decision
+    ledger["rounds"].append(revision)
     state["review_gate"] = ledger
     state["review"] = None
     state["finished"] = None

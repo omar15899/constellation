@@ -124,8 +124,13 @@ requieren evidencia de un verificador distinto de autores y descubridores.
 Corrige la clase completa de error y añade una regresión cuando sea automatizable.
 No busques consenso por votación para reemplazar una prueba o un argumento.
 
-El límite sigue siendo tres versiones revisadas por tarea. Replanificar no borra
-hallazgos ni reinicia rondas. Después registra evidencia para cada requisito,
+Continúa la revisión mientras haya una acción concreta justificada y presupuesto
+disponible. No hay un máximo universal de tres rondas. Ante repetición o falta
+de progreso, explicita un cambio de enfoque mediante la continuidad de
+`review-start`; el presupuesto temporal se registra con `review-budget`, según
+[WORKSPACE.md](WORKSPACE.md#revisión-independiente). La ausencia de presupuesto
+medible se informa como desconocida. Replanificar conserva historia, hallazgos,
+autores y mínimos. Después registra evidencia para cada requisito,
 publica las rutas declaradas con `workspace.py commit` y ejecuta `finish`.
 El cierre comprueba los SHA remotos de los participantes. Una caída de red deja
 progreso pendiente para reanudar; no autoriza omitir controles ni publicar vecinos.

@@ -89,6 +89,17 @@ returns one JSON object; rejected input and unsuccessful checks exit 2. Errors n
 or captured subprocess output. All paths are exact, relative to the declared
 root, regular local files; private paths, symlinks and engine state are excluded.
 
+For isolated portable state, export `CONSTELLATION_STATE_DIR` before launching
+Codex and the CLI processes so their hooks inherit the same location. Precedence
+is explicit `--state-dir`, then a nonempty process environment value, then the
+unchanged default `$CODEX_HOME/constellation/state` (or
+`~/.codex/constellation/state`). Prefer an absolute path: relative values resolve
+against each process's cwd. A CLI-only `--state-dir` does not configure native
+hooks. Project files and hook payloads cannot select this environment override;
+normal store validation remains in force without silent fallback. The personal
+`progress-journal.json` policy stays under `CODEX_HOME`, independent of this
+portable-state override.
+
 Invoking the shipped CLI and hook scripts by file path suppresses local bytecode
 writes internally; callers do not need `-B` for those entry points. When importing
 the Python API from an immutable bundle, start Python with `-B` or set
@@ -164,7 +175,8 @@ Operations beyond the envelope:
 | `check` | `id`, `argv` (string array), optional `timeout` (seconds, default 300, max 3600). |
 | `recover-check` | `id`, `attempt_id`; coordinator marks that running attempt abandoned. |
 | `review-context` | Read-only; current gate token and mechanical readiness. |
-| `review-start` | Opens a round only after current checks and dependencies pass. |
+| `review-start` | Opens a round only after current checks and dependencies pass; optional `continuation: {reason,next_action}` records a justified next action. |
+| `review-budget` | Coordinator only: `expected_budget_revision`, `deadline_at`, `reason`; records or extends an explicit UTC deadline without resetting history. |
 | `review-report` | Gate fields `token,reviewer,role,focus,paths,summary,evidence,findings`, plus `assessments` below. `reviewer` must equal actor. |
 | `review-resolve` | Gate fields `token,id,verifier,disposition,evidence`; verifier must equal actor. |
 | `discover` | `requirement` using the requirement schema; adds a stable blocking obligation. This operation does not discover skills or tools. |
@@ -182,8 +194,8 @@ never certify proof or rigorous refutation. `conditional` and `conjecture`
 always leave an obligation open; `refuted` fulfills only an objective that
 explicitly accepts refutation. Conflicting current assessments
 block closure. The shipped shared gate policy uses Quick=1, Standard=3,
-Deep=3 correctness+2 security, at most three rounds. Follow the active policy and
-its retained risk floor; selecting a skill does not lower it.
+Deep=3 correctness+2 security. Follow the active policy and its retained risk
+floor; selecting a skill does not lower it. There is no universal three-round cap.
 
 SQLite transactions use short `BEGIN IMMEDIATE` sections. A check reserves its
 attempt and generation, runs with `shell=False` outside the transaction, then
@@ -218,3 +230,46 @@ rejected. Paths returned by the API use the canonical root.
 The gate verifies declared identities, coverage and fresh evidence; it cannot
 establish that an argument is true, a test is relevant, or a review is thoughtful.
 Those are substantive responsibilities of the agents and the user.
+
+## Review continuity and budget
+
+Continue autonomously while a concrete next action is justified and the real
+budget permits it. Replanning preserves rounds, findings, authors and retained
+minimums. Reopening the current version is idempotent. When the gate detects
+repeated artifacts without a new independent observation, supply
+`continuation: {reason,next_action}` to `review-start`. Reusing that declaration
+for the same cycle and independent observation basis is rejected; a concrete
+change of strategy can proceed without first requiring a new observation.
+`review-context.adaptation` exposes the observed signal and
+`continuation_required`. New artifacts are an observed change, not proof of
+semantic progress. Continuation never resolves a finding or waives independent review.
+For old rounds without artifact fingerprints, `legacy_baseline` and
+`history_complete:false` expose the missing history rather than reconstructing
+unobserved artifacts. `observations_round` identifies the round behind the
+recurrence observations.
+Legacy schema 1 policies remain readable and are normalised without `max_rounds`;
+schema 2 rejects that field. Other retained risk and coverage minimums, including
+stricter receiver minimums, remain binding.
+
+`review-budget` requires the frozen coordinator and this payload in addition to
+the usual portable envelope:
+
+```json
+{"expected_budget_revision":0,"deadline_at":"2026-10-19T12:00:00Z","reason":"Explicit time allocated to this review"}
+```
+
+Use the actual authorised deadline. The date must be UTC ISO 8601 with seconds
+and `Z` or `+00:00`. It cannot be removed with `null`. No stored budget means
+revision zero; each new accepted update increments the revision and retains its
+reason in an append-only history. `review-context` returns `budget` with
+`revision`, `deadline_at` and `status`: `unknown`, `available` or `exhausted`.
+Unknown is not unlimited. This deadline measures wall-clock time, not tokens;
+native client limits and permissions remain authoritative.
+Replaying the last exact budget update is idempotent and adds no history entry.
+
+An exhausted deadline blocks a new round, including after resuming the task.
+It does not prevent retrying the current round, adding reports, resolving
+findings or validating current evidence. An explicit extension requires the
+current budget revision and a reason; it never resets review history. The Git
+adapters expose the same `review-budget` payload, and use the paired flags
+`review-start --continuation-reason TEXT --continuation-next-action TEXT`.

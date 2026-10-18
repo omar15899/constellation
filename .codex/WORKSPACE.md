@@ -259,13 +259,49 @@ del autor y del descubridor. `review-resolve --repo Shared` recibe:
 `dismissed` requiere igualmente evidencia independiente para un falso positivo
 o comportamiento deliberado. Omitir un hallazgo en el siguiente informe no lo
 resuelve. Una modificación posterior exige revalidar su cierre. Replanificar
-conserva el contador y los hallazgos. Abrir la misma versión es idempotente;
-hay un máximo de tres versiones revisadas por tarea. Si no converge, replantea
-el enfoque con Omar; no borres el registro ni finjas aprobación.
+conserva el contador, los hallazgos, los autores y los mínimos. Abrir la misma
+versión es idempotente. No hay un máximo universal de tres rondas: continúa
+autónomamente cuando la siguiente acción tenga fundamento y respete el presupuesto
+real. Ante repetición o falta de progreso, registra una razón y una acción
+concreta; el motor rechaza reutilizar la misma declaración para el mismo ciclo
+y la misma base de observaciones independientes. `review-context.adaptation`
+expone la señal observada y `continuation_required`. Un archivo distinto no
+demuestra progreso semántico: ese juicio sigue correspondiendo al coordinador.
+
+```sh
+python3 .codex/workspace.py --session ejemplo review-start --repo Shared \
+  --continuation-reason 'El nuevo contraejemplo permite aislar la causa' \
+  --continuation-next-action 'Contrastar la reparación con ese caso y su límite'
+```
+
+Ambas opciones se suministran juntas. Una continuación no resuelve hallazgos ni
+reduce la cobertura. Si falta una decisión material del usuario o un permiso
+nativo, informa del impedimento; cambiar de sesión no evita ese requisito.
+
+El presupuesto de revisión usa un plazo UTC explícito, no una estimación de
+tokens. El coordinador lo declara o amplía con revisión esperada y motivo:
+
+```sh
+python3 .codex/workspace.py --session ejemplo review-budget --repo Shared <<'JSON'
+{"expected_budget_revision":0,"deadline_at":"2026-10-19T12:00:00Z","reason":"Plazo explícito asignado a esta revisión"}
+JSON
+```
+
+Adapta el plazo al presupuesto realmente autorizado. `deadline_at` admite UTC
+ISO 8601 con segundos y `Z` o `+00:00`; no admite quitarlo con `null`.
+Sin presupuesto previo, su revisión es cero; cada actualización nueva añade
+una entrada al historial. `review-context` expone `budget.revision`,
+`budget.deadline_at` y `budget.status`: `unknown` si no se declaró, `available`
+antes del plazo y `exhausted` al alcanzarlo. Desconocido no significa ilimitado.
+Un plazo agotado impide abrir una versión nueva; permite consultar o repetir la
+ronda vigente, registrar informes, resolver hallazgos y validar evidencia.
+Una ampliación requiere la revisión actual y un motivo explícito; no borra
+rondas ni historial. Este control no mide tokens ni cambia límites del cliente.
 
 Cambiar la política invalida la evidencia: abre otra ronda, conservando los
-hallazgos y los mínimos más estrictos de la tarea. Un cambio de política nunca
-reduce su revisión vigente ni amplía retroactivamente el máximo de rondas.
+hallazgos y los mínimos más estrictos de riesgo y cobertura. La migración de
+políticas de esquema 1 elimina el antiguo `max_rounds`; el esquema 2 ya no lo
+admite. Los demás mínimos se conservan, incluidos los más estrictos del receptor.
 
 Después registra la evidencia de cada requisito con `review` y publica con el
 flujo habitual. `commit` y `finish` comprueban también esta puerta. Los comandos
@@ -292,6 +328,9 @@ sincroniza remotos. `SubagentStart` transmite contexto sin modificar el estado.
 Las sesiones sin esos hooks usan el mismo CLI explícitamente; los hijos heredan
 el plugin y conservan sus hooks Git. El guarda de patches no cubre todas las
 escrituras de shell o MCP y no sustituye los permisos del cliente.
+La entrada estable, el lock de actualización y la recarga única al migrar desde
+un comando antiguo están descritos en
+[la instalación del plugin](ecosystem/README.md#instalar-y-actualizar).
 
 El estado mecánico vive bajo el directorio privado de Git, con bloqueos por
 workspace y por repositorio. No registra prompts, transcripciones, comandos

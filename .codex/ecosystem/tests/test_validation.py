@@ -34,7 +34,7 @@ CORE_RESOURCES = (
     "ecosystem/runtime/workspace.py", "ecosystem/runtime/dispatch.py",
     "ecosystem/runtime/agent_policy.py", "ecosystem/runtime/progress.py",
     "ecosystem/__init__.py", "ecosystem/core.py", "ecosystem/storage.py",
-    "ecosystem/cli.py", "ecosystem/hooks.py", "ecosystem/build.py",
+    "ecosystem/cli.py", "ecosystem/hooks.py", "ecosystem/hook_entry.py", "ecosystem/build.py",
     "ecosystem/install.py", "ecosystem/native.py", "ecosystem/validate.py",
     "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
     "ecosystem/ARCHITECTURE.md", "ecosystem/MIGRATION.md", "ecosystem/PROGRESS.md",
@@ -42,7 +42,7 @@ CORE_RESOURCES = (
     "ecosystem/EVALUATION.md", "ecosystem/evaluation.json",
     "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
     "ecosystem/tests/helpers.py", "ecosystem/tests/test_core.py",
-    "ecosystem/tests/test_hooks.py", "ecosystem/tests/test_package.py",
+    "ecosystem/tests/test_hooks.py", "ecosystem/tests/test_hook_entry.py", "ecosystem/tests/test_package.py",
     "ecosystem/tests/test_validation.py", "ecosystem/tests/test_capabilities.py",
     "ecosystem/tests/test_progress.py", "ecosystem/tests/test_progress_core.py",
 )
@@ -77,7 +77,7 @@ class PackageFixture:
         for event in LIFECYCLE_EVENTS:
             group = {"hooks": [{
                 "type": "command",
-                "command": f'python3 -I "${{PLUGIN_ROOT}}/ecosystem/hooks.py" {event}',
+                "command": f'python3 -I "${{CODEX_HOME:-$HOME/.codex}}/constellation/hook.py" {event}',
                 "timeout": 10,
             }]}
             if event == "PreToolUse":
@@ -354,7 +354,7 @@ class ValidationTests(unittest.TestCase):
         original = self.package.read_json("ecosystem/hooks.json")
         mutations = (
             ("command", "python3 /tmp/other-hook.py Stop"),
-            ("command", 'python3 -I "${PLUGIN_ROOT}/ecosystem/hooks.py" Stop; exit 0'),
+            ("command", 'python3 -I "${CODEX_HOME:-$HOME/.codex}/constellation/hook.py" Stop; exit 0'),
             ("type", "prompt"), ("timeout", True), ("timeout", "10"), ("future_option", True),
         )
         for field, value in mutations:

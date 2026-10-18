@@ -1,6 +1,37 @@
 # Compatibilidad observada
 
-## Verificación de migración — 2026-10-18
+## Fase adaptativa 1.2: contrato y evidencia pendiente
+
+La entrada estable `CODEX_HOME/constellation/hook.py`, su validación bajo lock y
+el presupuesto de revisión se documentan como interfaces de la implementación.
+Su disponibilidad en un checkout no acredita despliegue ni ejecución en el
+cliente. Las comprobaciones deterministas, el canario nativo y la comparación
+prerregistrada tienen evidencias separadas en [EVALUATION.md](EVALUATION.md).
+Los resultados de la migración 1.1 que siguen son históricos.
+
+La primera actualización desde un hilo que capturó el comando del caché 1.1
+requiere reabrirlo. El instalador no concede confianza al comando nuevo; una
+aprobación real exigida por Codex se realiza en su interfaz nativa, sin modificar
+hashes. El comando estable cargado puede resolver una distribución posterior
+verificada; esto no prueba recarga del catálogo ni que el cliente haya despachado
+un evento. El [contrato de instalación](README.md#instalar-y-actualizar) describe
+qué se rechaza durante una actualización o tras una instalación interrumpida.
+
+Los presupuestos de agentes son máximos efectivos, no objetivos de consumo.
+La comparación con capacidades 2 y 4 no acredita saturación a 64. Modelo,
+esfuerzo, contexto y permisos se heredan; una medida de un modelo o cliente no
+se extrapola a otro. La telemetría no observada se registra como desconocida,
+sin inferir ausencia de actividad a partir de una superficie parcial.
+
+Un estado portable aislado necesita la misma `CONSTELLATION_STATE_DIR` heredada
+por CLI y hooks; un `--state-dir` usado sólo en el CLI no conecta ese estado con
+el despacho nativo. Usa una ruta absoluta para evitar diferencias de cwd.
+Este ajuste de proceso conserva los defaults y no amplía acceso, altera confianza
+ni mueve la política personal. Su contrato está en el
+[protocolo](references/protocol.md#portable-api); observar un estado por CLI no
+acredita que los hooks lo hayan usado.
+
+## Verificación histórica 1.1 — 2026-10-18
 
 Cliente comprobado: Codex CLI 0.163.0, macOS ARM64. El catálogo de esta sesión,
 las instalaciones y `skills/list` de un app-server nuevo son superficies distintas.
