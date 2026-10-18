@@ -6,10 +6,12 @@ Cada repositorio conserva su historia, sus pruebas y su contrato. El
 [QUANTOS.md](QUANTOS.md) describe la arquitectura cuantitativa.
 
 Codex empieza en [AGENTS.md](AGENTS.md) y utiliza su
-[perfil nativo mínimo](.codex/README.md): autonomía, alcance explícito, pruebas
-pertinentes y cierre con Git verificado. Se edita directamente y no carga
-agentes especializados ni cadenas de skills. El marcador `.codex/profile.json`
-impide que la proyección de Claude lo sustituya.
+[perfil nativo](.codex/README.md): alcance explícito, pruebas, revisión
+independiente y publicación verificada. Sus [seis perfiles de agente](.codex/agents/)
+apoyan el reparto del [workflow](.codex/WORKSPACE.md); el
+[plugin portable](.codex/ecosystem/README.md) aporta las skills `coding`,
+`mathematics` y `writter`. El perfil se edita directamente y
+`.codex/profile.json` impide que la proyección de Claude lo sustituya.
 
 Claude conserva [CLAUDE.md](CLAUDE.md), su [kernel](.claude/CLAUDE.md), contratos,
 roles, skills y hooks. Los 19 proyectos propios tienen perfiles Codex nativos

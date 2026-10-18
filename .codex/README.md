@@ -196,8 +196,9 @@ python3.12 .claude/scripts/codex_sync.py --repo . --check
 python3.12 .claude/scripts/codex_sync.py --repo . --verify
 ```
 
-El perfil anterior quedó íntegro en `.codex_NOTUSE/`, ignorado por Git. Incluye
-los cambios locales previos de su manifest y skill de vídeo. Las versiones
-publicadas anteriores también permanecen en la historia de Git. Recupera solo
-los archivos que necesites tras revisar el diff; no restaures toda la carpeta
-sobre trabajo posterior ni ejecutes una proyección global para deshacer esto.
+La proyección anterior se conserva íntegra en un archivo privado local fuera
+del repositorio. Incluye los cambios locales previos de su manifest y skill
+de vídeo; no se carga como configuración activa. Las versiones publicadas
+anteriores también permanecen en la historia de Git. Recupera solo los archivos
+que necesites tras revisar el diff; no restaures toda la carpeta sobre trabajo
+posterior ni ejecutes una proyección global para deshacer esto.

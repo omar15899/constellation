@@ -7,7 +7,7 @@
 
 # 2. Re-include the orchestrator paths (and this file).
 #    Claude and Codex own independent versioned entry points.
-#    .codex_NOTUSE remains a local archive under the root deny rule.
+#    Retired projection archives stay ignored if restored locally.
 !/.claude/
 !/.codex/
 !/CLAUDE.md
@@ -38,5 +38,5 @@
 #    is the commit-trailer history, not these files.
 /.claude/run/
 
-# Private native-profile migration archive; never stage its local contents.
+# Private legacy archive path; never stage its contents if restored locally.
 /.codex_NOTUSE/

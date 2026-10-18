@@ -20,8 +20,8 @@ las revisiones de aprobación y la confianza de hooks del cliente.
 Codex usa este contrato y el perfil nativo de [.codex/README.md](.codex/README.md).
 `.claude/` mantiene el sistema de Claude; sus routers, agentes, comandos y loops
 no son un prerrequisito de Codex. `.codex/profile.json` impide que el generador
-sustituya este perfil. El archivo local `.codex_NOTUSE/` conserva la proyección
-anterior, fuera de la carga activa y de Git.
+sustituya este perfil. La proyección anterior y sus cambios locales se conservan
+en un archivo privado local fuera del repositorio y de la carga activa.
 
 ## Contexto que aporta información
 

@@ -1,34 +1,35 @@
-> Scope update (2026-09-09): the constellation hub now owns a native Codex
-> profile documented in [`.codex/README.md`](../../.codex/README.md).
-> Its `profile.json` opts out of projection. The mapping below applies to
-> repositories that still use projection, not to native profiles. Since
-> 2026-09-17 the 19 own child repositories also use native profiles and the
-> shared [workspace workflow](../../.codex/WORKSPACE.md); ruflo remains external.
+# Claude-to-Codex projection compatibility
 
-# Codex and Claude: one canonical control plane
+The hub and its own child repositories use independent native Codex profiles:
+see [`.codex/README.md`](../../.codex/README.md) and the
+[workspace workflow](../../.codex/WORKSPACE.md). Their `.codex/profile.json`
+markers prevent projection from replacing those profiles. `ruflo` remains
+external; operating on it requires explicit scope.
 
-`.claude/` contains the implementation and operating contract. `codex_sync.py`
-generates Codex's view; the hub keeps no second policy engine. Changes to this
-repo are projected with `--repo .`; other repositories opt into their own update.
+This guide covers compatibility for repositories that still use projection.
+For those surfaces, `.claude/` contains the implementation and operating
+contract, and `codex_sync.py --repo PATH` generates the selected Codex view.
+Native profiles are edited directly under their own contracts.
 
 ## Design and sources
 
-Reviewed on 2026-09-07 using the installed `codex-cli 0.147.0` and official docs.
+The projection design was reviewed on 2026-09-07 using `codex-cli 0.147.0` and
+official docs; that historical baseline does not establish current activation.
 The [model guide](https://developers.openai.com/api/docs/guides/latest-model)
 informs the short outcome-focused kernel: autonomous follow-through, useful
 parallel delegation and proportionate verification. Model selection remains
 inherited from the user's runtime; this is not an API client migration.
 
 [AGENTS.md discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-explains instruction layering. The hub entry is deliberately small, while the
-kernel links task-specific contracts. Historical repo briefs remain available
-as reference data and no longer supply the hub's startup instructions.
+explains instruction layering. Projected entry points refer to the kernel and
+task-specific contracts. Historical repo briefs remain available as reference
+data and no longer supply the native hub's startup instructions.
 
 ## Mapping
 
 | Source | Generated surface | Purpose |
 | --- | --- | --- |
-| `templates/codex_hub_agents.md` | Root `AGENTS.md` | Hub entry point, budget 6000 bytes before banner |
+| `templates/codex_hub_agents.md` | Root `AGENTS.md` | Legacy projected hub entry; unused by the native hub |
 | `.claude/CLAUDE.md` | Referenced directly | Shared operating contract |
 | `agents/*.md` | `.codex/agents/*.toml` | Instructions and role constraints |
 | `skills/<name>` | `.codex/skills/<name>` symlink | Same skill for both agents |
@@ -37,16 +38,18 @@ as reference data and no longer supply the hub's startup instructions.
 | `templates/codex_hook_shim.py` | `.codex/hook_shim.py` | Event and patch adapter |
 
 The generated `.codex/AGENTS.md` is a reference to the kernel, without separate
-policy. Codex-only personal additions belong in `.codex/local/`. The generator
-does not consume or remove that directory. Hub roles specify `model: inherit`;
-their generated TOML omits both model and reasoning effort overrides.
+policy. In projected repositories, Codex-only personal additions belong in
+`.codex/local/`. The generator does not consume or remove that directory.
+Claude hub roles specify `model: inherit`; their generated TOML omits both
+model and reasoning effort overrides.
 
 The [skills guide](https://learn.chatgpt.com/docs/build-skills) supports precise
 selection descriptions and loading detailed procedures on demand. The
 [subagent guide](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 supports separate roles when their responsibility benefits from independent
 context. Neither a skill scaffold nor its metadata validator proves useful
-behavior. The [audit](control_plane_audit.md) records consolidation decisions.
+behavior. The [historical audit](control_plane_audit.md) records the projection's
+earlier consolidation decisions.
 
 ## Projection ownership
 
@@ -99,21 +102,31 @@ commits, pushes, fetches, approves tools, uploads data or starts a daemon.
 The [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
 defines `features.hooks`; the generated project config sets it explicitly.
 Effective behavior also depends on trusted project configuration and the
-client's native approval of new or modified hooks. Review this project's
+client's native approval of new or modified hooks. Review the target project's
 commands in `/hooks` and approve through Codex when prompted. Do not preseed
 hashes, use a bypass setting, or equate JSON parsing with active protection.
 
 `codex_sync.py --trust` changes user configuration; it is not part of ordinary
-hub regeneration. `--verify` checks instruction and skill discovery with the
+projection. `--verify` checks instruction and skill discovery with the
 installed binary; agent TOML files are parsed, which does not demonstrate role
 discovery. It does not verify trust or end-to-end hook execution. Activation for a
 particular session must be observed through the native client.
 
 ## Verification
 
+Run a targeted projection only when the task authorizes changing that surface.
+From the hub, substitute the explicitly selected projected repository for PATH:
+
 ```bash
-python3 .claude/scripts/codex_sync.py --repo . --check
-python3 .claude/scripts/codex_sync.py --repo .
+python3 .claude/scripts/codex_sync.py --repo PATH --check
+python3 .claude/scripts/codex_sync.py --repo PATH
+python3 .claude/scripts/codex_sync.py --repo PATH --check
+python3 .claude/scripts/codex_sync.py --repo PATH --verify
+```
+
+The compatibility regression suites remain in the hub:
+
+```bash
 python3 .claude/tests/test_codex_sync.py
 python3 .claude/tests/test_codex_projection_safety.py
 python3 .claude/tests/test_codex_workflow.py
@@ -122,13 +135,12 @@ python3 .claude/tests/test_promotion_enforcement.py
 python3 .claude/tests/test_repo_bootstrap.py
 python3 .claude/tests/test_discovery_state.py
 python3 .claude/tests/test_research_committer_safety.py
-python3 .claude/scripts/codex_sync.py --repo . --check
-python3 .claude/scripts/codex_sync.py --repo . --verify
 python3 .claude/scripts/doctor.py
 ```
 
-Run the relevant subset for the change. Tests use temporary fixtures and the
-hub surface, without requiring unrelated labs to be installed or synchronized.
-A second projection is checked for zero writes. The doctor reports malformed
-configuration, missing bounded handlers and projection drift separately from
-the dirty worktree warning and the unverified native activation state.
+Run the relevant subset for the change. Tests use temporary projection fixtures
+and check preservation of the native hub, without requiring unrelated labs to
+be installed or synchronized. A second projection is checked for zero writes.
+The doctor recognizes native ownership and does not require a generated adapter
+for native profiles. Projection drift, configuration errors, dirty state and
+unverified native activation are distinct findings.

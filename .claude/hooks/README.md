@@ -6,7 +6,7 @@ calling them, but the hub never installs hooks into a repo silently.
 
 | Hook                | When to fire                                    | Effect                                       |
 | ------------------- | ----------------------------------------------- | -------------------------------------------- |
-| `repo_discovery.py` | Session start; manual; before cross-repo work   | Refresh registry against on-disk state       |
+| `repo_discovery.py` | Optional session start; manual; before cross-repo work | Report registry drift without rewriting it |
 | `peer_sync.py`      | After a registry change or new repo bootstrap   | Refresh `<repo>/.claude/registry/peers.yaml.snapshot` |
 
 ## Verification + research workflow hooks
@@ -87,13 +87,25 @@ Example block for a per-repo `settings.json`:
 {
   "hooks": {
     "SessionStart": [
-      { "type": "command", "command": "python3 ~/GitHub/.claude/hooks/repo_discovery.py" }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/GitHub/.claude/hooks/repo_discovery.py",
+            "timeout": 15
+          }
+        ]
+      }
     ],
     "PostToolUse": [
       {
         "matcher": "Write",
         "hooks": [
-          { "type": "command", "command": "python3 ~/GitHub/.claude/hooks/peer_sync.py" }
+          {
+            "type": "command",
+            "command": "python3 ~/GitHub/.claude/hooks/peer_sync.py",
+            "timeout": 15
+          }
         ]
       }
     ]
@@ -102,4 +114,7 @@ Example block for a per-repo `settings.json`:
 ```
 
 Each repo decides whether to opt in. The constellation hub never
-forces hook installation.
+forces hook installation. The discovery wrapper delegates to
+`scripts/discover_repos.py`, which reports proposals without changing the
+registry; its `--apply` flag is reserved. The example is optional wiring,
+not the hub's active configuration.
