@@ -12,12 +12,18 @@ cargar el sistema de agentes de Claude ni recorrer una cadena de skills. El mode
 esfuerzo y permisos se heredan de los ajustes del usuario.
 
 El [ecosistema personal portable](ecosystem/README.md) añade `coding`,
-`mathematics` y `writter`, recursos de agentes y controles de evidencia para
+`mathematics`, `quant-research` y `writter`, recursos de agentes y controles de evidencia para
 trabajos con o sin Git. Sus fuentes están en `skills/`; el plugin instalado
 las expone con el prefijo `constellation:`. Instala el plugin y aplica la
 exclusión explícita de fuentes por ruta descrita en su guía para evitar dos
 copias activas. El paquete conserva este flujo como autoridad de publicación:
 su `close` no hace commits, push ni sustituye los controles del proyecto.
+
+La capacidad [quant-research](skills/quant-research/SKILL.md) guía campañas de
+estrategias con causalidad temporal, búsqueda completa, validación fuera de
+muestra y trazabilidad hasta paper. La [guía local](QUANT_RESEARCH.md) la conecta
+con los laboratorios y sus comandos. Distribuir la skill no instala los motores,
+proveedores o brokers ni acredita que la sesión actual la haya descubierto.
 
 Cuando la tarea se beneficia de delegación, `workspace.py dispatch` propone
 implementación, checks y revisión ordenados por dependencias y capacidad. Una
@@ -33,7 +39,7 @@ Un participante sin cambios se publica y verifica con `workspace.py publish
 | --- | --- | --- |
 | Contrato de Codex | Entrada → kernel Claude → contratos y roles | `AGENTS.md` propio |
 | Agentes especializados | 3 | 8 perfiles compartidos que heredan modelo y esfuerzo |
-| Skills del hub cargadas | 14 | 3 módulos mediante el plugin portable; exclusión nativa explícita de fuentes para evitar duplicados |
+| Skills del hub | 14 en la proyección | 4 módulos distribuibles mediante el plugin portable; descubrimiento efectivo según sesión y exclusión nativa explícita para evitar duplicados |
 | Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 5 eventos del plugin; definiciones duplicadas del hub retiradas |
 | Verificación | Hooks dispersos y evidencia de ejecución | Prueba real, revisión independiente vigente y publicación comprobada |
 | Dependencias del flujo | Adaptador y scripts de Claude | Python estándar y Git; paquete portable y gateway requieren Python 3.11+ |

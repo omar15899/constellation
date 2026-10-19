@@ -108,7 +108,7 @@ def _verified_hook(home: Path, entry: Path) -> Path:
     if (not isinstance(modules, list) or not modules
             or not all(isinstance(module, str) for module in modules)
             or len(set(modules)) != len(modules)
-            or not set(modules) <= {"coding", "mathematics", "writter"}):
+            or not set(modules) <= {"coding", "mathematics", "quant-research", "writter"}):
         raise EntryError("invalid installed modules")
     version = receipt["version"]
     if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):

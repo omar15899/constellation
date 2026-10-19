@@ -20,7 +20,7 @@ from typing import Any, Iterable
 sys.dont_write_bytecode = True
 
 PLUGIN_ID = "constellation@constellation"
-MODULES = ("coding", "mathematics", "writter")
+MODULES = ("coding", "mathematics", "quant-research", "writter")
 
 
 class NativeError(RuntimeError):

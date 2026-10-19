@@ -14,7 +14,7 @@ import tempfile
 from typing import Iterable
 import zipfile
 
-MODULES = ("coding", "mathematics", "writter")
+MODULES = ("coding", "mathematics", "quant-research", "writter")
 BUNDLE_MANIFEST = "bundle.json"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 COMMON_FILES = (
@@ -37,6 +37,7 @@ COMMON_FILES = (
 MODULE_AGENTS = {
     "coding": ("coder",),
     "mathematics": ("mathematician", "counterexample"),
+    "quant-research": ("coder", "mathematician", "counterexample"),
     "writter": ("editor", "mathematician", "coder"),
 }
 

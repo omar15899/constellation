@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Research"
+  short_description: "Investigación causal y campañas cuantitativas"
+  default_prompt: "Usa $quant-research para investigar estrategias con datos reproducibles, validación temporal y evidencia completa hasta paper."

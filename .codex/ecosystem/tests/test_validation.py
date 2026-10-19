@@ -49,6 +49,7 @@ CORE_RESOURCES = (
 ROLES = {
     "coding": ("coder",),
     "mathematics": ("mathematician", "counterexample"),
+    "quant-research": ("coder", "mathematician", "counterexample"),
     "writter": ("editor", "mathematician", "coder"),
 }
 LIFECYCLE_EVENTS = ("UserPromptSubmit", "PreToolUse", "SubagentStart", "SubagentStop", "Stop")
@@ -181,7 +182,7 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(marker.exists(), "The validator executed build.py from the inspected package")
 
     def test_each_available_module_and_all_modules_validate(self) -> None:
-        for modules in (("coding",), ("mathematics",), ("writter",), tuple(ROLES)):
+        for modules in (*((module,) for module in ROLES), tuple(ROLES)):
             with self.subTest(modules=modules):
                 package = PackageFixture(self.temporary / "-".join(modules), modules)
                 self.assertEqual(validate(package.root), [])
@@ -396,7 +397,7 @@ class ValidationTests(unittest.TestCase):
                 self.assert_rejected(self.package.manifest_path)
 
     def test_bundle_layout_and_subset_inventory_validate(self) -> None:
-        for modules in (("coding",), ("mathematics", "writter"), tuple(ROLES)):
+        for modules in (("coding",), ("quant-research",), ("mathematics", "writter"), tuple(ROLES)):
             with self.subTest(modules=modules):
                 package = PackageFixture(self.temporary / ("bundle-" + "-".join(modules)), modules, bundled=True)
                 self.assertFalse((package.root / "ecosystem/plugin.json").exists())
@@ -498,7 +499,7 @@ class CurrentPackageTests(unittest.TestCase):
         self.assertEqual(errors, [], "\n".join(errors))
 
     def test_real_standalone_bundles_pass_validation(self) -> None:
-        modules = [name for name in ("coding", "mathematics", "writter")
+        modules = [name for name in ROLES
                    if (SOURCE_ROOT / "skills" / name).is_dir()]
         self.assertTrue(modules, "The source must contain an available module")
         with tempfile.TemporaryDirectory(prefix="ecosystem-validation-build-") as temporary:
@@ -514,7 +515,7 @@ class CurrentPackageTests(unittest.TestCase):
                     self.assertEqual(validate(bundle, (module,)), [])
 
     def test_bundle_cli_and_supported_api_validation_do_not_mutate_the_bundle(self) -> None:
-        available = tuple(name for name in ("coding", "mathematics", "writter")
+        available = tuple(name for name in ROLES
                           if (SOURCE_ROOT / "skills" / name).is_dir())
         self.assertTrue(available, "The source must contain an available module")
         selections = list(dict.fromkeys([available, *((module,) for module in available)]))

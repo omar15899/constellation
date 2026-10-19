@@ -374,7 +374,7 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
     except TypeError:
         return ["modules must be an iterable of module names"]
     if not selected or any(name not in MODULES for name in selected) or len(selected) != len(set(selected)):
-        return ["modules must be a non-empty unique selection of coding, mathematics and writter"]
+        return ["modules must be a non-empty unique selection of: " + ", ".join(MODULES)]
     bundled = (root / ".codex-plugin").exists()
     manifest = _LAYOUT.PLUGIN_MANIFEST if bundled else "ecosystem/plugin.json"
     required = _required_files(selected, manifest)

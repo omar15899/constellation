@@ -18,7 +18,7 @@ from typing import Any
 
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 CODEX_DIR = SOURCE_DIR.parent
-AVAILABLE_PROFILES = tuple(profile for profile in ("coding", "mathematics", "writter")
+AVAILABLE_PROFILES = tuple(profile for profile in ("coding", "mathematics", "quant-research", "writter")
                            if (CODEX_DIR / "skills" / profile / "SKILL.md").is_file())
 if not AVAILABLE_PROFILES:
     raise RuntimeError("The test runtime must distribute at least one profile.")

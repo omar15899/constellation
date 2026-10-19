@@ -44,18 +44,40 @@ _LEGACY_COMMON_FILES = (
     *(f"ecosystem/agents/{name}.toml" for name in
       ("researcher", "reviewer", "security-reviewer", "verifier")),
 )
+_LEGACY_MODULE_AGENTS = {
+    "coding": ("coder",),
+    "mathematics": ("mathematician", "counterexample"),
+    "writter": ("editor", "mathematician", "coder"),
+}
+# Initial identities remain mandatory when later releases add optional files.
+# Add entries for new modules; do not expand an existing module's minimum.
+_INITIAL_MODULE_AGENTS = {
+    **_LEGACY_MODULE_AGENTS,
+    "quant-research": ("coder", "mathematician", "counterexample"),
+}
 
 
 def _legacy_receipt_files(modules: tuple[str, ...]) -> set[str]:
+    if not set(modules) <= set(_LEGACY_MODULE_AGENTS):
+        raise ValueError("unsupported historical modules")
     paths = set(_LEGACY_COMMON_FILES) | {PLUGIN_MANIFEST}
-    agents = {"coding": ("coder",), "mathematics": ("mathematician", "counterexample"),
-              "writter": ("editor", "mathematician", "coder")}
     for module in modules:
         paths.update(f"skills/{module}/{name}" for name in
                      ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
-        paths.update(f"ecosystem/agents/{name}.toml" for name in agents[module])
+        paths.update(f"ecosystem/agents/{name}.toml" for name in _LEGACY_MODULE_AGENTS[module])
     if {"mathematics", "writter"} & set(modules):
         paths.update(("ecosystem/references/ontology.md", "ecosystem/references/ontology-examples.md"))
+    return paths
+
+
+def _initial_receipt_identities(modules: tuple[str, ...]) -> set[str]:
+    paths = {PLUGIN_MANIFEST} | {
+        path for path in _LEGACY_COMMON_FILES if path.startswith("ecosystem/agents/")
+    }
+    for module in modules:
+        paths.update(f"skills/{module}/{name}" for name in
+                     ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
+        paths.update(f"ecosystem/agents/{name}.toml" for name in _INITIAL_MODULE_AGENTS[module])
     return paths
 
 
@@ -116,6 +138,8 @@ def _load_receipt(path: Path) -> dict | None:
                 or not all(isinstance(module, str) for module in value["modules"])):
             raise ValueError("modules")
         modules = select_modules(value["modules"])
+        if schema in (1, 2) and not set(modules) <= set(_LEGACY_MODULE_AGENTS):
+            raise ValueError("unsupported historical modules")
         if (not isinstance(value["version"], str)
                 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value["version"])):
             raise ValueError("version")
@@ -135,10 +159,13 @@ def _load_receipt(path: Path) -> dict | None:
             # A receipt describes the owned release, not the incoming release.
             # Additive resources must not make a previously valid installation
             # unupgradable. Keep the current allowlist as an outer boundary and
-            # the original module/profile identities as the stable minimum.
+            # the initial module/profile identities as the stable minimum.
+            # Current modules need not have existed in historical schemas.
             files = set(value["cache"]) - {BUNDLE_MANIFEST}
+            identity_files = (_legacy_receipt_files(modules) if schema == 2
+                              else _initial_receipt_identities(modules))
             identities = {PLUGIN_MANIFEST} | {
-                path for path in _legacy_receipt_files(modules)
+                path for path in identity_files
                 if path.startswith(("skills/", "ecosystem/agents/"))
             }
             if not identities <= files <= allowed_files(modules):

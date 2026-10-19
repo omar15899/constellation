@@ -6,6 +6,13 @@ conservan datos, cálculos y validación. Aplica [RESEARCH.md](RESEARCH.md), el
 [contrato de promoción](../.claude/contracts/promotion_gate.md). Esta guía no
 instala proveedores, autoriza operaciones reales ni declara una estrategia válida.
 
+La skill portable [quant-research](skills/quant-research/SKILL.md) conserva la
+metodología independiente de los nombres de los proyectos. Su
+[workflow](skills/quant-research/references/workflow.md) define búsqueda completa,
+admisibilidad temporal, validación y checks de campaña. Esta guía aporta el mapa
+local y los límites concretos; tener la skill instalada no acredita la ejecución
+de las etapas ni una conexión de datos o broker.
+
 ## Elegir el recorrido
 
 Parte de una hipótesis económica refutable, universo y periodo definidos,
@@ -21,6 +28,7 @@ lección ni un despliegue multiagente a cada consulta.
 | Ejecución simulada y contabilidad | [BacktestLab](../BacktestLab/AGENTS.md): kernel causal y evidencia de reproducción. |
 | Asignación y riesgo | [PortfolioLab](../PortfolioLab/AGENTS.md) y [RiskLab](../RiskLab/AGENTS.md): composición, exposiciones, límites y estrés. |
 | Ejecución | [ExecutionLab](../ExecutionLab/AGENTS.md): propuestas y controles; usar simulación o paper dentro del alcance autorizado. |
+| Integración e interfaz | [StrategyOrchestrationLab](../StrategyOrchestrationLab/AGENTS.md) compone los contratos y conserva el estado de campaña; [Helix](../tradinginterface/AGENTS.md) consume sus artefactos por API, sin recalcular resultados financieros. |
 
 Comprueba las interfaces actuales de cada dueño Git antes de componerlas. Estos
 componentes no acreditan por sí solos una cadena integrada de investigación a
@@ -28,6 +36,13 @@ componentes no acreditan por sí solos una cadena integrada de investigación a
 [ExecutionLab](../ExecutionLab/packages/quant_exec_pretrade/src/quant_exec_pretrade/runner.py)
 recibe `risk_ok` y `liquidity_ok` del llamador: hay que demostrar su procedencia.
 Conserva los tiers y declara dependencias entre repositorios; no dupliques motores.
+
+El contrato de una campaña debe poder enlazar hipótesis/familia, snapshot,
+candidato, replay auditado, validación, asignación/riesgo y paper/reconciliación.
+Un `fingerprint` identifica entradas o configuración; sólo el motor canónico
+puede aportar su auditoría. Las etapas requeridas ausentes y los checks sin
+ejecutar bloquean el resultado dependiente. Es posible mostrar resultados
+parciales con su estado, pero no presentar una cadena incompleta como aprobada.
 
 ## Datos admisibles y reproducibles
 
@@ -139,7 +154,54 @@ licencia, calidad de todos los datos ni rentabilidad de una estrategia.
    datos corporativos/restringidos, credenciales y material sin derechos de
    redistribución; conserva referencias a las fuentes en lugar de copiarlas.
 
-La auditoría de los demás laboratorios fue estática; no se ejecutó aquí una
-investigación económica completa ni se validó su integración de extremo a extremo.
+La auditoría técnica del 18-10-2026 de los demás laboratorios fue estática; no
+ejecutó una investigación económica completa ni validó su integración de extremo a extremo.
 Una conclusión bloqueada por datos, costes o evidencia familiar permanece
 limitada o pendiente, aunque la infraestructura pase sus pruebas.
+
+## Campañas y pruebas automatizadas
+
+El ejecutor de campañas pertenece a StrategyOrchestrationLab, con su contrato en
+[RESEARCH_PIPELINE.md](../StrategyOrchestrationLab/docs/RESEARCH_PIPELINE.md).
+Desde ese repositorio, con su entorno preparado:
+
+```sh
+.venv/bin/python -m strategy_orchestration_lab validate configs/research_campaign.yaml
+.venv/bin/python -m strategy_orchestration_lab run configs/research_campaign.yaml --output-root outputs/research_campaigns --workspace-root ..
+.venv/bin/python -m strategy_orchestration_lab status CAMPAIGN_ID --output-root outputs/research_campaigns
+.venv/bin/python -m strategy_orchestration_lab verify CAMPAIGN_ID --output-root outputs/research_campaigns
+.venv/bin/python -m strategy_orchestration_lab resume configs/research_campaign.yaml --output-root outputs/research_campaigns --workspace-root ..
+```
+
+Sustituye `CAMPAIGN_ID` por la identidad devuelta por el runner. La configuración
+de ejemplo exige un CSV externo preexistente con `date,symbol,close`, su hash y
+procedencia; no descarga datos ni oculta una muestra como resultado real.
+El recorrido inicial es diario para renta variable, con estrategias registradas
+de momentum, reversión y equiponderación. Otros instrumentos, frecuencias,
+proveedores y modelos requieren adaptadores y validación propios. Los estados
+de campaña y su verificación de artefactos no sustituyen el veredicto económico.
+
+El CLI de pruebas permite inspeccionar y ejecutar perfiles con informes máquina:
+
+```sh
+.venv/bin/python scripts/verify_research.py --profile integration --list
+.venv/bin/python scripts/verify_research.py --profile offline --output /tmp/quantos-offline-verification
+.venv/bin/python scripts/verify_research.py --profile integration --output /tmp/quantos-integration-verification
+```
+
+Usa un directorio de salida nuevo en cada ejecución. El informe es
+`OUTPUT/verification.json`, con JUnit de las suites en `OUTPUT/STAGE/junit.xml`.
+`--only` selecciona checks concretos y `--timeout` limita cada etapa; un resultado
+focalizado puede pasar sin completar el perfil. Comprueba `scope` y
+`profile_complete`: listar o no ejecutar una prueba no produce aprobación. La
+evidencia vigente de ejecución debe acompañar cualquier afirmación de éxito de
+un perfil completo.
+
+Offline usa replay y controles de red de sus procesos de prueba; integración
+comprueba contratos entre laboratorios y motores locales. El bloqueo Python se
+propaga a hijos Python y el navegador dispone de su guard específico; esto no
+es un sandbox de red del sistema operativo. Estos perfiles no consultan cuentas
+ni acreditan acceso remoto a EODHD/T212. Paper local, demo remoto y live mantienen
+clases distintas: este recorrido no establece una conexión T212 ni envía órdenes
+reales. Una disponibilidad histórica, auditoría, promoción, riesgo o
+reconciliación pendiente conserva su bloqueo explícito.

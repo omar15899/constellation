@@ -636,7 +636,8 @@ class CoreTests(FixtureCase):
                 scenario.report(1, assessments=[{**scenario.assessments()[0], "verdict": verdict}])
                 self.rejected_close(scenario)
 
-    @unittest.skipUnless(len(AVAILABLE_PROFILES) == 3, "Mixed delivery requires all three distributed profiles.")
+    @unittest.skipUnless({"coding", "mathematics", "writter"} <= set(AVAILABLE_PROFILES),
+                         "Mixed delivery requires coding, mathematics and writter.")
     def test_mixed_profiles_preserve_separate_acceptance_obligations(self):
         scenario = self.scenario()
         requirements = [requirement("behavior", acceptance="behavior"),
@@ -653,7 +654,8 @@ class CoreTests(FixtureCase):
         scenario.report(1, assessments=[assessments[1]])
         self.assertEqual(scenario.close()["status"], "complete")
 
-    @unittest.skipUnless(len(AVAILABLE_PROFILES) == 3, "Simultaneous profiles require all three distributed profiles.")
+    @unittest.skipUnless({"coding", "mathematics", "writter"} <= set(AVAILABLE_PROFILES),
+                         "Simultaneous profiles require coding, mathematics and writter.")
     def test_distinct_profiles_can_complete_simultaneously_in_one_state_store(self):
         first = self.scenario(task="fixture-coding")
         scenarios = [first] + [self.scenario(task=f"fixture-{profile}", root=first.root,

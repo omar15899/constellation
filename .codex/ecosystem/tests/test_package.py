@@ -29,16 +29,19 @@ CODEX_DIR = SOURCE_DIR.parent
 sys.path.insert(0, str(SOURCE_DIR))
 
 from build import BundleError, build_bundle, verify_bundle, write_archive
+import build as builder
 from install import InstallError, install_bundle
 import install as installer
 from native import NativeClient, NativeError
 import native as native_adapter
 
 
-ALL_MODULES = ("coding", "mathematics", "writter")
+ALL_MODULES = ("coding", "mathematics", "quant-research", "writter")
 IS_DISTRIBUTED = (CODEX_DIR / "bundle.json").is_file()
 MODULES = (tuple(json.loads((CODEX_DIR / "bundle.json").read_text())["modules"])
            if IS_DISTRIBUTED else ALL_MODULES)
+HISTORICAL_MODULES = tuple(module for module in MODULES
+                           if module in ("coding", "mathematics", "writter"))
 PLUGIN_ID = "constellation@constellation"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 CORE_FILES = {
@@ -567,6 +570,10 @@ class SyntheticInstallationTests(BundleCase):
         Only the inventory is historical; this fixture never executes 1.0 code
         and is not a substitute for testing the user's actual prior release.
         """
+        modules = list(HISTORICAL_MODULES) if modules is None else modules
+        if not modules:
+            self.skipTest("This distribution contains no historical modules")
+        self.assertTrue(set(modules) <= set(HISTORICAL_MODULES))
         self.install(modules=modules)
         receipt = self.receipt()
         catalog = self.home / "constellation/catalog"
@@ -597,6 +604,10 @@ class SyntheticInstallationTests(BundleCase):
 
     def seed_prior_shared_installation(self, modules: list[str] | None = None) -> None:
         """Model an owned schema-2 release before the progress resources existed."""
+        modules = list(HISTORICAL_MODULES) if modules is None else modules
+        if not modules:
+            self.skipTest("This distribution contains no historical modules")
+        self.assertTrue(set(modules) <= set(HISTORICAL_MODULES))
         self.install(modules=modules)
         self.rewrite_owned_shared_resources(remove=(
             "ecosystem/runtime/progress.py", "ecosystem/tests/test_progress.py",
@@ -632,9 +643,10 @@ class SyntheticInstallationTests(BundleCase):
         })
         self.backend.mutations.clear()
 
+    @unittest.skipUnless(HISTORICAL_MODULES, "This distribution contains no historical modules")
     def test_prior_shared_release_accepts_added_resources_for_every_module_selection(self) -> None:
-        for count in range(1, len(MODULES) + 1):
-            for selected in combinations(MODULES, count):
+        for count in range(1, len(HISTORICAL_MODULES) + 1):
+            for selected in combinations(HISTORICAL_MODULES, count):
                 modules = list(selected)
                 with self.subTest(modules=modules):
                     self.seed_prior_shared_installation(modules)
@@ -675,11 +687,12 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(self.install()["status"], "updated")
         self.assertFalse(marker.exists())
 
+    @unittest.skipUnless(HISTORICAL_MODULES, "This distribution contains no historical modules")
     def test_prior_shared_release_cannot_claim_foreign_files_or_omit_module_identity(self) -> None:
         for change in ({"add": ("ecosystem/foreign.py",)},
                        {"add": ("agents/foreign.toml",)},
                        {"add": ("ecosystem/agents/foreign.toml",)},
-                       {"remove": (f"skills/{self.module}/SKILL.md",)},
+                       {"remove": (f"skills/{HISTORICAL_MODULES[0]}/SKILL.md",)},
                        {"remove": ("ecosystem/agents/reviewer.toml",)}):
             with self.subTest(change=change):
                 self.seed_prior_shared_installation()
@@ -700,9 +713,10 @@ class SyntheticInstallationTests(BundleCase):
                     path.write_bytes(contents)
                     path.chmod(mode)
 
+    @unittest.skipUnless(HISTORICAL_MODULES, "This distribution contains no historical modules")
     def test_legacy_release_updates_to_shared_runtime_for_every_module_selection(self) -> None:
-        selections = [list(group) for count in range(1, len(MODULES) + 1)
-                      for group in combinations(MODULES, count)]
+        selections = [list(group) for count in range(1, len(HISTORICAL_MODULES) + 1)
+                      for group in combinations(HISTORICAL_MODULES, count)]
         for modules in selections:
             with self.subTest(modules=modules):
                 self.seed_legacy_installation(modules)
@@ -739,6 +753,8 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(receipt["agents"]["constellation-reviewer.toml"]["mode"], 0o644)
         self.assertEqual(self.install(bundle, check=True)["status"], "checked")
         self.assertEqual(self.install(bundle)["status"], "updated")
+
+    def test_executable_legacy_agent_keeps_normalized_projection_across_upgrade(self) -> None:
         self.seed_legacy_installation(executable_agent=True)
         self.assertEqual(self.install(check=True)["status"], "checked")
         self.assertEqual(self.install()["status"], "updated")
@@ -746,7 +762,8 @@ class SyntheticInstallationTests(BundleCase):
     def test_legacy_upgrade_preserves_and_rejects_unrecorded_catalog_files(self) -> None:
         self.seed_legacy_installation()
         payload = self.home / "constellation/catalog/plugins/constellation"
-        for name in (".DS_Store", "skills/.DS_Store", f"skills/{self.module}/.DS_Store"):
+        module = self.receipt()["modules"][0]
+        for name in (".DS_Store", "skills/.DS_Store", f"skills/{module}/.DS_Store"):
             path = payload / name
             path.write_bytes(b"independently owned fixture bytes")
         before = snapshot(self.home)
@@ -877,16 +894,94 @@ class SyntheticInstallationTests(BundleCase):
         self.assertNotEqual(entry.read_bytes(), before)
         self.assert_unrelated_preserved()
 
-    def test_each_module_installs_alone_then_update_replaces_owned_subset(self) -> None:
-        for module in MODULES:
-            with self.subTest(module=module):
-                self.install(modules=[module])
-                self.assertEqual(self.receipt()["modules"], [module])
-                self.assertEqual(sorted(path.name for path in (self.cache() / "skills").iterdir()), [module])
+    def test_selected_modules_install_check_and_upgrade_preserve_owned_subset(self) -> None:
+        updated = self.changed_bundle(version="1.2.1")
+        for modules in [*([module] for module in MODULES), list(MODULES)]:
+            with self.subTest(modules=modules):
+                self.install(modules=modules)
+                self.assertEqual(self.receipt()["modules"], modules)
+                self.assertEqual(sorted(path.name for path in (self.cache() / "skills").iterdir()), modules)
                 self.assertTrue(CORE_FILES <= set(verify_bundle(self.cache())["files"]))
                 actual_agents = {path.name for path in (self.home / "agents").glob("constellation-*")}
                 self.assertEqual(actual_agents, set(self.receipt()["agents"]))
+                before, mutations = snapshot(self.home), list(self.backend.mutations)
+                self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, mutations)
+                self.assertEqual(self.install(updated, modules=modules)["status"], "updated")
+                self.assertEqual(self.receipt()["schema"], 3)
+                self.assertEqual(verify_bundle(self.cache())["modules"], modules)
+                self.assertEqual(self.install(updated, modules=modules, check=True)["status"], "checked")
                 self.assert_unrelated_preserved()
+
+    @unittest.skipUnless("quant-research" in MODULES, "This distribution omits quant-research")
+    def test_installed_quant_research_profile_runs_the_shared_engine(self) -> None:
+        self.install(modules=["quant-research"])
+        self.module = "quant-research"
+        _state, _identity, revision = self.create_default_state(self.home, self.cache())
+        self.assertGreater(revision, 0)
+
+    @unittest.skipUnless("quant-research" in MODULES, "This distribution omits quant-research")
+    def test_historical_receipts_cannot_claim_a_later_module(self) -> None:
+        self.install(modules=["quant-research"])
+        path = self.home / "constellation/receipt.json"
+        original = self.receipt()
+        for schema in (1, 2):
+            with self.subTest(schema=schema):
+                invalid = {**original, "schema": schema}
+                invalid.pop("hook")
+                if schema == 1:
+                    invalid["version"] = "1.0.0"
+                write_json(path, invalid)
+                before, mutations = snapshot(self.home), list(self.backend.mutations)
+                with self.assertRaisesRegex(InstallError, "Invalid installation receipt"):
+                    self.install(modules=["quant-research"])
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, mutations)
+        write_json(path, original)
+
+    @unittest.skipUnless("quant-research" in MODULES, "This distribution omits quant-research")
+    def test_current_receipt_requires_every_quant_research_identity(self) -> None:
+        paths = [*(f"skills/quant-research/{name}" for name in
+                   ("SKILL.md", "agents/openai.yaml", "references/workflow.md")),
+                 *(f"ecosystem/agents/{role}.toml" for role in
+                   ("coder", "mathematician", "counterexample"))]
+        for relative in paths:
+            with self.subTest(identity=relative):
+                self.install(modules=["quant-research"])
+                self.rewrite_owned_shared_resources(remove=(relative,))
+                before, mutations = snapshot(self.home), list(self.backend.mutations)
+                with self.assertRaisesRegex(InstallError, "Invalid installation receipt"):
+                    self.install(modules=["quant-research"])
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, mutations)
+                # Restore the fixture's complete release for the next corrupt
+                # inventory; production installation is intentionally rejected.
+                payload = self.home / "constellation/catalog/plugins/constellation"
+                shutil.copy2(self.bundle / relative, payload / relative)
+                self.rewrite_owned_shared_resources()
+
+    def test_current_receipt_accepts_a_later_optional_agent_resource(self) -> None:
+        self.install()
+        source = self.source_copy("future-agent-source")
+        relative = "ecosystem/agents/future-analyst.toml"
+        (source / relative).write_text(
+            'name = "ecosystem_future_analyst"\n'
+            'description = "Synthetic future release profile."\n'
+            'developer_instructions = "Use the assigned evidence."\n'
+        )
+        metadata = json.loads((source / "ecosystem/plugin.json").read_text())
+        write_json(source / "ecosystem/plugin.json", {**metadata, "version": "1.2.1"})
+        with patch.object(builder, "COMMON_FILES", (*builder.COMMON_FILES, relative)):
+            updated = self.root / "future-agent-bundle"
+            build_bundle(updated, MODULES, source_root=source)
+            before, mutations = snapshot(self.home), list(self.backend.mutations)
+            self.assertEqual(self.install(updated, check=True)["status"], "checked")
+            self.assertEqual(snapshot(self.home), before)
+            self.assertEqual(self.backend.mutations, mutations)
+            self.assertEqual(self.install(updated)["status"], "updated")
+            self.assertIn(relative, self.receipt()["cache"])
+            self.assertEqual(self.install(updated, check=True)["status"], "checked")
 
     def test_check_is_read_only_before_and_after_installation(self) -> None:
         for installed in (False, True):
@@ -1630,7 +1725,8 @@ class RealNativeSourceExclusionTests(BundleCase):
         self.assert_resource_divergence_is_rejected("ecosystem/agents/reviewer.toml")
 
     def test_changed_selected_module_agent_with_identical_skill_metadata_cannot_be_excluded(self) -> None:
-        role = {"coding": "coder", "mathematics": "mathematician", "writter": "editor"}[self.module]
+        role = {"coding": "coder", "mathematics": "mathematician",
+                "quant-research": "coder", "writter": "editor"}[self.module]
         self.assert_resource_divergence_is_rejected(f"ecosystem/agents/{role}.toml")
 
     def test_source_build_inventory_is_compared_as_data_and_never_executed(self) -> None:

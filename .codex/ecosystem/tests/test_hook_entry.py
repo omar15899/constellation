@@ -128,6 +128,30 @@ class HookEntryTests(BundleCase):
         self.assertEqual(self.invoke(home, command=command_a), {"systemMessage": "b"})
         self.assertEqual((self.root / "runtime-imported").read_text(), "b")
 
+    def test_every_distributed_module_bootstraps_independently(self) -> None:
+        bundle = self.runtime_bundle("modules")
+        for module in MODULES:
+            with self.subTest(module=module):
+                home = self.root / (module + "-home")
+                install_bundle(bundle, home, modules=[module], client=SyntheticNativeClient(home))
+                self.assertEqual(self.invoke(home), {"systemMessage": "modules"})
+
+    def test_invalid_module_receipts_reject_before_runtime_import(self) -> None:
+        home, _ = self.installed(self.runtime_bundle("invalidmodules"))
+        command = self.command(home)
+        path = home / "constellation/receipt.json"
+        original = json.loads(path.read_text())
+        for modules in ([], "quant-research", ["unknown"], ["quant-research-extra"],
+                        [self.module, self.module], [1]):
+            with self.subTest(modules=modules):
+                write_json(path, {**original, "modules": modules})
+                before = snapshot(home)
+
+                self.assert_failure(self.invoke(home, command=command))
+
+                self.assertFalse((self.root / "runtime-imported").exists())
+                self.assertEqual(snapshot(home), before)
+
     def test_manifest_resolves_codex_home_with_spaces_and_home_fallback(self) -> None:
         bundle = self.runtime_bundle("paths")
         user_home = self.root / "user home with spaces"

@@ -28,10 +28,19 @@ El perfil queda fuera del paquete, de las publicaciones y de agentes ajenos a
 esa enseñanza; cambiar de modelo no requiere copiarlo ni reentrenar nada.
 
 Puedes solicitar expresamente `$constellation:coding`,
-`$constellation:mathematics` o `$constellation:writter`. No necesitas conocer esos
+`$constellation:mathematics`, `$constellation:quant-research` o
+`$constellation:writter`. No necesitas conocer esos
 nombres para la selección ordinaria. Una skill de documentos, PDF, hojas de
 cálculo o una conexión externa sigue perteneciendo a su proveedor; Constellation
 no la copia ni presume que está disponible en cualquier cliente.
+
+La skill `quant-research` conecta hipótesis económicas,
+datos reproducibles, backtesting causal, evaluación temporal y evidencia hasta
+paper. Su recurso `skills/quant-research/references/workflow.md`, cuando el módulo
+está incluido, descubre las capacidades del receptor: no instala labs,
+datos ni conectores, ni activa órdenes reales. El runner y la persistencia de
+campañas pertenecen al proyecto de integración; Constellation conserva la
+coordinación nativa y sus controles de evidencia.
 
 ## Diagnóstico
 
