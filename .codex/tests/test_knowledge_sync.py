@@ -328,6 +328,27 @@ class KnowledgeCollectionTests(KnowledgeFixture):
 
         self.assertEqual([item["path"] for item in documents], ["docs/findings.md"])
 
+    def test_build_manifests_and_prompt_templates_are_never_documents(self):
+        excluded = [
+            "CMakeLists.txt", "cpp/CMakeLists.txt", "docs/CMakeLists.txt",
+            "requirements.txt", "requirements.cloud.txt", "constraints.cloud.txt",
+            "docs/requirements-dev.txt", "docs/constraints_test.txt",
+            "docs/requirements311.txt", "docs/constraintsprod.txt",
+            "cpp/thirdparty/blake3/README.md", "third-party/manual.md",
+            "docs/HANDOFF_PROMPT.md", "docs/master_prompt.md", "docs/PrOmPtS-guide.md",
+        ]
+        allowed = ["README.md", "docs/requirements.md", "docs/guion-teleprompter.md"]
+        for name in excluded + allowed:
+            self.write(self.child, name, "Synthetic selection fixture.\n")
+        self.commit(self.child, *excluded, *allowed)
+        self.assertEqual({item["path"] for item in self.bundle()["documents"]}, set(allowed))
+        for name in excluded:
+            with self.subTest(name=name):
+                self.assertFalse(ks._selected(name, {name}))
+                self.data["sources"][0]["include_paths"] = [name]
+                with self.assertRaises(ks.KnowledgeError):
+                    self.bundle()
+
     def test_explicit_hidden_document_paths_export_only_the_selected_head_files(self):
         self.write(self.child, ".codex/RESEARCH.md", "Committed research method.\n")
         self.write(self.child, ".claude/docs/domain.md", "Committed domain documentation.\n")

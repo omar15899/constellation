@@ -23,6 +23,10 @@ y `.bib`; admite `.pdf`, `.docx`, `.pptx`, `.png`, `.jpg`, `.jpeg`, `.svg` y
 
 La selección excluye directorios ocultos, instrucciones activas de agentes,
 código, dependencias, datos, logs, conversaciones, prompts y estados privados.
+También veta `CMakeLists.txt`, los manifests `requirements*.txt` y
+`constraints*.txt`, directorios `thirdparty`/`third-party` y los tokens
+`prompt`/`prompts` delimitados en nombres de archivo. Las plantillas de
+instrucciones como `HANDOFF_PROMPT.md` quedan fuera; `teleprompter` no es ese token.
 `include_paths` permite autorizar archivos documentales exactos y versionados
 en ubicaciones ocultas, como `.codex/RESEARCH.md`; no admite patrones ni abre
 el directorio completo. Los vetos de privacidad e instrucciones activas se

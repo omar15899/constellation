@@ -37,11 +37,11 @@ TEXT_EXTENSIONS = {".md", ".rst", ".txt", ".tex", ".bib"}
 ASSET_EXTENSIONS = {".pdf", ".docx", ".pptx", ".png", ".jpg", ".jpeg", ".svg", ".webp"}
 DOCUMENT_DIRS = {"docs", "doc", "documentation", "reports", "research", "papers", "notes", "figures"}
 DENIED_DIRS = {
-    "vendor", "vendors", "third_party", "node_modules", ".venv", "build", "dist",
+    "vendor", "vendors", "third_party", "thirdparty", "third-party", "node_modules", ".venv", "build", "dist",
     "archives", "archive", "sessions", "logs", "transcripts", "conversations",
     "prompts", "data", "datasets", "raw", "private", "secrets", "tests", "fixtures", "docs-vault",
 }
-DENIED_NAMES = {"agents.md", "claude.md", "skill.md", "review.md"}
+DENIED_NAMES = {"agents.md", "claude.md", "skill.md", "review.md", "cmakelists.txt"}
 PRIVATE_NAMES = ("conversation", "transcript", "rollout", "auth", "credentials", "secrets")
 ALIAS_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 REPORT_RE = re.compile(r"(?:report|diagnostics|sleeve_diagnostics|comparison_\d{4}-\d{2}-\d{2})\.md\Z", re.I)
@@ -127,6 +127,9 @@ def _denied(path: str, *, include_hidden: bool = False, directory: bool = False)
     parts = PurePosixPath(path).parts
     directories = parts if directory else parts[:-1]
     folded = [part.casefold() for part in parts]
+    if not directory and (re.fullmatch(r"(?:requirements|constraints).*\.txt", folded[-1])
+                          or re.search(r"(?:^|[\W_])prompts?(?:[\W_]|$)", folded[-1])):
+        return True
     if any(part in DENIED_DIRS for part in folded[:len(directories)]):
         return True
     hidden = [index for index, part in enumerate(directories) if part.startswith(".")]
