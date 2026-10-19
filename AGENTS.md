@@ -114,6 +114,13 @@ force-push, rebase, amend, reset duro, clean o descartes sin petición exacta.
 No inspecciones ni gestiones recuentos de worktrees. El vault OmarOS se modifica
 solo mediante su propio flujo y cuando el encargo lo autorice.
 
+La documentación e informes de repositorios autorizados se centralizan con
+el [contrato documental](.codex/KNOWLEDGE.md) y el receptor nativo de OmarOS.
+Al crear o integrar un repositorio, resuelve su clasificación y alta documental
+dentro del alcance autorizado. El registro no concede permiso de exportación;
+las fuentes pendientes permanecen sin exportar. Conserva las instrucciones
+activas, código, datos privados y logs fuera de esa proyección documental.
+
 Prompts, transcripciones, archivos de conversación, sus manifests, estados de
 sincronización y logs de daemons son privados locales. No los leas como contexto
 incidental ni los stages, publiques o transmitas sin que Omar nombre los datos

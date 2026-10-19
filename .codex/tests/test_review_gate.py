@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -880,6 +881,85 @@ class ReviewFixture(unittest.TestCase):
                 with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read contents")):
                     with self.assertRaises(gate.ReviewError):
                         self.call("prepare")
+
+    def test_managed_daemon_documentation_can_be_prepared_and_reviewed(self):
+        document = "11_Documents_and_Reports/Research_Repositories/news-lab/files/docs/news_fusion_daemon.md"
+        original = "90_Attachments/Research_Repositories/news-lab/files/docs/news_fusion_daemon.md.source"
+        content = b"# News fusion daemon\n\nArchitecture and scheduling documentation.\n"
+        for name in (document, original):
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        self.state["paths"] = [document, original]
+        self.state["review_risk"] = "deep"
+        prepared = self.call("prepare")
+        expected = {name: {"sha256": hashlib.sha256(content).hexdigest(), "mode": "100644"}
+                    for name in (document, original)}
+        self.assertEqual(prepared["artifacts"], expected)
+        started = self.start()
+        self.assertEqual(started["token"], prepared["token"])
+        self.assertEqual(started["mode"], "deep")
+        self.assertEqual(started["required_reviewers"], MINIMAL_POLICY["modes"]["deep"]["reviewers"])
+        self.assertEqual(started["required_focus"], MINIMAL_POLICY["modes"]["deep"]["focus"])
+
+    def test_managed_daemon_documents_keep_other_private_paths_blocked_before_reading(self):
+        document = "11_Documents_and_Reports/Research_Repositories/news-lab/files/docs/news_fusion_daemon.md"
+        original = "90_Attachments/Research_Repositories/news-lab/files/docs/news_fusion_daemon.md.source"
+        names = [
+            "docs/news_fusion_daemon.md",
+            document.replace("Research_Repositories/", "Manual/"),
+            document.replace("/files/", "/manual/"),
+            document.replace("news-lab", "news_lab"),
+            document.replace("news-lab", "news--lab"),
+            document.replace("news-lab", "news.lab"),
+            document.replace(".md", ".log"),
+            document.replace(".md", ".err"),
+            original.replace(".md.source", ".log.source"),
+            document + ".source",
+            original.removesuffix(".source"),
+            document.replace("/docs/", "/worker_daemon.log/"),
+            document.replace("/docs/", "/secrets/"),
+            document.replace("/docs/", "/conversations/"),
+            document.replace("/docs/", "/rollouts/"),
+            document.replace("/docs/", "/.env.local/"),
+            document.replace("/docs/", "/conversation_archive/"),
+            document.replace("/docs/", "/my_conversations/"),
+            document.replace("news_fusion_daemon.md", "rollout-fusion_daemon.md"),
+        ]
+        for name in names:
+            for operation in ("prepare", "start"):
+                with self.subTest(name=name, operation=operation):
+                    self.state["paths"] = [name]
+                    before = deepcopy(self.state)
+                    with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read private contents")):
+                        with self.assertRaises(gate.ReviewError):
+                            self.call(operation)
+                    self.assertEqual(self.state, before)
+
+    def test_managed_daemon_documents_reject_symlinks_before_reading(self):
+        outside = self.base / "outside"
+        outside.mkdir()
+        target = outside / "fusion_daemon.md"
+        target.write_text("Fixture content outside the repository.\n")
+        names = []
+        for prefix, suffix in (("11_Documents_and_Reports", ".md"), ("90_Attachments", ".md.source")):
+            parent = self.root / prefix / "Research_Repositories/news-lab/files/docs"
+            parent.mkdir(parents=True)
+            leaf = parent / ("fusion_daemon" + suffix)
+            leaf.symlink_to(target)
+            directory = parent / "linked"
+            directory.symlink_to(outside, target_is_directory=True)
+            names.extend((leaf.relative_to(self.root).as_posix(),
+                          (directory / ("fusion_daemon" + suffix)).relative_to(self.root).as_posix()))
+        for name in names:
+            for operation in ("prepare", "start"):
+                with self.subTest(name=name, operation=operation):
+                    self.state["paths"] = [name]
+                    before = deepcopy(self.state)
+                    with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read symlink target")):
+                        with self.assertRaisesRegex(gate.ReviewError, "symlink"):
+                            self.call(operation)
+                    self.assertEqual(self.state, before)
 
     def test_project_path_validator_rejects_before_any_artifact_read(self):
         self.state["paths"].append("z_blocked.py")

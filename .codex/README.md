@@ -35,6 +35,15 @@ trabajadores; el coordinador los inicia con las herramientas del cliente.
 Un participante sin cambios se publica y verifica con `workspace.py publish
 --repo RUTA`, conservando la dependencia del consumidor sin crear commits vacíos.
 
+La [integración documental con OmarOS](KNOWLEDGE.md) centraliza documentos e
+informes completos de fuentes personales y laborales autorizadas. El productor
+lee revisiones Git y el receptor nativo del vault conserva procedencia, copias
+íntegras y cambios manuales. La política local autoriza cada raíz exacta; el
+registro de proyectos detecta altas pendientes, pero no concede permiso de
+exportación. Crear un repositorio incluye su alta documental cuando el encargo
+autorice esa integración. El servicio recibe localmente y nunca hace commits
+ni push; la publicación conserva el flujo nativo del dueño Git.
+
 | Aspecto | Proyección anterior | Perfil nativo |
 | --- | --- | --- |
 | Contrato de Codex | Entrada → kernel Claude → contratos y roles | `AGENTS.md` propio |

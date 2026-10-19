@@ -261,12 +261,23 @@ def _path(root: Path, name: str) -> Path:
     path = Path(name)
     parts = path.parts
     lower = name.lower()
+    lowered_parts = Path(lower).parts
+    # Imported Markdown can document a daemon; its runtime logs remain private.
+    managed_daemon_document = (
+        len(lowered_parts) >= 5 and lowered_parts[1] == "research_repositories"
+        and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", lowered_parts[2]) is not None
+        and lowered_parts[3] == "files"
+        and not any("_daemon." in part for part in lowered_parts[:-1])
+        and ((lowered_parts[0] == "11_documents_and_reports" and lowered_parts[-1].endswith("_daemon.md"))
+             or (lowered_parts[0] == "90_attachments" and lowered_parts[-1].endswith("_daemon.md.source")))
+    )
     if (not parts or path.is_absolute() or ".." in parts or path.as_posix() != name
             or any(part.lower() in {".git", ".ssh", "secrets", "conversations", "rollouts",
                                    "archived_sessions", "turn_states", ".sync_state", ".codex_notuse"}
                    for part in parts)
             or any(part.lower() == ".env" or part.lower().startswith(".env.") for part in parts)
-            or "conversation_archive" in lower or "_conversations/" in lower or "_daemon." in lower
+            or "conversation_archive" in lower or "_conversations/" in lower
+            or ("_daemon." in lower and not managed_daemon_document)
             or lower.startswith((".codex/sessions/", ".codex/log/", ".codex/state/", ".codex/cache/",
                                  ".claude/cache/", ".claude/run/", "docs/sk_runs/"))
             or path.name.lower().startswith("rollout-")

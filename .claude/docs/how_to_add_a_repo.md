@@ -18,9 +18,19 @@
 5. Wire shared resources and generate the target Codex surface only when requested
    or necessary for the authorized setup. Peer updates across other roots need
    that broader scope; do not automatically rewrite every repository.
-6. Vault material is handled through OmarOS's workflow. The hub cannot write it.
-   Commits/pushes follow established authority, one git root and logical scope
-   at a time; multiple repositories can participate in the same authorized task.
+6. When the authorized setup includes documentation in OmarOS, register the new
+   source through the [document integration](../../.codex/KNOWLEDGE.md): run
+   `python3 .codex/knowledge_sync.py --policy ~/.codex/knowledge-sync.json enroll
+   --repo REPO --classification personal` (or `work` for an authorized work
+   source). Registration and native status alone grant no export permission.
+   `status` exposes sources pending this explicit enrollment. Document and
+   report selection is complete within the declared scope; private data,
+   conversations, active agent instructions and code remain excluded.
+7. OmarOS receives through its own native document receiver and governs its
+   publication. The hub does not write arbitrary vault paths. Automated receipt
+   does not commit or push. Commits/pushes follow established authority, one Git
+   root and logical scope at a time; multiple repositories can participate in
+   the same authorized task.
 
 See [routing](../contracts/routing.md), [bootstrap](../skills/repo-bootstrap/SKILL.md)
 and [Codex parity](codex_parity.md) for detailed procedures.

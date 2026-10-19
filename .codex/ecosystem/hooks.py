@@ -24,6 +24,9 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 MAX_INPUT_BYTES = 1024 * 1024
+# A multi-repository contract also stores per-path evidence for each check.
+# Its bounded metadata budget is independent of the client event's input limit.
+MAX_GIT_STATE_BYTES = 16 * 1024 * 1024
 MAX_PATCH_PATHS = 4096
 EVENTS = frozenset({"UserPromptSubmit", "PreToolUse", "SubagentStart", "SubagentStop", "Stop"})
 PATCH_TOOL = re.compile(r"^(?:[A-Za-z0-9_]+[.:])*(?:apply_patch|Edit|Write)$")
@@ -221,7 +224,7 @@ def _git_state(path: Path) -> dict[str, Any] | None:
     if path.parent.is_symlink() or not path.parent.is_dir() or path.is_symlink() or not path.is_file():
         raise HookError("Git lifecycle state is not a regular local file")
     with path.open("rb") as stream:
-        state = read_payload(stream)
+        state = read_payload(stream, max_bytes=MAX_GIT_STATE_BYTES, context="Git lifecycle metadata")
     return state
 
 
@@ -474,30 +477,32 @@ def handle_event(payload: dict[str, Any], state_dir: Path | None = None,
                     "report the pending work explicitly and use the CLI for partial closure")
 
 
-def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+def _strict_object(pairs: list[tuple[str, Any]], *, context: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
         if key in result:
-            raise HookError("hook input contains duplicate JSON keys")
+            raise HookError(f"{context} contains duplicate JSON keys")
         result[key] = value
     return result
 
 
-def _reject_constant(_value: str) -> None:
-    raise HookError("hook input contains a nonfinite JSON number")
+def _reject_constant(_value: str, *, context: str) -> None:
+    raise HookError(f"{context} contains a nonfinite JSON number")
 
 
-def read_payload(stream: BinaryIO) -> dict[str, Any]:
-    raw = stream.read(MAX_INPUT_BYTES + 1)
-    if len(raw) > MAX_INPUT_BYTES:
-        raise HookError("hook input exceeds the byte limit")
+def read_payload(stream: BinaryIO, *, max_bytes: int = MAX_INPUT_BYTES,
+                 context: str = "hook input") -> dict[str, Any]:
+    raw = stream.read(max_bytes + 1)
+    if len(raw) > max_bytes:
+        raise HookError(f"{context} exceeds the byte limit")
     try:
-        payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_strict_object,
-                             parse_constant=_reject_constant)
+        payload = json.loads(raw.decode("utf-8"),
+                             object_pairs_hook=lambda pairs: _strict_object(pairs, context=context),
+                             parse_constant=lambda value: _reject_constant(value, context=context))
     except (ValueError, UnicodeError, RecursionError):
-        raise HookError("hook input is not strict UTF-8 JSON") from None
+        raise HookError(f"{context} is not strict UTF-8 JSON") from None
     if not isinstance(payload, dict):
-        raise HookError("hook input must be a JSON object")
+        raise HookError(f"{context} must be a JSON object")
     return payload
 
 

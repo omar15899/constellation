@@ -19,12 +19,14 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from typing import Any
 
 sys.dont_write_bytecode = True
 SOURCE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE.parent))
 from ecosystem.core import Engine, Error  # noqa: E402
+from ecosystem import hooks  # noqa: E402
 from helpers import AVAILABLE_PROFILES, DEFAULT_PROFILE  # noqa: E402
 
 
@@ -637,6 +639,87 @@ finally:
         flow.begin("synthetic-setup-turn")
         flow.plan({"requirements": ["Synthetic result is checked"], "paths": ["result.md"]})
         return flow
+
+    def large_git_snapshot(self, state: dict[str, Any]) -> dict[str, Any]:
+        paths = ["result.md"] + [
+            f"11_Documents_and_Reports/Research_Repositories/synthetic/files/docs/report-{index:04}.md"
+            for index in range(3799)
+        ]
+        snapshot = {name: "0" * 64 for name in paths}
+        return {**state, "paths": paths, "checks": [
+            {"status": "passed", "snapshot": snapshot} for _ in range(2)
+        ]}
+
+    def assert_large_git_scope(self, root: Path, path: Path, state: dict[str, Any]) -> None:
+        baseline = path.read_bytes()
+        self.assertGreater(len(baseline), hooks.MAX_INPUT_BYTES)
+        self.assertLessEqual(len(baseline), hooks.MAX_GIT_STATE_BYTES)
+        for name in (state["paths"][0], state["paths"][-1]):
+            with self.subTest(path=name):
+                self.assertEqual(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+                    "PreToolUse", tool_input={"command": patch(str(root / name))})), {})
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
+            "PreToolUse", tool_input={"command": patch(str(root / "undeclared.md"))})))
+        self.assertEqual(path.read_bytes(), baseline)
+
+    def test_large_git_contract_keeps_exact_patch_scope(self) -> None:
+        flow = self.git_plan()
+        state = self.large_git_snapshot(flow.load())
+        flow.save(state)
+        self.assert_large_git_scope(self.root, flow.path, state)
+
+    def test_large_legacy_peer_contract_keeps_exact_patch_scope(self) -> None:
+        self.git_plan()
+        root, path, state = self.legacy_peer()
+        state = self.large_git_snapshot(state)
+        path.write_text(json.dumps(state, indent=2))
+        self.assert_large_git_scope(root, path, state)
+
+    def test_git_metadata_has_a_separate_bounded_strict_json_budget(self) -> None:
+        path = self.directory / "synthetic-metadata.json"
+        prefix, suffix = b'{"padding":"', b'"}'
+        raw = prefix + b" " * (hooks.MAX_GIT_STATE_BYTES - len(prefix) - len(suffix)) + suffix
+        self.assertEqual(len(raw), hooks.MAX_GIT_STATE_BYTES)
+        path.write_bytes(raw)
+        self.assertEqual(hooks._git_state(path), {"padding": " " * (
+            hooks.MAX_GIT_STATE_BYTES - len(prefix) - len(suffix))})
+        path.write_bytes(raw + b" ")
+        with mock.patch.object(hooks.json, "loads") as parser:
+            with self.assertRaisesRegex(hooks.HookError, "Git lifecycle metadata exceeds the byte limit"):
+                hooks._git_state(path)
+            parser.assert_not_called()
+        cases = (
+            (b'{"key":1,"key":2}', "contains duplicate JSON keys"),
+            (b'{"nested":{"key":1,"key":2}}', "contains duplicate JSON keys"),
+            (b'{"number":NaN}', "contains a nonfinite JSON number"),
+            (b"[]", "must be a JSON object"),
+            (b"\xff", "is not strict UTF-8 JSON"),
+        )
+        for payload, reason in cases:
+            with self.subTest(reason=reason, payload=payload):
+                path.write_bytes(b" " * hooks.MAX_INPUT_BYTES + payload)
+                with self.assertRaisesRegex(hooks.HookError, "Git lifecycle metadata " + reason):
+                    hooks._git_state(path)
+
+    def test_large_git_metadata_does_not_expand_standard_input_limit(self) -> None:
+        flow = self.git_plan()
+        state = self.large_git_snapshot(flow.load())
+        flow.save(state)
+        baseline = flow.path.read_bytes()
+        for event in ("PreToolUse", "Stop"):
+            with self.subTest(event=event):
+                raw = json.dumps(self.payload(event)).encode()
+                raw += b" " * (hooks.MAX_INPUT_BYTES + 1 - len(raw))
+                self.assertEqual(len(raw), hooks.MAX_INPUT_BYTES + 1)
+                result = self.run_hook(event, raw=raw)
+                if event == "PreToolUse":
+                    self.assert_denied(result)
+                    diagnostic = result["hookSpecificOutput"]["permissionDecisionReason"]
+                else:
+                    self.assert_warning(result)
+                    diagnostic = result["systemMessage"]
+                self.assertIn("hook input exceeds the byte limit", diagnostic)
+        self.assertEqual(flow.path.read_bytes(), baseline)
 
     def legacy_peer(self) -> tuple[Path, Path, dict[str, Any]]:
         root = self.directory / "legacy-peer"
