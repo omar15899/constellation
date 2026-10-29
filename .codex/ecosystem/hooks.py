@@ -349,10 +349,10 @@ def _git_contracts(cwd: Path, session: str) -> list[dict[str, Any]]:
     return workspaces + [flow for root, flow in workflows.items() if root not in covered]
 
 
-def _legacy_contract(root: Path, session: str) -> dict[str, Any] | None:
-    """Read the isolated OmarOS migration contract as data, never project code.
+def _omaros_contract(root: Path, session: str) -> dict[str, Any] | None:
+    """Read the current OmarOS receiver contract as data, never project code.
 
-    This compatibility reader authorizes only exact patch paths. Domain checks,
+    This receiver adapter authorizes only exact patch paths. Domain checks,
     review and publication remain with the recipient's existing lifecycle.
     """
     from ecosystem.runtime.workflow import Workflow
@@ -364,13 +364,13 @@ def _legacy_contract(root: Path, session: str) -> dict[str, Any] | None:
         return None
     requirements = state.get("requirements")
     if not isinstance(requirements, list) or not all(isinstance(item, str) and item.strip() for item in requirements):
-        raise HookError("legacy recipient requirements are malformed")
+        raise HookError("OmarOS receiver requirements are malformed")
     if not requirements:
         return None
-    return {"kind": "legacy-omaros", "root": root, "state": state}
+    return {"kind": "omaros", "root": root, "state": state}
 
 
-def _guard_legacy(contract: dict[str, Any], actions: list[tuple[str, Path]]) -> None:
+def _guard_omaros(contract: dict[str, Any], actions: list[tuple[str, Path]]) -> None:
     from ecosystem.runtime.workflow import publication_target, safe_path
 
     root, state = contract["root"], contract["state"]
@@ -379,27 +379,27 @@ def _guard_legacy(contract: dict[str, Any], actions: list[tuple[str, Path]]) -> 
             or len(set(paths)) != len(paths) or not isinstance(deletions, list)
             or not all(isinstance(name, str) for name in deletions) or not set(deletions) <= set(paths)
             or state.get("sync_error") or not isinstance(state.get("sync"), dict)):
-        raise HookError("legacy recipient needs an exact plan and successful upstream check")
+        raise HookError("OmarOS receiver needs an exact plan and successful upstream check")
     if state.get("target") != publication_target(root):
-        raise HookError("legacy recipient publication target changed")
+        raise HookError("OmarOS receiver publication target changed")
     sync = state["sync"]
     if (not isinstance(sync.get("checked_at"), str) or not sync["checked_at"]
             or not isinstance(sync.get("head"), str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sync["head"])
             or type(sync.get("behind")) is not int or sync["behind"] != 0
             or any(sync.get(key) != value for key, value in state["target"].items())):
-        raise HookError("legacy recipient upstream evidence is incomplete or inconsistent")
+        raise HookError("OmarOS receiver upstream evidence is incomplete or inconsistent")
     for action, target in actions:
         name = target.relative_to(root).as_posix()
-        # These private export boundaries are retained by the legacy vault.
+        # These private export boundaries belong to the current OmarOS receiver.
         # No knowledge content or baseline-private inventory is consulted.
         private = name.lower()
         if (private.startswith((".claude/logs/", "09_data_sources/email_exports/by_message/",
                                 "09_data_sources/email_exports/snapshots/", "09_data_sources/email_exports/backfill/",
                                 "11_documents_and_reports/email/"))
                 or private == "09_data_sources/email_exports/index.json"):
-            raise HookError("legacy recipient path is private")
+            raise HookError("OmarOS receiver path is private")
         if name not in paths or (name in deletions and action != "Delete File"):
-            raise HookError("legacy recipient path is outside its declared scope")
+            raise HookError("OmarOS receiver path is outside its declared scope")
         # OmarOS does not allow symlink artifacts, including deletion targets.
         safe_path(root, name)
 
@@ -421,17 +421,17 @@ def _guard_git(payload: dict[str, Any], contract: dict[str, Any], cwd: Path,
             if not target.is_relative_to(contract["root"]):
                 owner = owner_root(target.parent)
                 candidates = _git_contracts(owner, session)
-                legacy = _legacy_contract(owner, session)
-                if legacy is not None:
-                    candidates.append(legacy)
+                omaros = _omaros_contract(owner, session)
+                if omaros is not None:
+                    candidates.append(omaros)
                 if len(candidates) != 1 or discover_active(state_dir, session, owner)["tasks"]:
                     raise HookError("external patch owner has no unambiguous active Git contract")
                 recipient = candidates[0]
             key = (recipient["kind"], recipient["root"])
             groups.setdefault(key, (recipient, []))[1].append((action, target))
         for recipient, actions in groups.values():
-            if recipient["kind"] == "legacy-omaros":
-                _guard_legacy(recipient, actions)
+            if recipient["kind"] == "omaros":
+                _guard_omaros(recipient, actions)
                 continue
             reduced = {"tool_input": "*** Begin Patch\n" + "\n".join(
                 f"*** {action}: {target}" for action, target in actions) + "\n*** End Patch"}

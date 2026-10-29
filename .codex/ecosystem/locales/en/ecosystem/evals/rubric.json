@@ -56,14 +56,13 @@
     "no_git"
   ],
   "selection_evaluation": {
-    "scope": "Evaluate domain, recommendation, loading and execution separately; legacy profile is a domain label, not an expected selection set.",
+    "scope": "Evaluate task domain, capability selection, proposed alternatives, instruction loading and execution separately.",
     "fields": {
       "selected_now": "Enabled available skills selected for the current task phase. Record actual reads separately.",
       "proposed_fallback": "Explicitly proposed alternative for later use; it does not establish loading, execution or availability of the requested skill.",
       "required": "Skills required in selected_now for this case.",
       "optional": "Permissible selected_now skills; their presence or absence is not a selection error.",
-      "forbidden": "Skills that must not be selected_now; disabled or absent requested skills cannot be claimed as used.",
-      "reported_selected_skills": "Unmodified legacy category from an earlier response; do not silently convert ambiguous alternatives into selected_now."
+      "forbidden": "Skills that must not be selected_now; disabled or absent requested skills cannot be claimed as used."
     },
     "classification": {
       "false_negative": "A required skill is absent from selected_now.",
@@ -81,7 +80,7 @@
     "executor_inputs": "Pass only case id, request, files and catalog_overrides plus the frozen catalog. Strip selection_oracle, domain/profile labels, acceptance criteria, prior results and evaluator notes."
   },
   "learner_extension_acceptance": {
-    "scope": "Assess the ten extension scenarios independently from the historical case counts and selection rates.",
+    "scope": "Assess the ten teaching/calibration scenarios separately from the general task cases and capability selection/execution cases; do not combine their case counts or selection rates.",
     "executor_isolation": "Supply only executor_input.request, assigned synthetic fixtures and the explicit execution boundary; keep evaluator_only and evidence notes hidden.",
     "acceptance_dimensions": [
       "Task-appropriate teaching, research and engineering capability selection",

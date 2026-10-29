@@ -812,9 +812,9 @@ class CoreTests(FixtureCase):
         self.assertEqual(continued["required_focus"], context["required_focus"])
 
 
-class GateCompatibilityTests(unittest.TestCase):
-    def test_legacy_policy_normalizes_and_optional_context_changes_the_token(self):
-        policy = {"schema_version": 1, "max_rounds": 3,
+class GatePolicyTests(unittest.TestCase):
+    def test_current_policy_optional_context_changes_token_and_retired_inputs_are_rejected(self):
+        policy = {"schema_version": 2,
                   "modes": {"quick": {"reviewers": 1, "focus": {"correctness": 1}},
                             "standard": {"reviewers": 3, "focus": {"correctness": 3}},
                             "deep": {"reviewers": 5, "focus": {"correctness": 3, "security": 2}}},
@@ -828,22 +828,24 @@ class GateCompatibilityTests(unittest.TestCase):
             policy_path = Path(directory) / "policy.json"
             policy_path.write_text(json.dumps(policy))
             with patch.object(gate, "_artifacts", return_value=artifacts):
-                original = gate.prepare(Path("/fixture/portable-review"), state, policy_path=policy_path)
-                self.assertNotIn("max_rounds", original)
-                self.assertNotIn("review_context_sha256", original)
-                policy.pop("max_rounds")
-                policy["schema_version"] = 2
-                policy_path.write_text(json.dumps(policy))
                 current = gate.prepare(Path("/fixture/portable-review"), state, policy_path=policy_path)
-                self.assertEqual(current["token"], original["token"])
+                self.assertNotIn("review_context_sha256", current)
                 state["review_context_sha256"] = "b" * 64
                 changed = gate.prepare(Path("/fixture/portable-review"), state, policy_path=policy_path)
-                self.assertNotEqual(changed["token"], original["token"])
+                self.assertNotEqual(changed["token"], current["token"])
                 self.assertEqual(changed["review_context_sha256"], "b" * 64)
                 for invalid in (None, "", "A" * 64, "f" * 63, 42):
                     with self.subTest(invalid=invalid), self.assertRaises(gate.ReviewError):
                         gate.prepare(Path("/fixture/portable-review"), {**state, "review_context_sha256": invalid},
                                      policy_path=policy_path)
+                for rejected in ({**policy, "schema_version": 1},
+                                 {**policy, "schema_version": 1, "max_rounds": 3},
+                                 {**policy, "max_rounds": 3}):
+                    policy_path.write_text(json.dumps(rejected))
+                    before = json.loads(json.dumps(state))
+                    with self.assertRaises(gate.ReviewError):
+                        gate.prepare(Path("/fixture/portable-review"), state, policy_path=policy_path)
+                    self.assertEqual(state, before)
 
 
 class ConcurrencyTests(FixtureCase):
@@ -1957,13 +1959,13 @@ class GitCheckResolutionTests(unittest.TestCase):
         self.assertEqual(context["artifact_authors"]["writer"], ["one.md"])
         self.report(context, "writer", ["correctness"], ["two.md"])
 
-    def test_legacy_unbound_authorship_remains_unknown_and_noncontributors_can_close(self):
+    def test_current_unobserved_author_history_stays_conservative_and_noncontributors_can_close(self):
         self.fresh_bound_current_outputs()
         state = self.flow.load()
         state.pop("review_author_bindings")
         self.flow.save(state)
-        legacy = self.flow.review_operation("prepare")
-        self.assertEqual(legacy["artifact_authors"]["writer"], ["one.md", "two.md"])
+        unobserved = self.flow.review_operation("prepare")
+        self.assertEqual(unobserved["artifact_authors"]["writer"], ["one.md", "two.md"])
         self.assertNotIn("review_author_bindings", self.flow.load())
         self.flow.review_operation("author", {"author": "writer", "paths": ["one.md"]})
         records = self.flow.load()["review_author_bindings"]["writer"]
@@ -1975,7 +1977,7 @@ class GitCheckResolutionTests(unittest.TestCase):
             self.report(context, "writer", ["correctness"], ["two.md"])
         self.report(context, "fresh-independent", ["correctness"])
         self.flow.review({"correct outputs": "Fresh noncontributor checked the exact artifacts."})
-        self.flow.commit(context["paths"], "Close synthetic legacy contract")
+        self.flow.commit(context["paths"], "Close synthetic contract with unobserved history")
         self.assertTrue(self.flow.finish()["completed"])
 
     def test_unknown_observation_cannot_be_erased_by_later_known_registration(self):

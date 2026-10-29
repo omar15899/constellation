@@ -24,7 +24,7 @@ SOURCE = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(SOURCE.parent))
 from ecosystem import claude_hooks as adapter, hooks, platform_support
-from ecosystem.build import source_resource
+from ecosystem.build import MODULES, allowed_files, build_bundle, file_record, source_resource, verify_bundle
 from ecosystem.platform_support import file_lock, set_access
 from helpers import Scenario
 
@@ -225,30 +225,26 @@ class ClaudeLoaderTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="claude-verified-loader-")
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name).resolve()
+        source_manifest = SOURCE.parent / "bundle.json"
+        self.available_modules = (tuple(json.loads(source_manifest.read_text(encoding="utf-8"))["modules"])
+                                  if source_manifest.is_file() else MODULES)
+        self.module = self.available_modules[0]
 
     def release(self, *, installed: bool = False,
                 managed_names: tuple[str, str] = ("skills", "constellation")) -> Path:
         root = (self.base / "home" / managed_names[0] / managed_names[1]
                 if installed else self.base / "bundle")
-        resources = {
-            "ecosystem/claude_hooks.py": source_resource(SOURCE.parent, "ecosystem/claude_hooks.py")[0],
-            ".claude-plugin/plugin.json": json.dumps({"name": "constellation", "version": "1.3.0"}).encode(),
-            ".codex-plugin/plugin.json": json.dumps({"name": "constellation", "version": "1.3.0"}).encode(),
-            "ecosystem/hooks.py": b"raise RuntimeError('synthetic unimported package')\n",
-        }
-        records = {}
-        for relative, content in resources.items():
-            path = root / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-            set_access(path, 0o644)
-            records[relative] = {"sha256": hashlib.sha256(content).hexdigest(), "mode": 0o644}
-        manifest = {"schema": 1, "modules": ["coding"], "files": records}
-        (root / "bundle.json").write_text(json.dumps(manifest))
+        root.parent.mkdir(parents=True, exist_ok=True)
+        manifest = build_bundle(root, (self.module,), source_root=SOURCE.parent)
+        module = root / "ecosystem/hooks.py"
+        module.write_bytes(b"raise RuntimeError('synthetic unimported package')\n")
+        manifest["files"]["ecosystem/hooks.py"] = file_record(module)
+        (root / "bundle.json").write_text(json.dumps(manifest), encoding="utf-8")
         set_access(root / "bundle.json", 0o644)
+        version = json.loads((root / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
         if installed:
             receipt = {"schema": 1, "owner": "constellation-claude-skills-dir", "plugin_id": "constellation@skills-dir",
-                       "version": "1.3.0", "modules": ["coding"],
+                       "version": version, "modules": [self.module],
                        "bundle_sha256": hashlib.sha256((root / "bundle.json").read_bytes()).hexdigest()}
             (root / adapter.MARKER).write_text(json.dumps(receipt))
             set_access(root / adapter.MARKER, 0o600)
@@ -287,7 +283,7 @@ class ClaudeLoaderTests(unittest.TestCase):
         marker.write_bytes(content)
         set_access(marker, 0o600)
         with adapter.verified_release(root) as manifest:
-            self.assertEqual(manifest["modules"], ["coding"])
+            self.assertEqual(manifest["modules"], [self.module])
         lock = root.parent.parent / "constellation/.install.lock"
         with lock.open("rb") as stream:
             with file_lock(stream.fileno(), exclusive=True, blocking=False):
@@ -320,10 +316,10 @@ class ClaudeLoaderTests(unittest.TestCase):
         moved.parent.mkdir()
         shutil.move(str(root), str(moved))
         with adapter.verified_release(moved) as manifest:
-            self.assertEqual(manifest["modules"], ["coding"])
+            self.assertEqual(manifest["modules"], [self.module])
         installed = self.release(installed=True)
         with adapter.verified_release(installed) as manifest:
-            self.assertEqual(manifest["modules"], ["coding"])
+            self.assertEqual(manifest["modules"], [self.module])
 
     def _relative_release_alias(self) -> tuple[Path, Path]:
         root = self.release()
@@ -365,10 +361,10 @@ class ClaudeLoaderTests(unittest.TestCase):
         root = self.release()
         with chdir(self.base):
             with adapter.verified_release(Path("bundle")) as manifest:
-                self.assertEqual(manifest["modules"], ["coding"])
+                self.assertEqual(manifest["modules"], [self.module])
         with chdir(root):
             with adapter.verified_release(Path(".")) as manifest:
-                self.assertEqual(manifest["modules"], ["coding"])
+                self.assertEqual(manifest["modules"], [self.module])
 
     @unittest.skipUnless(os.name == "nt", "Relative reparse behavior requires native Windows")
     def test_native_windows_relative_release_rejects_first_reparse_component(self) -> None:
@@ -461,7 +457,7 @@ class ClaudeLoaderTests(unittest.TestCase):
             {**generator.__globals__, "IS_WINDOWS": True, "_ps_guard_parents": pin_lookup},
         ))
         with verify_windows_policy(root) as manifest:
-            self.assertEqual(manifest["modules"], ["coding"])
+            self.assertEqual(manifest["modules"], [self.module])
             self.assertEqual(events, [("enter", root / "bundle.json")])
         self.assertEqual(events[-1], ("exit", root / "bundle.json"))
         events.clear()
@@ -492,7 +488,7 @@ class ClaudeLoaderTests(unittest.TestCase):
         try:
             self.base.chmod(0o1777)
             with adapter.verified_release(root) as manifest:
-                self.assertEqual(manifest["modules"], ["coding"])
+                self.assertEqual(manifest["modules"], [self.module])
         finally:
             self.base.chmod(before)
 
@@ -689,6 +685,40 @@ class ClaudeLoaderTests(unittest.TestCase):
         result = self.invoke(root, "SessionStart", env={"CONSTELLATION_HOOK_OWNER": "project"})
         self.assertEqual(result.returncode, 0)
         self.assertEqual(json.loads(result.stdout), {})
+
+
+    def test_source_inventory_matches_current_builder_for_available_modules(self) -> None:
+        for module in self.available_modules:
+            with self.subTest(module=module):
+                self.assertEqual(adapter._current_files((module,)), allowed_files((module,)))
+        self.assertEqual(adapter._current_files(self.available_modules),
+                         allowed_files(self.available_modules))
+
+    def test_reduced_claimed_inventory_rejects_before_any_package_import(self) -> None:
+        root = self.release()
+        self.assertEqual(verify_bundle(root)["modules"], [self.module])
+        manifest = json.loads((root / "bundle.json").read_text(encoding="utf-8"))
+        keep = {"ecosystem/claude_hooks.py", "ecosystem/hooks.py",
+                ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"}
+        marker = self.base / "reduced-release-must-not-import"
+        payload = root / "ecosystem/hooks.py"
+        payload.write_text("from pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n",
+                           encoding="utf-8")
+        for relative in set(manifest["files"]) - keep:
+            (root / relative).unlink()
+        manifest["files"] = {relative: file_record(root / relative) for relative in sorted(keep)}
+        (root / "bundle.json").write_text(json.dumps(manifest), encoding="utf-8")
+        before = {path.relative_to(root).as_posix(): path.read_bytes()
+                  for path in root.rglob("*") if path.is_file()}
+        with self.assertRaisesRegex(adapter.AdapterError, "active layout"):
+            with adapter.verified_release(root):
+                self.fail("self-described partial inventory accepted by source entry")
+        result = self.invoke(root, "PreToolUse")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertFalse(marker.exists())
+        self.assertEqual(before, {path.relative_to(root).as_posix(): path.read_bytes()
+                                  for path in root.rglob("*") if path.is_file()})
 
 
 if __name__ == "__main__":

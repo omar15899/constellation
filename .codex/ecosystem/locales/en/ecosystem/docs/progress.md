@@ -76,7 +76,8 @@ necessary.
 
 The portable engine uses the same `progress-show`, `progress-update`,
 `progress-export` and `progress-ack` operations with `session_id`, `task_id` and
-`agent_id`. Update and ack retain the **engine-wide** `expected_revision` and
+`agent_id`. Update and ack use the engine revision returned for the selected
+task as `expected_revision`, rather than a separate milestone counter, and retain
 replay through `request_id`; they do not use `expected_task_start`. Consult the
 [protocol](../references/protocol.md) for the portable contract. Do not open a
 second Git or portable contract to record the first contract's progress.

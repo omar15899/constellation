@@ -253,15 +253,11 @@ class NativeClient:
         if marketplace is not None:
             arguments += ("--marketplace", marketplace)
         value = self._run(*arguments)
-        if set(value) == {"plugins"}:
-            rows = value["plugins"]
-        elif "installed" in value and set(value) <= {"installed", "available"}:
-            rows = value["installed"]
-            available = value.get("available", [])
-            if not isinstance(available, list) or any(not isinstance(row, dict) for row in available):
-                raise NativeError("Invalid native available plugin metadata")
-        else:
+        if set(value) != {"installed", "available"}:
             raise NativeError("Ambiguous or unsupported native plugin list")
+        rows, available = value["installed"], value["available"]
+        if not isinstance(available, list) or any(not isinstance(row, dict) for row in available):
+            raise NativeError("Invalid native available plugin metadata")
         if (not isinstance(rows, list) or any(not isinstance(row, dict)
                 or not isinstance(row.get("pluginId"), str) or not row["pluginId"].strip()
                 or type(row.get("enabled")) is not bool

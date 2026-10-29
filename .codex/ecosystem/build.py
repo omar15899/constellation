@@ -6,6 +6,7 @@ import argparse
 import ast
 import hashlib
 import importlib.util
+from itertools import combinations
 import json
 import os
 from pathlib import Path
@@ -74,49 +75,6 @@ COMMON_FILES = (
     *(f"ecosystem/agents/{name}.toml" for name in
       ("researcher", "reviewer", "security-reviewer", "verifier")),
 )
-# Exact published 1.3.1 ownership; independent of the current inventory.
-_LEGACY_131_COMMON_FILES = (
-    "ecosystem/claude.py", "ecosystem/claude_hooks.py", "ecosystem/claude-hooks.json",
-    "ecosystem/tests/test_claude_install.py", "ecosystem/tests/test_claude_hooks.py",
-    "ecosystem/tests/test_claude_package.py", "ecosystem/tests/native_claude_probe.py",
-    *(f"ecosystem/runtime/{name}.py" for name in
-      ("__init__", "workflow", "workspace", "dispatch", "review_gate", "agent_policy", "progress")),
-    "ecosystem/runtime/review-policy.json",
-    *(f"ecosystem/{name}.py" for name in
-      ("__init__", "core", "storage", "cli", "hooks", "hook_entry", "build", "install", "native", "validate")),
-    "ecosystem/hooks.json", "ecosystem/README.md", "ecosystem/docs/compatibility.md",
-    "ecosystem/docs/architecture.md", "ecosystem/docs/migrations.md", "ecosystem/docs/progress.md",
-    "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
-    "ecosystem/docs/evaluation.md",
-    "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
-    *(f"ecosystem/tests/{name}.py" for name in
-      ("helpers", "test_core", "test_hooks", "test_hook_entry", "test_package", "test_validation", "test_capabilities",
-       "test_progress", "test_progress_core")),
-    *(f"ecosystem/agents/{name}.toml" for name in
-      ("researcher", "reviewer", "security-reviewer", "verifier")),
-)
-# Frozen ownership inventory for the dual-client release being replaced.
-# Never derive historical membership from the current release or load old code.
-_LEGACY_130_COMMON_FILES = (
-    "ecosystem/claude.py", "ecosystem/claude_hooks.py", "ecosystem/claude-hooks.json",
-    "ecosystem/tests/test_claude_install.py", "ecosystem/tests/test_claude_hooks.py",
-    "ecosystem/tests/test_claude_package.py", "ecosystem/tests/native_claude_probe.py",
-    *(f"ecosystem/runtime/{name}.py" for name in
-      ("__init__", "workflow", "workspace", "dispatch", "review_gate", "agent_policy", "progress")),
-    "ecosystem/runtime/review-policy.json",
-    *(f"ecosystem/{name}.py" for name in
-      ("__init__", "core", "storage", "cli", "hooks", "hook_entry", "build", "install", "native", "validate")),
-    "ecosystem/hooks.json", "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
-    "ecosystem/ARCHITECTURE.md", "ecosystem/MIGRATION.md", "ecosystem/PROGRESS.md",
-    "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
-    "ecosystem/EVALUATION.md", "ecosystem/evaluation.json",
-    "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
-    *(f"ecosystem/tests/{name}.py" for name in
-      ("helpers", "test_core", "test_hooks", "test_hook_entry", "test_package", "test_validation", "test_capabilities",
-       "test_progress", "test_progress_core")),
-    *(f"ecosystem/agents/{name}.toml" for name in
-      ("researcher", "reviewer", "security-reviewer", "verifier")),
-)
 MODULE_AGENTS = {
     "coding": ("coder",),
     "mathematics": ("mathematician", "counterexample"),
@@ -151,6 +109,56 @@ def allowed_files(modules: Iterable[str]) -> set[str]:
     paths.update(f"agents/{Path(path).stem}.md" for path in tuple(paths)
                  if path.startswith("ecosystem/agents/") and path.endswith(".toml"))
     return paths
+
+
+_INVENTORY_BEGIN = "# BEGIN CONSTELLATION CURRENT INVENTORY"
+_INVENTORY_END = "# END CONSTELLATION CURRENT INVENTORY"
+
+
+def current_inventory_block() -> str:
+    """Project the one current allowlist into self-contained native entries."""
+    singles = {module: allowed_files((module,)) for module in MODULES}
+    common = set.intersection(*singles.values())
+    extras = {module: singles[module] - common for module in MODULES}
+    for count in range(1, len(MODULES) + 1):
+        for group in combinations(MODULES, count):
+            projected = common.union(*(extras[module] for module in group))
+            if projected != allowed_files(group):
+                raise BundleError("Native inventory projection does not match the current layout")
+    lines = [_INVENTORY_BEGIN, "# Generated from build.allowed_files; do not maintain a second inventory.",
+             "_CURRENT_COMMON_FILES = frozenset(("]
+    lines.extend("    " + json.dumps(path) + "," for path in sorted(common))
+    lines.append("))")
+    lines.append("_CURRENT_MODULE_FILES = {")
+    for module in MODULES:
+        lines.append("    " + json.dumps(module) + ": frozenset((")
+        lines.extend("        " + json.dumps(path) + "," for path in sorted(extras[module]))
+        lines.append("    )),")
+    lines.extend(["}", "", "",
+                  "def _current_files(modules):",
+                  '    """Return the active trusted inventory without importing package code."""',
+                  "    if (not isinstance(modules, (list, tuple)) or not modules",
+                  "            or not all(isinstance(module, str) for module in modules)",
+                  "            or len(set(modules)) != len(modules)",
+                  "            or not set(modules) <= set(_CURRENT_MODULE_FILES)):",
+                  '        raise ValueError("Invalid current package modules")',
+                  "    return set(_CURRENT_COMMON_FILES).union(",
+                  "        *(_CURRENT_MODULE_FILES[module] for module in modules))",
+                  _INVENTORY_END])
+    return "\n".join(lines)
+
+
+def render_current_inventory(content: bytes) -> bytes:
+    """Regenerate only the exact native inventory block; never execute it."""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeError as exc:
+        raise BundleError("Native bootstrap must be UTF-8") from exc
+    if text.count(_INVENTORY_BEGIN) != 1 or text.count(_INVENTORY_END) != 1:
+        raise BundleError("Native bootstrap must contain one current inventory block")
+    before, remainder = text.split(_INVENTORY_BEGIN, 1)
+    _, after = remainder.split(_INVENTORY_END, 1)
+    return (before + current_inventory_block() + after).encode("utf-8")
 
 
 def translation_files() -> set[str]:
@@ -218,35 +226,6 @@ def _english_resources(source: Path) -> dict[str, bytes]:
     progress = "ecosystem/runtime/progress.py"
     _check_progress_translation(regular_file(source, progress).read_bytes(), resources[progress])
     return resources
-
-
-def _historical_files(common: tuple[str, ...], modules: Iterable[str]) -> set[str]:
-    """Expand one frozen release inventory without consulting current membership."""
-    selected = select_modules(modules)
-    paths = set(common) | {PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST}
-    roles = {"coding": ("coder",), "mathematics": ("mathematician", "counterexample"),
-             "quant-research": ("coder", "mathematician", "counterexample"),
-             "writter": ("editor", "mathematician", "coder")}
-    for module in selected:
-        paths.update(f"skills/{module}/{name}" for name in
-                     ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
-        paths.update(f"ecosystem/agents/{name}.toml" for name in roles[module])
-    if {"mathematics", "writter"} & set(selected):
-        paths.update(("ecosystem/references/ontology.md", "ecosystem/references/ontology-examples.md"))
-    paths.update(f"agents/{Path(path).stem}.md" for path in tuple(paths)
-                 if path.startswith("ecosystem/agents/") and path.endswith(".toml"))
-    return paths
-
-
-
-def legacy_files_130(modules: Iterable[str]) -> set[str]:
-    """Exact 1.3.0 membership, used only for already-owned releases."""
-    return _historical_files(_LEGACY_130_COMMON_FILES, modules)
-
-
-def legacy_files_131(modules: Iterable[str]) -> set[str]:
-    """Exact 1.3.1 membership, used only for already-owned releases."""
-    return _historical_files(_LEGACY_131_COMMON_FILES, modules)
 
 
 def source_path(relative: str) -> str:
@@ -382,6 +361,11 @@ def source_resource(root: Path, relative: str) -> tuple[bytes, int]:
     content = origin.read_bytes()
     if not portable and relative.startswith("agents/") and relative.endswith(".md"):
         return render_claude_agent(content), 0o644
+    if not portable and relative in {"ecosystem/claude_hooks.py", "ecosystem/hook_entry.py"}:
+        projected = render_current_inventory(content)
+        if projected != content:
+            raise BundleError("Source bootstrap inventory is stale; regenerate it from the current builder")
+        content = projected
     if not portable and relative == "ecosystem/claude_hooks.py":
         support = regular_file(root, "ecosystem/platform_support.py").read_bytes()
         content = render_claude_bootstrap(content, support)
@@ -478,7 +462,7 @@ def _write_json(path: Path, value: dict) -> None:
     _PLATFORM.set_access(path, 0o644)
 
 
-def _check_plugin(value: dict, *, legacy: bool = False) -> None:
+def _check_plugin(value: dict) -> None:
     if (not isinstance(value, dict) or set(value) != {"name", "version", "description", "skills", "hooks"}
             or value.get("name") != "constellation" or not isinstance(value.get("version"), str)
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value["version"])
@@ -486,8 +470,6 @@ def _check_plugin(value: dict, *, legacy: bool = False) -> None:
             or value.get("skills") != "./skills/"
             or value.get("hooks") != "./ecosystem/hooks.json"):
         raise BundleError("Plugin manifest does not match the Constellation contract")
-    if value["version"] in {"1.3.0", "1.3.1"} and not legacy:
-        raise BundleError(f"Version {value['version']} is reserved for the historical owned layout")
 
 
 def _check_claude_plugin(value: dict) -> None:
@@ -502,29 +484,11 @@ def _check_claude_plugin(value: dict) -> None:
 
 
 def verify_bundle(root: Path, *, installation: bool = False) -> dict:
-    """Verify the current distribution; legacy layouts are not new inputs."""
-    return _verify_bundle(root, installation=installation, legacy=None)
+    """Verify the one active package layout without executing candidate code.
 
-
-def verify_owned_bundle(root: Path, *, installation: bool = False) -> dict:
-    """Verify current or exact 1.3.0/1.3.1 data without executing owned code.
-
-    Installers use this only for an existing installation and rollback. Incoming
-    releases must still pass verify_bundle against the current allowlist.
+    Incoming distributions and existing installations use this same inventory,
+    projection and access contract. Release identifiers do not select readers.
     """
-    root = Path(root)
-    if _PLATFORM.IS_WINDOWS:
-        root = _PLATFORM.validate_lookup(root)
-    if _PLATFORM.is_reparse(root) or not root.is_dir():
-        raise BundleError("Bundle must be a real directory")
-    plugin = _json(regular_file(root, PLUGIN_MANIFEST))
-    version = plugin.get("version")
-    historical = version if version in ("1.3.0", "1.3.1") else None
-    return _verify_bundle(root, installation=installation, legacy=historical)
-
-
-def _verify_bundle(root: Path, *, installation: bool, legacy: str | None) -> dict:
-    """Check membership, content and metadata against one complete layout."""
     root = Path(root)
     if _PLATFORM.IS_WINDOWS:
         root = _PLATFORM.validate_lookup(root)
@@ -542,8 +506,7 @@ def _verify_bundle(root: Path, *, installation: bool, legacy: str | None) -> dic
     if not isinstance(manifest.get("modules"), list):
         raise BundleError("Bundle modules must be an explicit list")
     selected = select_modules(manifest["modules"])
-    expected = (legacy_files_130(selected) if legacy == "1.3.0" else
-                legacy_files_131(selected) if legacy == "1.3.1" else allowed_files(selected))
+    expected = allowed_files(selected)
     if not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != expected:
         raise BundleError("Bundle file list differs from the allowlist")
     actual = set()
@@ -578,16 +541,19 @@ def _verify_bundle(root: Path, *, installation: bool, legacy: str | None) -> dic
             raise BundleError(f"Bundle integrity mismatch: {relative}")
     codex = _json(regular_file(root, PLUGIN_MANIFEST))
     claude = _json(regular_file(root, CLAUDE_PLUGIN_MANIFEST))
-    _check_plugin(codex, legacy=legacy is not None)
+    _check_plugin(codex)
     _check_claude_plugin(claude)
-    if codex["version"] != claude["version"] or (legacy is not None and codex["version"] != legacy):
-        raise BundleError("Native plugin versions differ from the owned release")
+    if codex["version"] != claude["version"]:
+        raise BundleError("Native plugin versions differ")
     bundle_target(root)
-    if legacy is None:
-        bootstrap = regular_file(root, "ecosystem/claude_hooks.py").read_bytes()
-        support = regular_file(root, "ecosystem/platform_support.py").read_bytes()
-        if render_claude_bootstrap(bootstrap, support) != bootstrap:
-            raise BundleError("Claude bootstrap differs from canonical platform support")
+    for relative in ("ecosystem/claude_hooks.py", "ecosystem/hook_entry.py"):
+        entry = regular_file(root, relative).read_bytes()
+        if render_current_inventory(entry) != entry:
+            raise BundleError(f"Native bootstrap inventory differs from the current layout: {relative}")
+    bootstrap = regular_file(root, "ecosystem/claude_hooks.py").read_bytes()
+    support = regular_file(root, "ecosystem/platform_support.py").read_bytes()
+    if render_claude_bootstrap(bootstrap, support) != bootstrap:
+        raise BundleError("Claude bootstrap differs from canonical platform support")
     for relative in sorted(expected):
         if relative.startswith("agents/") and relative.endswith(".md"):
             canonical = regular_file(root, source_path(relative))

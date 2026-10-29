@@ -338,8 +338,6 @@ class _Validator:
         version = data.get("version")
         if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):
             self.error(relative, "version must be a safe non-empty release identifier")
-        elif version in {"1.3.0", "1.3.1"}:
-            self.error(relative, f"version {version} is reserved for the historical owned layout")
         if "description" in data and (not isinstance(data["description"], str) or not data["description"].strip()):
             self.error(relative, "description must be a non-empty string")
 

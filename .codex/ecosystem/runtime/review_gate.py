@@ -148,17 +148,15 @@ def budget(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy
 
 
 def _validated_policy(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict) and "max_rounds" in value:
+        raise ReviewError("Retired max_rounds is not supported by the current review policy.")
     _object(value, "Review policy", {"schema_version", "modes",
                                     "documentation_extensions", "documentation_names", "deep_patterns"},
-            {"allow_quick_code", "max_rounds"})
+            {"allow_quick_code"})
     if "allow_quick_code" in value and type(value["allow_quick_code"]) is not bool:
         raise ReviewError("allow_quick_code must be a boolean.")
-    if type(value["schema_version"]) is not int or value["schema_version"] not in {1, 2}:
-        raise ReviewError("Unsupported review policy schema_version.")
-    if value["schema_version"] == 1:
-        _integer(value.get("max_rounds"), "Legacy maximum review rounds", high=10)
-    elif "max_rounds" in value:
-        raise ReviewError("Schema 2 review policy does not accept max_rounds.")
+    if type(value["schema_version"]) is not int or value["schema_version"] != 2:
+        raise ReviewError("Unsupported review policy schema_version; current schema 2 is required.")
     _object(value["modes"], "Review modes", set(MODES))
     previous_count = 0
     previous_focus: dict[str, int] = {}
@@ -179,10 +177,7 @@ def _validated_policy(value: Any) -> dict[str, Any]:
         _strings(value[key], key, empty=key != "deep_patterns")
     if any(not extension.startswith(".") or "/" in extension for extension in value["documentation_extensions"]):
         raise ReviewError("Documentation extensions must be filename suffixes beginning with a dot.")
-    # Normalize legacy policy and ledger floors before hashing. The obsolete
-    # round cap is not a safety minimum; every other floor remains binding.
-    return {**{key: deepcopy(item) for key, item in value.items() if key != "max_rounds"},
-            "schema_version": 2}
+    return deepcopy(value)
 
 
 def _policy_floor(policy: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
@@ -343,7 +338,7 @@ def _artifacts(root: Path, paths: list[str], deletions: list[str]) -> dict[str, 
 
 def _author_bindings(state: dict[str, Any],
                      authors: dict[str, list[str]]) -> dict[str, list[dict[str, Any]]]:
-    """Normalize append-only observations without inventing legacy identities."""
+    """Normalize append-only observations without inventing unobserved identities."""
     stored = state.get("review_author_bindings", {})
     if not isinstance(stored, dict) or set(stored) - set(authors):
         raise ReviewError("Author binding history must belong to declared contributors.")
@@ -372,9 +367,8 @@ def _author_bindings(state: dict[str, Any],
             seen.add(key)
             covered.add(name)
             normalized.append(entry)
-        # Missing historical observations are uncertainty, including old
-        # contracts created before this ledger existed. Never observe them now
-        # and pretend the result describes their earlier contribution.
+        # Missing observations are current safety uncertainty. Never observe
+        # an object now and pretend it establishes an earlier contribution.
         normalized.extend({"path": name, "identity": None} for name in paths if name not in covered)
         result[identity] = normalized
     return result
@@ -447,12 +441,17 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
             path_validator: Callable[[Path, str], Any] | None = None,
             _quick_code_reason: str | None = None) -> dict[str, Any]:
     """Return the exact context required for the next independent review."""
+    ledger = state.get("review_gate")
+    if ledger is not None and (
+            not isinstance(ledger, dict) or type(ledger.get("schema_version")) is not int
+            or ledger["schema_version"] != 2 or not isinstance(ledger.get("rounds"), list)
+            or not isinstance(ledger.get("findings"), dict)):
+        raise ReviewError("Unsupported review ledger schema or shape; current schema 2 is required.")
     policy = policy_for(root, policy_path=policy_path)
     if policy is None:
         if state.get("review_gate"):
             raise ReviewError("An active review cannot be disabled by changing repository registration.")
         return {"enabled": False}
-    ledger = state.get("review_gate")
     policy_hash = _hash(policy)
     if policy_path is not None and (_quick_code_reason is not None or
             isinstance(ledger, dict) and ledger.get("quick_code_declaration") is not None):
@@ -551,7 +550,9 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
 
 def _ledger(state: dict[str, Any], context: dict[str, Any], *, allow_policy_change: bool = False) -> dict[str, Any]:
     ledger = state.get("review_gate")
-    if not isinstance(ledger, dict) or ledger.get("schema_version") not in {1, 2} or not isinstance(ledger.get("rounds"), list) or not isinstance(ledger.get("findings"), dict):
+    if (not isinstance(ledger, dict) or type(ledger.get("schema_version")) is not int
+            or ledger["schema_version"] != 2 or not isinstance(ledger.get("rounds"), list)
+            or not isinstance(ledger.get("findings"), dict)):
         raise ReviewError("Start an independent review before submitting evidence or publishing.")
     if not allow_policy_change and ledger.get("policy_sha256") != context["policy_sha256"]:
         raise ReviewError("Review policy changed during this task; start a fresh round under its retained policy floor.")
@@ -598,7 +599,7 @@ def _adaptation(ledger: dict[str, Any] | None, artifacts: dict[str, Any], token:
     return {"artifact_fingerprint": fingerprint, "independent_basis": basis,
             "signal": "unchanged" if unchanged else "repeated_without_new_observation" if no_progress
                       else "new_independent_observation" if repeat
-                      else "legacy_baseline" if rounds and not any("artifact_fingerprint" in item for item in rounds)
+                      else "incomplete_history" if rounds and not any("artifact_fingerprint" in item for item in rounds)
                       else "new_artifacts" if rounds else "initial",
             "continuation_required": bool(no_progress and not unchanged),
             "cycle_key": cycle, "repeated_round": repeat["number"] if repeat else None,
@@ -731,7 +732,7 @@ def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None,
                 finding["status"] = "open"
                 stale_resolutions.append(finding["id"])
     number = len(ledger["rounds"]) + 1
-    ledger.update(schema_version=2, policy_sha256=context["policy_sha256"], policy_floor=context["policy_floor"], mode_floor=context["mode"])
+    ledger.update(policy_sha256=context["policy_sha256"], policy_floor=context["policy_floor"], mode_floor=context["mode"])
     revision = {"number": number, "token": context["token"], "mode": context["mode"], "reports": {},
                 "artifact_fingerprint": adaptation["artifact_fingerprint"],
                 "independent_basis": adaptation["independent_basis"],

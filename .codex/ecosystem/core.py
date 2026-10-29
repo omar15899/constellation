@@ -499,7 +499,7 @@ class Engine:
                 self._coordinator(state, actor)
                 if current is None:
                     if operation != "progress-update" or payload.get("task_uid") is not None:
-                        raise Error("Legacy task needs a first progress-update without task_uid.")
+                        raise Error("Task needs a first progress-update without task_uid.")
                     current = journal.create_progress(
                         payload["checkpoint"]["snapshot"]["objectives"][0],
                         source_alias=payload.get("source_alias", re.sub(r"[^a-z0-9-]+", "-", self.root.name.lower()).strip("-")[:64].rstrip("-") or "project"))

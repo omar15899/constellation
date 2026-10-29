@@ -9,13 +9,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
-
-try:
-    import tomllib
-except ImportError:
-    tomllib = None
 
 MODULE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE))
@@ -36,11 +32,10 @@ class RenderingTests(unittest.TestCase):
         self.assertEqual(ap.render_config(rendered, 6), rendered)
         changed = ap.render_config(rendered, 9)
         self.assertEqual(changed, rendered.replace(f'{ap.KEY} = 6', f'{ap.KEY} = 9'))
-        if tomllib is not None:
-            parsed = tomllib.loads(changed)
-            self.assertEqual(parsed['agents'][ap.KEY], 9)
-            self.assertEqual(parsed['model'], 'chosen-model')
-            self.assertEqual(parsed['agents']['reviewer']['description'], 'review role')
+        parsed = tomllib.loads(changed)
+        self.assertEqual(parsed['agents'][ap.KEY], 9)
+        self.assertEqual(parsed['model'], 'chosen-model')
+        self.assertEqual(parsed['agents']['reviewer']['description'], 'review role')
 
     def test_new_table_and_subsequent_user_settings_keep_their_scope(self):
         source = '# Native profile\n'
@@ -49,8 +44,7 @@ class RenderingTests(unittest.TestCase):
         with_user_setting = first + 'max_depth = 2\n'
         updated = ap.render_config(with_user_setting, 8)
         self.assertTrue(updated.endswith('max_depth = 2\n'))
-        if tomllib is not None:
-            self.assertEqual(tomllib.loads(updated)['agents']['max_depth'], 2)
+        self.assertEqual(tomllib.loads(updated)['agents']['max_depth'], 2)
         self.assertEqual(ap.render_config(updated, 8), updated)
 
     def test_preserves_crlf_and_handles_no_final_newline(self):
@@ -67,10 +61,9 @@ class RenderingTests(unittest.TestCase):
         rendered = ap.render_config(source, 6)
         self.assertTrue(rendered.startswith(source))
         self.assertEqual(ap.render_config(rendered, 6), rendered)
-        if tomllib is not None:
-            self.assertEqual(tomllib.loads(rendered)['agents'][ap.KEY], 6)
+        self.assertEqual(tomllib.loads(rendered)['agents'][ap.KEY], 6)
 
-    def test_unmanaged_concurrency_and_legacy_alias_are_rejected(self):
+    def test_unmanaged_concurrency_and_retired_alias_are_rejected(self):
         for source in ('[agents]\nmax_threads = 6\n',
                        f'[agents]\n{ap.KEY} = 6\n',
                        'agents.max_threads = 6\n',
@@ -98,21 +91,46 @@ class RenderingTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(Blocked):
                 ap.render_config(source, 6)
 
-    def test_basic_rendering_does_not_require_tomllib(self):
-        import builtins
-        real_import = builtins.__import__
+    def test_configured_limit_reads_only_the_current_scalar_key(self):
+        for source in (f'[agents]\n{ap.KEY} = 7\n',
+                       f'agents.{ap.KEY} = +7\n',
+                       f'["agents"]\n"{ap.KEY}" = 7\n',
+                       f"['agents']\n'{ap.KEY}' = 7\n"):
+            with self.subTest(source=source):
+                self.assertEqual(ap.configured_limit(source), 7)
+        self.assertIsNone(ap.configured_limit('[agents]\nmax_depth = 2\n'))
 
-        def without_tomllib(name, *args, **kwargs):
-            if name == 'tomllib':
-                raise ImportError('Python 3.9 fixture')
-            return real_import(name, *args, **kwargs)
+    def test_configured_limit_rejects_retired_or_nonscalar_concurrency(self):
+        for source in ('[agents]\nmax_threads = 7\n',
+                       'agents.max_threads = 7\n',
+                       '["agents"]\n"max_threads" = 7\n',
+                       "['agents']\n'max_threads' = 7\n",
+                       '[agents.max_threads]\nlimit = 7\n',
+                       '[agents]\nmax_threads.limit = 7\n',
+                       '[[agents.max_threads]]\nlimit = 7\n',
+                       'agents = {max_threads = 7}\n',
+                       f'[agents.{ap.KEY}]\nlimit = 7\n',
+                       f'[agents]\n{ap.KEY}.limit = 7\n',
+                       f'[[agents]]\n{ap.KEY} = 7\n'):
+            with self.subTest(source=source), self.assertRaises(Blocked):
+                ap.configured_limit(source)
 
-        with patch('builtins.__import__', side_effect=without_tomllib):
-            source = '# inheritance\n[agents]\nmax_depth = 2\n'
-            rendered = ap.render_config(source, 6)
-            self.assertEqual(ap.render_config(rendered, 6), rendered)
-            with self.assertRaises(Blocked):
-                ap.render_config('message = """unterminated', 6)
+    def test_configured_limit_ignores_alias_text_in_strings_and_comments(self):
+        source = ('# agents.max_threads = 99\n'
+                  'prompt = """\n[agents]\nmax_threads = 100\n"""\n'
+                  'commands = ["agents.max_threads = 99", "[agents.max_threads]"]\n'
+                  '[agents.reviewer]\nmax_threads = 3\n')
+        self.assertIsNone(ap.configured_limit(source))
+        self.assertEqual(ap.configured_limit(ap.render_config(source, 7)), 7)
+
+    def test_whole_document_toml_validation_is_required(self):
+        for source in ('model = bareword\n', 'model = 1\nmodel = 2\n',
+                       '[agents]\nmax_depth = 2 extra\n'):
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(Blocked, 'Invalid TOML'):
+                    ap.configured_limit(source)
+                with self.assertRaisesRegex(Blocked, 'Invalid TOML'):
+                    ap.render_config(source, 7)
 
 
 class PolicyFixture(unittest.TestCase):
@@ -190,6 +208,22 @@ class PolicyFixture(unittest.TestCase):
         self.assertFalse((self.root / ".git/constellation").exists())
         global_config.write_text(f"[agents]\n{ap.KEY} = 3\n")
         self.assertFalse(self.manager().inspect(["Child"])["matches"])
+
+    def test_inspection_rejects_retired_concurrency_without_writing_configs(self):
+        project = self.root / ap.CONFIG
+        user = self.codex_home / "config.toml"
+        for target in (project, user):
+            for source in ('[agents]\nmax_threads = 7\n',
+                           '[agents.max_threads]\nlimit = 7\n',
+                           'agents = {max_threads = 7}\n'):
+                project.write_text('# User inheritance\n')
+                user.write_text(f'[agents]\n{ap.KEY} = 2\n')
+                target.write_text(source)
+                before = {path: path.read_bytes() for path in (project, user)}
+                with self.subTest(target=target, source=source), self.assertRaises(Blocked):
+                    self.manager().inspect(['.'])
+                self.assertEqual({path: path.read_bytes() for path in before}, before)
+                self.assertFalse((self.root / '.git/constellation').exists())
 
     def test_apply_requires_plan_and_explicit_scope(self):
         manager = self.manager()

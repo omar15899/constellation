@@ -1,226 +1,184 @@
-# Codex nativo: coordinación y publicación verificables
+# Codex: entrada y ciclo vigentes
 
-Para coordinar proyectos desde `~/GitHub` o desde cualquier hijo, empieza en
-[WORKSPACE.md](WORKSPACE.md). `cli.py workspace` distribuye rutas y ejecuta este
-ciclo por cada dueño Git. El registro operativo está en `repositories.json`;
-los proyectos propios usan perfiles nativos y `ruflo` conserva su perfil externo.
-La sección de uso siguiente documenta el motor de **un solo repositorio**.
+Constellation usa una sola entrada: `python3 .codex/ecosystem/cli.py`. Sus
+subcomandos `git`, `workspace` y `agent-policy` cargan el runtime de
+`ecosystem/runtime/`. No hay lanzadores alternativos en la raíz de `.codex/`.
 
-El perfil mantiene instrucciones breves y una entrada al runtime compartido de
-[Constellation](ecosystem/docs/architecture.md). Codex trabaja directamente; no necesita proyectar Claude,
-cargar el sistema de agentes de Claude ni recorrer una cadena de skills. El modelo,
-esfuerzo y permisos se heredan de los ajustes del usuario.
+Lee [AGENTS.md](../AGENTS.md), [WORKSPACE.md](WORKSPACE.md),
+[REVIEW.md](../REVIEW.md) y el contrato del repositorio receptor. Cada dueño Git
+conserva archivos, índice, pruebas y publicación. El registro no concede acceso
+a nuevos datos. Claude conserva sus ajustes y automatizaciones; no es un
+prerrequisito para trabajar desde este perfil.
 
-El [ecosistema personal portable](ecosystem/README.md) añade `coding`,
-`mathematics`, `quant-research` y `writter`, recursos de agentes y controles de evidencia para
-trabajos con o sin Git. Sus fuentes están en `skills/`; el plugin instalado
-las expone con el prefijo `constellation:`. Instala el plugin y aplica la
-exclusión explícita de fuentes por ruta descrita en su guía para evitar dos
-copias activas. El paquete conserva este flujo como autoridad de publicación:
-su `close` no hace commits, push ni sustituye los controles del proyecto.
+## Elegir la entrada
 
-La capacidad [quant-research](skills/quant-research/SKILL.md) guía campañas de
-estrategias con causalidad temporal, búsqueda completa, validación fuera de
-muestra y trazabilidad hasta paper. La [guía local](QUANT_RESEARCH.md) la conecta
-con los laboratorios y sus comandos. Distribuir la skill no instala los motores,
-proveedores o brokers ni acredita que la sesión actual la haya descubierto.
+| Trabajo | Entrada |
+| --- | --- |
+| Un dueño Git | `cli.py git --root RUTA --session ID OPERACION` |
+| Varios dueños o rutas desde el hub | `cli.py workspace --session ID OPERACION` |
+| Política efectiva de capacidad | `cli.py agent-policy show` |
+| Evidencia sin Git | Operaciones portables documentadas en el [protocolo](ecosystem/references/protocol.md). |
 
-Cuando la tarea se beneficia de delegación, `cli.py workspace dispatch` propone
-implementación, checks y revisión ordenados por dependencias y capacidad. Una
-implementación con un solo dueño puede quedar en el coordinador; mapa e
-investigación se añaden cuando resuelven una incertidumbre real.
-[RESEARCH.md](RESEARCH.md) explica la ejecución y el
-handoff de evidencia. Ocho perfiles compartidos en `ecosystem/agents/` dan instrucciones a los
-trabajadores; el coordinador los inicia con las herramientas del cliente.
-Un participante sin cambios se publica y verifica con `cli.py workspace publish
---repo RUTA`, conservando la dependencia del consumidor sin crear commits vacíos.
+Desde la raíz del checkout se puede omitir `--root`. Coloca `--session ID`
+después de `git` o `workspace` y antes de la operación. Usa la identidad
+comunicada por el cliente; no compartas `manual` entre tareas concurrentes.
+Una corrección del usuario conserva el encargo activo: no lo reinicies para
+borrar obligaciones o hallazgos.
 
-La [integración documental con OmarOS](KNOWLEDGE.md) centraliza documentos e
-informes completos de fuentes personales y laborales autorizadas. El productor
-lee revisiones Git y el receptor nativo del vault conserva procedencia, copias
-íntegras y cambios manuales. La política local autoriza cada raíz exacta; el
-registro de proyectos detecta altas pendientes, pero no concede permiso de
-exportación. Crear un repositorio incluye su alta documental cuando el encargo
-autorice esa integración. El servicio recibe localmente y nunca hace commits
-ni push; la publicación conserva el flujo nativo del dueño Git.
+El perfil hereda modelo, esfuerzo, permisos y capacidad efectiva del cliente.
+Hasta 64 subagentes es un máximo compartido, sujeto a límites menores; no una
+cuota. `dispatch --capacity N` propone paquetes y dependencias, pero no inicia
+agentes ni acredita trabajo. Da a cada escritor rutas exclusivas; el coordinador
+integra y publica.
 
-| Aspecto | Proyección anterior | Perfil nativo |
-| --- | --- | --- |
-| Contrato de Codex | Entrada → kernel Claude → contratos y roles | `AGENTS.md` propio |
-| Agentes especializados | 3 | 8 perfiles compartidos que heredan modelo y esfuerzo |
-| Skills del hub | 14 en la proyección | 4 módulos distribuibles mediante el plugin portable; descubrimiento efectivo según sesión y exclusión nativa explícita para evitar duplicados |
-| Automatismos Codex | 8 comandos en 4 eventos, con adaptador Claude | 5 eventos del plugin; definiciones duplicadas del hub retiradas |
-| Verificación | Hooks dispersos y evidencia de ejecución | Prueba real, revisión independiente vigente y publicación comprobada |
-| Dependencias del flujo | Adaptador y scripts de Claude | Python estándar y Git; paquete portable y gateway requieren Python 3.11+ |
+## Declarar, implementar y comprobar
 
-La [guía oficial de modelos](https://developers.openai.com/api/docs/guides/latest-model),
-consultada el 2026-09-09, orienta las decisiones sobre autonomía, conflictos entre
-instrucciones, delegación selectiva, claridad y pruebas proporcionales. Aplicar
-esa guía a las instrucciones no requiere cambiar el modelo que Omar elija.
+El ciclo de un solo dueño empieza con upstream y alcance exacto:
 
-## Modelo, contexto y permisos
+```sh
+python3 .codex/ecosystem/cli.py git --session ID begin --turn inicio
+python3 .codex/ecosystem/cli.py git --session ID plan < plan.json
+```
 
-El hub hereda la configuración nativa del usuario. No fija modelo, esfuerzo,
-ventana de contexto ni umbral de compactación: Codex resuelve sus defaults según
-el modelo y la superficie. Se retiró el archivo local que imponía un millón de
-tokens y 900.000 para compactar, además de repetir hooks y capacidad ya globales.
-Cambiar entre modelos compatibles no exige editar proyectos ni skills.
+`begin` comprueba el remoto y sólo admite fast-forward seguro con árbol limpio.
+No hace stash, rebase ni sobreescribe trabajo. Úsalo para un encargo nuevo,
+no para sustituir uno pendiente sin decisión del usuario.
 
-Consulta `model/list` y la configuración efectiva del cliente para disponibilidad
-y esfuerzos. La ventana anunciada por una API no sustituye al presupuesto de
-contexto del cliente instalado. Las pruebas con modelos concretos constan en
-[compatibilidad](ecosystem/docs/compatibility.md); no prueban modelos futuros.
-[Configuración nativa](https://learn.chatgpt.com/docs/config-file/config-reference).
-
-## Uso
-
-Desde la raíz del hub, ejecuta `python3 .codex/ecosystem/cli.py git`. La misma
-entrada ofrece `workspace` y `agent-policy`; los algoritmos viven sólo en
-`ecosystem/runtime/`. El CLI usa `CODEX_THREAD_ID`; si el hook comunica otra
-sesión, añade `--session ID` antes
-del subcomando. No compartas la sesión `manual` entre trabajos concurrentes.
-
-1. `begin --turn ID` comprueba explícitamente el upstream.
-   Hace fetch; integra con fast-forward solo con árbol limpio y sin divergencia.
-   Un fallo se conserva como impedimento para escritura; permite leer.
-2. `plan` recibe por stdin `requirements` y `paths`: criterios observables y
-   archivos relativos exactos. Las consultas usan `paths: []`. Para retiradas,
-   incluye los archivos también en `deletions`; deben estar versionados.
-3. `check -- COMANDO ARGUMENTOS` ejecuta una prueba pertinente y registra su
-   resultado y hashes. Rechaza una prueba fallida o que cambie entregables.
-4. `review-context` clasifica el alcance; `review-start` abre una ronda y devuelve
-   el token que los revisores deben usar en `review-report`. `review-resolve`
-   registra la verificación independiente de una corrección o falso positivo.
-   Lee [WORKSPACE.md](WORKSPACE.md) y [REVIEW.md](../REVIEW.md) para el protocolo.
-   `review` recibe un objeto cuya clave es cada requisito exacto y cuyo valor
-   explica la evidencia comprobada. Modificar un archivo invalida la revisión;
-   el código y configuración exigen una prueba vigente. Un fallo posterior
-   invalida el éxito anterior de ese comando. Las retiradas deben completarse.
-5. `commit -m 'Mensaje humano' ruta1 ruta2` prepara solo esas rutas, comprueba
-   el contenido del índice, hace commit, push normal y verifica el hash remoto.
-   Si el índice ya contiene trabajo, se conserva y se informa del impedimento.
-   `commit --preserve-index` permite publicar una selección disjunta mediante
-   `git commit --only`, verificando que el índice ajeno permanece intacto.
-6. `finish` comprueba revisión, alcance, ausencia de cambios propios pendientes
-   y coincidencia con el remoto. `status` consulta el estado privado de la tarea.
-
-Ejemplo de entrada para `plan`:
+El plan contiene requisitos observables y archivos relativos exactos:
 
 ```json
-{"requirements":["La función maneja entradas vacías"],"paths":["src/example.py","tests/test_example.py"]}
+{
+  "requirements": ["La función gestiona la entrada vacía"],
+  "paths": ["src/example.py", "tests/test_example.py"]
+}
 ```
 
-`adopt_existing` permite justificar por ruta una integración de cambios previos
-inspeccionados, sin apropiarse de trabajo ajeno. `unrelated` documenta archivos
-nuevos de otra actividad. No se usan para omitir entregables. Una corrección del
-usuario conserva la tarea pendiente; actualiza el plan. `begin` inicia otra tarea
-solo cuando el objetivo anterior termina, se cancela o se reemplaza.
+Sustituye las rutas por las del encargo. Las consultas usan `paths: []`.
+`deletions` declara retiradas exactas versionadas; `adopt_existing` justifica
+cada cambio previo integrado, sin apropiarse de autoría ajena. `unrelated`
+conserva nuevas rutas de otro trabajo fuera de la selección. Un plan no autoriza
+editar repositorios o datos externos no incluidos.
 
-Un push transmite también los commits anteriores de la rama que falten en su
-upstream: revisa ese alcance antes de publicar. El flujo comprueba las rutas
-privadas en todos los commits salientes, incluso si después fueron borradas.
-
-## Instalación y confianza
+Ejecuta checks pertinentes sobre los artefactos actuales:
 
 ```sh
-python3 .codex/install.py
-python3 -m unittest discover -s .codex/tests -v
+python3 .codex/ecosystem/cli.py git --session ID check -- git diff --check
+python3 .codex/ecosystem/cli.py git --session ID check --timeout 1200 -- python3 -B -m unittest discover -s tests -v
 ```
 
-El instalador activa tres hooks de Git (`pre-commit`, `post-commit`, `pre-push`)
-solo si no sustituye hooks ajenos. Guarda el valor anterior en el directorio
-privado de Git. No cambia la configuración global de Codex ni su confianza.
+Un fallo posterior invalida el éxito anterior de ese comando. Cambiar los
+artefactos requiere evidencia vigente. Un comando omitido, timeout o check que
+modificó la entrega no es un pase.
 
-Los cinco eventos nativos pertenecen al plugin instalado; el hub no mantiene
-otro manifiesto de hooks. Un único adaptador atiende los contratos activos.
-`UserPromptSubmit` no crea tareas ni comprueba remotos; `PreToolUse` verifica
-las rutas declaradas;
-los eventos de agentes comunican contexto y `Stop` solicita cierre con intentos
-acotados e idempotentes. No se publica desde hooks.
+## Revisión independiente
 
-La confianza se administra en `/hooks`; instalar no la concede. Comprueba
-descubrimiento, habilitación, confianza y ejecución por separado. No edites
-hashes de confianza ni uses opciones para eludirla. Una sesión nueva carga las
-definiciones actuales sin los eventos duplicados del hub.
-El plugin usa `CODEX_HOME/constellation/hook.py` como entrada estable y
-comparte el lock de instalación para validar el paquete antes de ejecutarlo.
-Abre una sesión nueva después de actualizar el paquete o sus definiciones;
-consulta el contrato de
-[instalación y actualización](ecosystem/docs/migrations.md#instalar-y-actualizar).
-[Documentación oficial de hooks](https://learn.chatgpt.com/docs/hooks).
-
-## Alcance y límites
-
-La concurrencia general de Codex se configura en `~/.codex/config.toml` con
-`agents.max_concurrent_threads_per_session = 64`. Las instrucciones globales
-permiten usar hasta ese máximo cuando haga falta; el primario no cuenta.
-La política [agent-policy.json](agent-policy.json) alinea los perfiles nativos
-en 64 para que no prevalezcan los anteriores límites de seis u ocho. El comando
-`python3 .codex/ecosystem/cli.py agent-policy show` muestra la política efectiva;
-`check` detecta divergencias y `apply --repo RUTA` actualiza únicamente las rutas
-de configuración declaradas en el plan. Reinicia la sesión para cargar cambios.
-La herramienta de aplicación no modifica modelo, esfuerzo, permisos, confianza
-ni configuración global. Esta última se mantiene por separado; el máximo es
-capacidad disponible, no una obligación de usar todos los agentes.
-[OpenAI Docs: subagentes](https://learn.chatgpt.com/docs/agent-configuration/subagents).
-
-La revisión independiente se aplica a los repositorios nativos registrados
-que usan este motor. Comprueba identidad declarada, cobertura, huellas y estados;
-no autentica la identidad del proceso revisor ni demuestra la verdad del informe.
-La política clasifica rutas, no comprende por sí sola el riesgo semántico: el
-coordinador debe aumentar la revisión cuando el comportamiento lo requiera.
-Las pruebas CI del hub ejercitan el motor en clones y remotos locales desechables.
-No se instala un servicio de revisión AI en GitHub ni se cambian sus protecciones.
-
-Quick exige un revisor; Standard, tres de corrección; Deep, tres de corrección
-y dos de seguridad. Cada archivo necesita también el total de identidades
-distintas de su modo, aunque un informe cubra ambos focos. `review-author`
-registra contribuyentes por rutas e impide su autorrevisión; sus identidades
-siguen siendo declaraciones. Los IDs ambiguos de hallazgos se rechazan sin
-fusionar problemas distintos. Las rondas continúan de forma justificada dentro
-del presupuesto real, sin un máximo universal de tres. El historial, los
-hallazgos y los mínimos sobreviven a una replanificación. `review-budget` declara
-un plazo y registra sus ampliaciones; `review-start` acepta una razón y acción
-siguiente para salir de una repetición detectada. Consulta el contrato en
-[WORKSPACE.md](WORKSPACE.md#revisión-independiente).
-
-Los datos operativos viven en `git rev-parse --git-path constellation`, separados
-por sesión y protegidos con un bloqueo. Se registran estados, hashes y evidencia
-operativa; no se guardan prompts, transcripciones, texto de comandos ni salidas.
-La revisión escrita debe contener evidencia publicable, nunca conversaciones.
-
-El guarda cubre `apply_patch`, no todas las escrituras posibles de shell o MCP.
-La revisión y el cierre verifican los artefactos y detectan archivos nuevos sin
-declarar. Los controles no son un sandbox ni un detector universal de secretos.
-No certifican la verdad de una explicación o la suficiencia intelectual de una
-prueba: esa parte exige revisión del agente.
-
-Los repositorios vecinos conservan su configuración, contratos y pruebas.
-Los perfiles propios migrados conservan la doctrina en `.codex/PROJECT.md` y
-usan el motor común. Sus proyecciones anteriores se archivaron localmente antes
-de retirarlas; `.claude/` se conserva y los validadores Git siguen ejecutándose.
-El post-commit de Sweeplab reconoce los commits del coordinador para no crear
-commits o pushes secundarios. El generador reconoce
-`profile.json` en cualquiera de ellos y nunca lo sobrescribe.
-El adaptador usa datos de contratos y código fijo del paquete; un evento dirigido
-a un vecino no importa scripts de ese vecino ni le instala nada. Las utilidades de investigación de `.claude/` siguen disponibles
-cuando el trabajo las necesita; este perfil no las carga como ritual inicial.
-
-`.codex/profile.json` declara propiedad nativa. `codex_sync.py --repo .` y sus
-modos de comprobación respetan el perfil; los repositorios que aún usan proyección
-conservan su funcionamiento. El generador y doctor de Claude requieren Python
-3.12+, independiente del flujo nativo. Para verificar solo el hub:
+Registra todos los autores reales y sus rutas antes de abrir la ronda:
 
 ```sh
-python3.12 .claude/tests/test_codex_sync.py
-python3.12 .claude/tests/test_codex_projection_safety.py
-python3.12 .claude/scripts/codex_sync.py --repo . --check
-python3.12 .claude/scripts/codex_sync.py --repo . --verify
+python3 .codex/ecosystem/cli.py git --session ID review-author < author.json
+python3 .codex/ecosystem/cli.py git --session ID review-context
+python3 .codex/ecosystem/cli.py git --session ID review-start
 ```
 
-La proyección anterior se conserva íntegra en un archivo privado local fuera
-del repositorio. Incluye los cambios locales previos de su manifest y skill
-de vídeo; no se carga como configuración activa. Las versiones publicadas
-anteriores también permanecen en la historia de Git. Recupera solo los archivos
-que necesites tras revisar el diff; no restaures toda la carpeta sobre trabajo
-posterior ni ejecutes una proyección global para deshacer esto.
+`author.json` contiene `{"author":"ID_NATIVO_REAL","paths":["ruta"]}`.
+La autoría es acumulativa. Entrega token, requisitos, diff y evidencia a
+revisores que hayan inspeccionado realmente los archivos.
+
+| Modo | Mínimo independiente por archivo |
+| --- | --- |
+| Quick | Una persona de corrección. |
+| Standard | Tres personas de corrección. |
+| Deep | Tres de corrección y dos de seguridad. |
+
+Cada archivo necesita la cuota por foco y el total de personas distintas.
+Respeta la política y cualquier mínimo más estricto del receptor. Autor y
+descubridor no verifican el cierre de su propio hallazgo. Todos los hallazgos
+abiertos bloquean; el coordinador registra informes reales con `review-report`
+y verificaciones independientes con `review-resolve`. El campo `role` del
+informe es `reviewer`; `focus` expresa corrección o seguridad.
+
+La política y el ledger actuales usan esquema 2; los formatos retirados se
+rechazan conservando su historial. No hay un máximo universal de rondas.
+`review-budget` registra un plazo UTC y una razón sin borrar rondas. Sin plazo,
+el presupuesto es desconocido. La repetición sin observación independiente nueva
+exige una razón y una acción concreta mediante las opciones de continuación de
+`review-start`.
+
+Después de los informes, `review` recibe una clave por requisito exacto y
+evidencia concreta como valor. Hashes y quórums comprueban versión y cobertura;
+no demuestran por sí solos la pertinencia de una prueba o la verdad de un texto.
+
+## Resolver una invocación de check incorrecta
+
+El camino normal es corregir y repetir el mismo check. Si la invocación era
+incorrecta, `check-resolve` puede vincularla a un reemplazo equivalente, sin
+borrar el fallo. Su payload exacto es:
+
+```json
+{
+  "token": "TOKEN_ACTUAL",
+  "failed_check": 1,
+  "replacement_check": 3,
+  "verifier": "ID_NATIVO_REAL",
+  "reason": "Motivo concreto de la invocación incorrecta",
+  "evidence": "Comparación independiente de propósito, escenarios y resultado"
+}
+```
+
+Los índices son ejemplos; usa los de `status`. El fallo debe haber terminado con
+salida positiva y sin mutar artefactos, y el reemplazo debe ser posterior,
+satisfactorio y vigente para todo el alcance. Ambos son los últimos intentos
+de sus comandos. El verificador necesita un informe de corrección actual que
+cubra el alcance completo y ser independiente de los contribuyentes. No se
+convalidan timeouts, fallos de arranque, mutaciones ni resultados inciertos.
+
+`review`, `commit` y `finish` revalidan la atestación. Cambios de contrato,
+destino, autores, política, artefactos o checks pueden invalidarla. Su registro
+no concede publicación ni sustituye revisión sustantiva.
+
+## Publicar y cerrar
+
+```sh
+python3 .codex/ecosystem/cli.py git --session ID review < evidence.json
+python3 .codex/ecosystem/cli.py git --session ID commit -m 'Mejora el comportamiento' ruta1 ruta2
+python3 .codex/ecosystem/cli.py git --session ID finish
+```
+
+Selecciona rutas explícitas. `commit --preserve-index` sólo admite trabajo
+preparado ajeno disjunto y comprueba su conservación. La publicación normal
+incluye los commits salientes de la rama, no sólo los del turno: inspecciónalos
+y conserva el upstream congelado. No uses force-push, descartes, amend o rebase
+para superar un bloqueo.
+
+El `finish` del ciclo Git compartido es una operación de publicación: tras sus
+controles llama a `publish`, sincroniza el upstream, publica el HEAD si hay
+commits salientes y verifica el SHA remoto. Conserva esos efectos incluso con
+`paths: []`. Requiere revisión vigente y entregables comprometidos.
+
+Para trabajo puramente local sin obligación Git, usa la vía directa o la API
+portable; su `close` no publica. El adaptador propio de OmarOS permite un cierre
+local de consultas sin entregables ni delegados bajo su contrato especializado;
+esa conducta no pertenece a `cli.py git finish`. Si una fase falla, conserva el
+progreso y comunica el impedimento; no declares completa una entrega pendiente.
+
+## Instalación, confianza y límites
+
+La [guía del paquete](ecosystem/docs/migrations.md) describe el formato actual,
+con recibo Codex 3 y recibo Claude 1. El hub puede instalar sus hooks Git con
+`python3 .codex/install.py` sólo sin sustituir hooks ajenos. Los eventos del
+cliente pertenecen al plugin, no a un segundo manifiesto del hub.
+
+La confianza de hooks se revisa en `/hooks` y no se concede al instalar. No
+edites hashes ni eludas esa aprobación. Un catálogo fresco tampoco representa
+necesariamente un chat abierto. Los límites y la aceptación Windows pendiente
+están en [compatibilidad](ecosystem/docs/compatibility.md).
+
+El [progreso](ecosystem/docs/progress.md) conserva hitos curados en el almacén
+privado existente. La proyección a OmarOS requiere raíz, alias y visibilidad
+personal autorizados exactamente. Su adaptador activo de cuatro recursos
+fijados en 1.2.0 conserva su contrato; el plugin no lo reemplaza.
+
+No se persisten prompts, transcripciones ni salidas brutas en evidencia
+publicable. El guarda de rutas no sustituye el sandbox del cliente ni cubre
+todas las escrituras de shell/MCP. Los formatos incompatibles se rechazan,
+preservando archivos para una decisión explícita.

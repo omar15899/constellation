@@ -19,70 +19,20 @@ from typing import Iterable, Iterator
 sys.dont_write_bytecode = True
 if __package__:
     from .build import (BUNDLE_MANIFEST, MODULES, PLUGIN_MANIFEST, BundleError, allowed_files,
-                        build_bundle, file_record, legacy_files_130, legacy_files_131, regular_file, select_modules,
-                       verify_bundle, verify_owned_bundle)
+                        build_bundle, file_record, regular_file, select_modules,
+                       verify_bundle)
     from .native import NativeClient, NativeError, PLUGIN_ID
     from . import platform_support as platform
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from build import (BUNDLE_MANIFEST, MODULES, PLUGIN_MANIFEST, BundleError, allowed_files,
-                       build_bundle, file_record, legacy_files_130, legacy_files_131, regular_file, select_modules,
-                       verify_bundle, verify_owned_bundle)
+                       build_bundle, file_record, regular_file, select_modules,
+                       verify_bundle)
     from native import NativeClient, NativeError, PLUGIN_ID
     import platform_support as platform
 
 CATALOG_MANIFEST = ".agents/plugins/marketplace.json"
 PLUGIN_DIRECTORY = "plugins/constellation"
-# Schema 1 predates the shared runtime layout. This historical ownership list
-# must not follow COMMON_FILES: upgrades validate the release being replaced.
-_LEGACY_COMMON_FILES = (
-    "review_gate.py", "review-policy.json",
-    *(f"ecosystem/{name}.py" for name in
-      ("__init__", "core", "storage", "cli", "hooks", "build", "install", "native", "validate")),
-    "ecosystem/hooks.json", "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
-    "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
-    "ecosystem/EVALUATION.md", "ecosystem/evaluation.json",
-    "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
-    *(f"ecosystem/tests/{name}.py" for name in
-      ("helpers", "test_core", "test_hooks", "test_package", "test_validation")),
-    *(f"ecosystem/agents/{name}.toml" for name in
-      ("researcher", "reviewer", "security-reviewer", "verifier")),
-)
-_LEGACY_MODULE_AGENTS = {
-    "coding": ("coder",),
-    "mathematics": ("mathematician", "counterexample"),
-    "writter": ("editor", "mathematician", "coder"),
-}
-# Initial identities remain mandatory when later releases add optional files.
-# Add entries for new modules; do not expand an existing module's minimum.
-_INITIAL_MODULE_AGENTS = {
-    **_LEGACY_MODULE_AGENTS,
-    "quant-research": ("coder", "mathematician", "counterexample"),
-}
-
-
-def _legacy_receipt_files(modules: tuple[str, ...]) -> set[str]:
-    if not set(modules) <= set(_LEGACY_MODULE_AGENTS):
-        raise ValueError("unsupported historical modules")
-    paths = set(_LEGACY_COMMON_FILES) | {PLUGIN_MANIFEST}
-    for module in modules:
-        paths.update(f"skills/{module}/{name}" for name in
-                     ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
-        paths.update(f"ecosystem/agents/{name}.toml" for name in _LEGACY_MODULE_AGENTS[module])
-    if {"mathematics", "writter"} & set(modules):
-        paths.update(("ecosystem/references/ontology.md", "ecosystem/references/ontology-examples.md"))
-    return paths
-
-
-def _initial_receipt_identities(modules: tuple[str, ...]) -> set[str]:
-    paths = {PLUGIN_MANIFEST} | {
-        path for path in _LEGACY_COMMON_FILES if path.startswith("ecosystem/agents/")
-    }
-    for module in modules:
-        paths.update(f"skills/{module}/{name}" for name in
-                     ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
-        paths.update(f"ecosystem/agents/{name}.toml" for name in _INITIAL_MODULE_AGENTS[module])
-    return paths
 
 
 class InstallError(ValueError):
@@ -124,6 +74,7 @@ def _inventory(root: Path) -> dict:
 
 
 def _load_receipt(path: Path) -> dict | None:
+    """Read only the active ownership schema and exact current package layout."""
     if platform.is_reparse(path):
         raise InstallError("Installation receipt cannot be a symlink")
     if not path.exists():
@@ -132,69 +83,40 @@ def _load_receipt(path: Path) -> dict | None:
         raise InstallError("Installation receipt must be a regular file")
     try:
         value = _read_object(path)
-        schema = value.get("schema")
-        fields = {"schema", "modules", "version", "catalog", "cache", "agents"}
-        if schema == 3:
-            fields.add("hook")
-        if (set(value) != fields or type(schema) is not int or schema not in (1, 2, 3)):
-            raise ValueError("schema")
+        fields = {"schema", "modules", "version", "catalog", "cache", "agents", "hook"}
+        if (set(value) != fields or type(value.get("schema")) is not int
+                or value["schema"] != 3):
+            raise ValueError("unsupported ownership schema")
         if (not isinstance(value["modules"], list)
                 or not all(isinstance(module, str) for module in value["modules"])):
             raise ValueError("modules")
         modules = select_modules(value["modules"])
-        if schema in (1, 2) and not set(modules) <= set(_LEGACY_MODULE_AGENTS):
-            raise ValueError("unsupported historical modules")
         if (not isinstance(value["version"], str)
                 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value["version"])):
             raise ValueError("version")
-        if value["schema"] == 1 and value["version"] != "1.0.0":
-            raise ValueError("unsupported legacy release")
         for group in ("catalog", "cache", "agents"):
             _check_records(value[group])
-        if schema == 3:
-            _check_records({"hook.py": value["hook"]})
-            if (value["hook"]["mode"] != 0o644
-                    or value["hook"]["sha256"] !=
-                    value["cache"].get("ecosystem/hook_entry.py", {}).get("sha256")):
-                raise ValueError("stable hook and catalog differ")
-        if value["schema"] == 1:
-            files = _legacy_receipt_files(modules)
-        else:
-            # A receipt describes one owned layout, not a union of old and new
-            # paths. The removed 1.3.0 resources have an exact frozen inventory;
-            # earlier schemas keep their historical additive-resource contract.
-            files = set(value["cache"]) - {BUNDLE_MANIFEST}
-            identity_files = (_legacy_receipt_files(modules) if schema == 2
-                              else _initial_receipt_identities(modules))
-            identities = {PLUGIN_MANIFEST} | {
-                path for path in identity_files
-                if path.startswith(("skills/", "ecosystem/agents/"))
-            }
-            if value["version"] in {"1.3.0", "1.3.1"}:
-                historical = legacy_files_130 if value["version"] == "1.3.0" else legacy_files_131
-                valid = schema == 3 and files == historical(modules)
-            else:
-                current_layout = identities <= files <= allowed_files(modules)
-                older_layout = ((schema == 2 or value["version"] in {"1.1.0", "1.2.0"})
-                                and identities <= files <= legacy_files_130(modules))
-                valid = current_layout or older_layout
-            if not valid:
-                raise ValueError("recorded release resources")
-        expected = {f"{PLUGIN_DIRECTORY}/{p}" for p in files | {BUNDLE_MANIFEST}}
-        expected.add(CATALOG_MANIFEST)
-        if set(value["catalog"]) != expected:
+        _check_records({"hook.py": value["hook"]})
+        if (value["hook"]["mode"] != 0o644
+                or value["hook"]["sha256"] !=
+                value["cache"].get("ecosystem/hook_entry.py", {}).get("sha256")):
+            raise ValueError("stable hook and catalog differ")
+        files = allowed_files(modules)
+        if set(value["cache"]) != files | {BUNDLE_MANIFEST}:
+            raise ValueError("recorded release resources")
+        expected_catalog = {f"{PLUGIN_DIRECTORY}/{p}" for p in files | {BUNDLE_MANIFEST}}
+        expected_catalog.add(CATALOG_MANIFEST)
+        if set(value["catalog"]) != expected_catalog:
             raise ValueError("catalog")
         expected_agents = {"constellation-" + Path(p).name for p in files
                            if p.startswith("ecosystem/agents/")}
         if set(value["agents"]) != expected_agents:
             raise ValueError("agents")
-        if set(value["cache"]) != files | {BUNDLE_MANIFEST}:
-            raise ValueError("cache")
         if any(record != value["catalog"][f"{PLUGIN_DIRECTORY}/{relative}"]
                for relative, record in value["cache"].items()):
             raise ValueError("cache and catalog differ")
-        # Native profile projections are deliberately normalized to 0644 even
-        # when their packaged source retained an executable source-tree mode.
+        # Native profiles have one normalized projection, independently of the
+        # executable flag carried by their packaged source.
         if any(record["mode"] != 0o644 or record["sha256"] !=
                value["cache"]["ecosystem/agents/" + name.removeprefix("constellation-")]["sha256"]
                for name, record in value["agents"].items()):
@@ -202,6 +124,7 @@ def _load_receipt(path: Path) -> dict | None:
         return value
     except (KeyError, TypeError, ValueError, OSError) as exc:
         raise InstallError("Invalid installation receipt; no files were changed") from exc
+
 
 
 def _read_object(path: Path) -> dict:
@@ -243,8 +166,7 @@ def _verify_recorded_bundle(root: Path, receipt: dict) -> None:
         plugin = _read_object(root / PLUGIN_MANIFEST)
         if plugin.get("name") != "constellation" or plugin.get("version") != receipt["version"]:
             raise ValueError("plugin manifest differs from receipt")
-        if receipt["version"] in {"1.3.0", "1.3.1"}:
-            verify_owned_bundle(root)
+        verify_bundle(root)
     except (OSError, ValueError, TypeError) as exc:
         raise InstallError("Owned bundle metadata differs from the installation receipt") from exc
 

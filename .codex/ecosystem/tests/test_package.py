@@ -42,8 +42,6 @@ ALL_MODULES = ("coding", "mathematics", "quant-research", "writter")
 IS_DISTRIBUTED = (CODEX_DIR / "bundle.json").is_file()
 MODULES = (tuple(json.loads((CODEX_DIR / "bundle.json").read_text())["modules"])
            if IS_DISTRIBUTED else ALL_MODULES)
-HISTORICAL_MODULES = tuple(module for module in MODULES
-                           if module in ("coding", "mathematics", "writter"))
 PLUGIN_ID = "constellation@constellation"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 CLAUDE_PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
@@ -220,7 +218,7 @@ class BundleCase(unittest.TestCase):
         shutil.rmtree(source / "agents")
         return source
 
-    def changed_bundle(self, version: str = "1.1.1", *, change_agent: bool = False,
+    def changed_bundle(self, version: str = "2.0.0", *, change_agent: bool = False,
                        change_entry: bool = False) -> Path:
         source = self.source_copy("update-source")
         metadata = json.loads((source / "ecosystem/manifests/codex-plugin.json").read_text())
@@ -630,50 +628,17 @@ class BuildTests(BundleCase):
                 build_bundle(self.root / "rejected-metadata", MODULES, source_root=source)
             self.assertFalse((self.root / "rejected-metadata").exists())
 
-    def test_current_layout_cannot_claim_historical_130_identity(self) -> None:
-        import claude as claude_installer
-
+    def test_current_layout_versions_use_one_verification_contract(self) -> None:
         source = self.source_copy()
         for relative in (PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST):
             path = source / builder.source_path(relative)
-            metadata = json.loads(path.read_text())
-            write_json(path, {**metadata, "version": "1.3.0"})
-        before_source = snapshot(source)
-        output = self.root / "historical-label-output"
-        with self.assertRaisesRegex(BundleError, "reserved for the historical"):
-            build_bundle(output, MODULES, source_root=source)
-        self.assertFalse(output.exists())
-        self.assertEqual(snapshot(source), before_source)
-
-        # This is a structurally current package with correct hashes, not a
-        # corrupt file or a genuine historical release. Both inputs must fail
-        # before either installer can create an ownership receipt or register it.
-        manifest = json.loads((self.bundle / "bundle.json").read_text())
-        for relative in (PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST):
-            path = self.bundle / relative
-            metadata = json.loads(path.read_text())
-            write_json(path, {**metadata, "version": "1.3.0"})
-            manifest["files"][relative] = builder.file_record(path)
-        write_json(self.bundle / "bundle.json", manifest)
-        before_bundle = snapshot(self.bundle)
-        with self.assertRaisesRegex(BundleError, "reserved for the historical"):
-            verify_bundle(self.bundle)
-        with self.assertRaises(BundleError):
-            builder.verify_owned_bundle(self.bundle)
-        codex_home = self.root / "rejected-codex-home"
-        claude_home = self.root / "rejected-claude-home"
-        backend = SyntheticNativeClient(codex_home)
-        for check in (True, False):
-            with self.subTest(client="codex", check=check):
-                with self.assertRaisesRegex(BundleError, "reserved for the historical"):
-                    install_bundle(self.bundle, codex_home, check=check, client=backend)
-                self.assertFalse(codex_home.exists())
-                self.assertEqual(backend.mutations, [])
-            with self.subTest(client="claude", check=check):
-                with self.assertRaisesRegex(BundleError, "reserved for the historical"):
-                    claude_installer.install_bundle(self.bundle, claude_home, check=check)
-                self.assertFalse(claude_home.exists())
-        self.assertEqual(snapshot(self.bundle), before_bundle)
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+            write_json(path, {**metadata, "version": "2.0.0"})
+        output = self.root / "current-layout-next-version"
+        manifest = build_bundle(output, MODULES, source_root=source)
+        self.assertEqual(verify_bundle(output), manifest)
+        self.assertEqual(json.loads((output / PLUGIN_MANIFEST).read_text(encoding="utf-8"))["version"],
+                         "2.0.0")
 
     def test_bundle_modules_require_an_explicit_list_before_rebuild(self) -> None:
         path = self.bundle / "bundle.json"
@@ -737,163 +702,7 @@ class SyntheticInstallationTests(BundleCase):
         version = version or self.receipt()["version"]
         return self.home / "plugins/cache/constellation/constellation" / version
 
-    def seed_legacy_installation(self, modules: list[str] | None = None,
-                                 *, executable_agent: bool = False) -> None:
-        """Create the historical ownership layout with synthetic release bytes.
-
-        Only the inventory is historical; this fixture never executes 1.0 code
-        and is not a substitute for testing the user's actual prior release.
-        """
-        modules = list(HISTORICAL_MODULES) if modules is None else modules
-        if not modules:
-            self.skipTest("This distribution contains no historical modules")
-        self.assertTrue(set(modules) <= set(HISTORICAL_MODULES))
-        self.install(modules=modules)
-        receipt = self.receipt()
-        catalog = self.home / "constellation/catalog"
-        payload = catalog / "plugins/constellation"
-        for current, old in (("compatibility", "COMPATIBILITY"), ("architecture", "ARCHITECTURE"),
-                             ("migrations", "MIGRATION"), ("progress", "PROGRESS"), ("evaluation", "EVALUATION")):
-            (payload / f"ecosystem/docs/{current}.md").replace(payload / f"ecosystem/{old}.md")
-        write_json(payload / "ecosystem/evaluation.json", {"historical_fixture": True})
-        for name in ("review_gate.py", "review-policy.json"):
-            (payload / "ecosystem/runtime" / name).replace(payload / name)
-        shutil.rmtree(payload / "ecosystem/runtime")
-        for name in ("ARCHITECTURE.md", "MIGRATION.md", "PROGRESS.md", "tests/test_capabilities.py",
-                     "tests/test_progress.py", "tests/test_progress_core.py", "hook_entry.py",
-                     "tests/test_hook_entry.py"):
-            (payload / "ecosystem" / name).unlink()
-        historical = installer._legacy_receipt_files(tuple(modules))
-        for relative in set(installer._inventory(payload)) - historical - {"bundle.json"}:
-            (payload / relative).unlink()
-        metadata = json.loads((payload / PLUGIN_MANIFEST).read_text())
-        write_json(payload / PLUGIN_MANIFEST, {**metadata, "version": "1.0.0"})
-        if executable_agent:
-            (payload / "ecosystem/agents/reviewer.toml").chmod(0o755)
-        records = installer._inventory(payload)
-        records.pop("bundle.json")
-        write_json(payload / "bundle.json", {"schema": 1, "modules": receipt["modules"], "files": records})
-        self.backend.add_plugin()
-        receipt.pop("hook")
-        (self.home / "constellation/hook.py").unlink()
-        write_json(self.home / "constellation/receipt.json", {
-            **receipt, "schema": 1, "version": "1.0.0",
-            "catalog": installer._inventory(catalog),
-            "cache": installer._inventory(self.cache("1.0.0")),
-        })
-        self.backend.mutations.clear()
-
-    def seed_prior_shared_installation(self, modules: list[str] | None = None) -> None:
-        """Model an owned schema-2 release before the progress resources existed."""
-        modules = list(HISTORICAL_MODULES) if modules is None else modules
-        if not modules:
-            self.skipTest("This distribution contains no historical modules")
-        self.assertTrue(set(modules) <= set(HISTORICAL_MODULES))
-        self.install(modules=modules)
-        self.rewrite_owned_shared_resources(remove=(
-            "ecosystem/runtime/progress.py", "ecosystem/tests/test_progress.py",
-            "ecosystem/tests/test_progress_core.py", "ecosystem/docs/progress.md",
-            "ecosystem/hook_entry.py", "ecosystem/tests/test_hook_entry.py",
-            *builder.CLAUDE_FILES, CLAUDE_PLUGIN_MANIFEST,
-            *(relative for relative in builder.allowed_files(modules) if relative.startswith("agents/")),
-        ))
-        receipt = self.receipt()
-        receipt.pop("hook")
-        receipt["schema"] = 2
-        (self.home / "constellation/hook.py").unlink()
-        write_json(self.home / "constellation/receipt.json", receipt)
-
-    def seed_dual_130_installation(self, modules: list[str] | None = None) -> None:
-        """Use real files with the independently specified previous layout.
-
-        This tests migration semantics with synthetic payload bytes. A release
-        smoke test can additionally seed the published 1.3.0 artifact.
-        """
-        self.install(modules=modules)
-        receipt = self.receipt()
-        catalog = self.home / "constellation/catalog"
-        payload = catalog / "plugins/constellation"
-        for current, old in (("compatibility", "COMPATIBILITY"), ("architecture", "ARCHITECTURE"),
-                             ("migrations", "MIGRATION"), ("progress", "PROGRESS"), ("evaluation", "EVALUATION")):
-            (payload / f"ecosystem/docs/{current}.md").replace(payload / f"ecosystem/{old}.md")
-        for relative in set(installer._inventory(payload)) - builder.legacy_files_130(receipt["modules"]) - {"bundle.json"}:
-            (payload / relative).unlink()
-        (payload / "ecosystem/docs").rmdir()
-        write_json(payload / "ecosystem/evaluation.json", {"historical_fixture": True})
-        for relative in (PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST):
-            metadata = json.loads((payload / relative).read_text())
-            write_json(payload / relative, {**metadata, "version": "1.3.0"})
-        records = installer._inventory(payload)
-        records.pop("bundle.json")
-        write_json(payload / "bundle.json", {"schema": 1, "modules": receipt["modules"], "files": records})
-        self.backend.add_plugin()
-        write_json(self.home / "constellation/receipt.json", {
-            **receipt, "version": "1.3.0", "catalog": installer._inventory(catalog),
-            "cache": installer._inventory(self.cache("1.3.0")),
-        })
-        self.backend.mutations.clear()
-
-    def test_dual_130_upgrade_reorganizes_each_subset_and_preserves_unrelated_state(self) -> None:
-        for modules in [*([module] for module in MODULES), list(MODULES)]:
-            with self.subTest(modules=modules):
-                self.seed_dual_130_installation(modules)
-                previous = snapshot(self.home)
-                self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
-                self.assertEqual(snapshot(self.home), previous)
-                self.assertEqual(self.backend.mutations, [])
-                result = self.install(modules=modules)
-                self.assertEqual(result["version"], self.current_version)
-                self.assertEqual(verify_bundle(self.cache())["modules"], modules)
-                self.assertTrue((self.cache() / "ecosystem/docs/architecture.md").is_file())
-                self.assertFalse((self.cache() / "ecosystem/ARCHITECTURE.md").exists())
-                self.assertFalse((self.cache() / "ecosystem/evaluation.json").exists())
-                self.assert_unrelated_preserved()
-
-    def test_dual_130_upgrade_failure_restores_exact_previous_files(self) -> None:
-        self.seed_dual_130_installation()
-        before = snapshot(self.home)
-        self.backend.fail_once = "add_plugin"
-        with self.assertRaisesRegex(InstallError, "previous owned files and registration restored"):
-            self.install()
-        self.assertEqual(snapshot(self.home), before)
-        self.assertEqual(self.receipt()["version"], "1.3.0")
-        self.assertEqual(self.install()["version"], self.current_version)
-
-    def test_dual_130_receipt_rejects_mixed_missing_and_unknown_inventory(self) -> None:
-        for change in ({"add": ("ecosystem/docs/architecture.md",)},
-                       {"add": ("ecosystem/unknown.py",)},
-                       {"remove": ("ecosystem/evaluation.json",)}):
-            with self.subTest(change=change):
-                self.seed_dual_130_installation()
-                original = snapshot(self.home)
-                self.rewrite_owned_shared_resources(**change)
-                before = snapshot(self.home)
-                with self.assertRaisesRegex(InstallError, "Invalid installation receipt"):
-                    self.install()
-                self.assertEqual(snapshot(self.home), before)
-                self.assertEqual(self.backend.mutations, [])
-                shutil.rmtree(self.home)
-                self.home.mkdir()
-                for relative, (kind, content, mode) in original.items():
-                    self.assertEqual(kind, "file")
-                    path = self.home / relative
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(content)
-                    path.chmod(mode)
-                # File snapshots deliberately omit directories; restore this private boundary too.
-                builder._PLATFORM.set_access(self.home / "constellation", 0o700)
-
-    def test_dual_130_previous_package_is_read_as_data(self) -> None:
-        self.seed_dual_130_installation()
-        payload = self.home / "constellation/catalog/plugins/constellation"
-        marker = self.root / "previous-release-was-executed"
-        (payload / "ecosystem/build.py").write_text(
-            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n")
-        self.rewrite_owned_shared_resources()
-        self.assertEqual(self.install()["version"], self.current_version)
-        self.assertFalse(marker.exists())
-
-    def rewrite_owned_shared_resources(self, *, remove: tuple[str, ...] = (),
+    def rewrite_current_resources(self, *, remove: tuple[str, ...] = (),
                                        add: tuple[str, ...] = ()) -> None:
         receipt = self.receipt()
         catalog = self.home / "constellation/catalog"
@@ -916,105 +725,46 @@ class SyntheticInstallationTests(BundleCase):
         })
         self.backend.mutations.clear()
 
-    @unittest.skipUnless(HISTORICAL_MODULES, "This distribution contains no historical modules")
-    def test_prior_shared_release_accepts_added_resources_for_every_module_selection(self) -> None:
-        for count in range(1, len(HISTORICAL_MODULES) + 1):
-            for selected in combinations(HISTORICAL_MODULES, count):
-                modules = list(selected)
-                with self.subTest(modules=modules):
-                    self.seed_prior_shared_installation(modules)
-                    self.assertFalse((self.cache() / "ecosystem/runtime/progress.py").exists())
-                    before = snapshot(self.home)
-                    self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
-                    self.assertEqual(snapshot(self.home), before)
-                    self.assertEqual(self.backend.mutations, [])
-                    self.assertEqual(self.install(modules=modules)["status"], "updated")
-                    self.assertTrue((self.cache() / "ecosystem/runtime/progress.py").is_file())
-                    self.assertEqual(verify_bundle(self.cache())["modules"], modules)
-                    self.assert_unrelated_preserved()
-
-    def test_failed_shared_resource_expansion_restores_prior_release_and_can_retry(self) -> None:
-        self.seed_prior_shared_installation()
-        state = self.home / "constellation/state/progress.json"
-        state.parent.mkdir(parents=True)
-        state.write_text('{"synthetic": "recoverable state"}\n')
-        before = snapshot(self.home)
-        self.backend.fail_once = "add_plugin"
-        with self.assertRaisesRegex(InstallError, "previous owned files and registration restored"):
-            self.install()
-        self.assertEqual(snapshot(self.home), before)
+    def test_unsupported_receipt_schemas_are_rejected_without_migration_or_mutation(self) -> None:
+        self.install()
+        path = self.home / "constellation/receipt.json"
+        original = self.receipt()
+        for schema in (1, 2):
+            for include_hook in (False, True):
+                with self.subTest(schema=schema, include_hook=include_hook):
+                    unsupported = {**original, "schema": schema}
+                    if not include_hook:
+                        unsupported.pop("hook")
+                    write_json(path, unsupported)
+                    before, mutations = snapshot(self.home), list(self.backend.mutations)
+                    for check in (True, False):
+                        with self.assertRaisesRegex(InstallError, "Invalid installation receipt"):
+                            self.install(check=check)
+                        self.assertEqual(snapshot(self.home), before)
+                        self.assertEqual(self.backend.mutations, mutations)
+        write_json(path, original)
         self.assertEqual(self.install(check=True)["status"], "checked")
-        self.assertEqual(self.install()["status"], "updated")
-        self.assertEqual(state.read_text(), '{"synthetic": "recoverable state"}\n')
-        self.assert_unrelated_preserved()
 
-    def test_prior_shared_package_code_is_never_executed_during_upgrade(self) -> None:
-        self.seed_prior_shared_installation()
-        marker = self.root / "old-builder-executed"
-        payload = self.home / "constellation/catalog/plugins/constellation"
-        (payload / "ecosystem/build.py").write_text(
-            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n"
-            "raise RuntimeError('The previous release must only be read as data')\n"
-        )
-        self.rewrite_owned_shared_resources()
-        self.assertEqual(self.install()["status"], "updated")
-        self.assertFalse(marker.exists())
-
-    @unittest.skipUnless(HISTORICAL_MODULES, "This distribution contains no historical modules")
-    def test_prior_shared_release_cannot_claim_foreign_files_or_omit_module_identity(self) -> None:
-        for change in ({"add": ("ecosystem/foreign.py",)},
-                       {"add": ("agents/foreign.toml",)},
-                       {"add": ("ecosystem/agents/foreign.toml",)},
-                       {"remove": (f"skills/{HISTORICAL_MODULES[0]}/SKILL.md",)},
-                       {"remove": ("ecosystem/agents/reviewer.toml",)}):
+    def test_current_receipt_requires_the_exact_active_inventory_even_with_fresh_hashes(self) -> None:
+        self.install()
+        baseline = self.root / "current-home-baseline"
+        shutil.copytree(self.home, baseline, symlinks=True)
+        for change in ({"remove": ("ecosystem/platform_support.py",)},
+                       {"add": ("ecosystem/evaluation.json",)}):
             with self.subTest(change=change):
-                self.seed_prior_shared_installation()
-                before_change = snapshot(self.home)
-                self.rewrite_owned_shared_resources(**change)
-                before = snapshot(self.home)
-                with self.assertRaises(InstallError):
-                    self.install()
-                self.assertEqual(snapshot(self.home), before)
-                self.assertEqual(self.backend.mutations, [])
-                # Restore this fixture through exact bytes, never production state.
+                self.rewrite_current_resources(**change)
+                before, mutations = snapshot(self.home), list(self.backend.mutations)
+                for check in (True, False):
+                    with self.assertRaisesRegex(InstallError, "Invalid installation receipt"):
+                        self.install(check=check)
+                    self.assertEqual(snapshot(self.home), before)
+                    self.assertEqual(self.backend.mutations, mutations)
+                # Test fixtures are restored as data, never by migrating an
+                # unsupported ownership receipt through production code.
                 shutil.rmtree(self.home)
-                self.home.mkdir()
-                for relative, (kind, contents, mode) in before_change.items():
-                    self.assertEqual(kind, "file")
-                    path = self.home / relative
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(contents)
-                    path.chmod(mode)
-                builder._PLATFORM.set_access(self.home / "constellation", 0o700)
-
-    @unittest.skipUnless(HISTORICAL_MODULES, "This distribution contains no historical modules")
-    def test_legacy_release_updates_to_shared_runtime_for_every_module_selection(self) -> None:
-        selections = [list(group) for count in range(1, len(HISTORICAL_MODULES) + 1)
-                      for group in combinations(HISTORICAL_MODULES, count)]
-        for modules in selections:
-            with self.subTest(modules=modules):
-                self.seed_legacy_installation(modules)
-                self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
-                self.assertEqual(self.backend.mutations, [])
-                result = self.install(modules=modules)
-                self.assertEqual(result["status"], "updated")
-                self.assertEqual(result["version"], self.current_version)
-                self.assertEqual(self.receipt()["schema"], 3)
-                self.assertFalse((self.cache() / "review_gate.py").exists())
-                self.assertTrue((self.cache() / "ecosystem/runtime/workflow.py").is_file())
-                self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
-                self.assert_unrelated_preserved()
-
-    def test_failed_legacy_upgrade_restores_old_inventory_and_can_retry(self) -> None:
-        self.seed_legacy_installation()
-        before = snapshot(self.home)
-        self.backend.fail_once = "add_plugin"
-        with self.assertRaisesRegex(InstallError, "previous owned files and registration restored"):
-            self.install()
-        self.assertEqual(snapshot(self.home), before)
-        self.assertEqual(self.receipt()["schema"], 1)
-        self.assertEqual(self.install(check=True)["status"], "checked")
-        self.assertEqual(self.install()["version"], self.current_version)
+                shutil.copytree(baseline, self.home, symlinks=True)
+                self.backend.mutations.clear()
+                self.assertEqual(self.install(check=True)["status"], "checked")
 
     def test_executable_packaged_agent_keeps_normalized_projection_across_updates(self) -> None:
         source = self.source_copy()
@@ -1028,24 +778,6 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(self.install(bundle, check=True)["status"], "checked")
         self.assertEqual(self.install(bundle)["status"], "updated")
 
-    def test_executable_legacy_agent_keeps_normalized_projection_across_upgrade(self) -> None:
-        self.seed_legacy_installation(executable_agent=True)
-        self.assertEqual(self.install(check=True)["status"], "checked")
-        self.assertEqual(self.install()["status"], "updated")
-
-    def test_legacy_upgrade_preserves_and_rejects_unrecorded_catalog_files(self) -> None:
-        self.seed_legacy_installation()
-        payload = self.home / "constellation/catalog/plugins/constellation"
-        module = self.receipt()["modules"][0]
-        for name in (".DS_Store", "skills/.DS_Store", f"skills/{module}/.DS_Store"):
-            path = payload / name
-            path.write_bytes(b"independently owned fixture bytes")
-        before = snapshot(self.home)
-        with self.assertRaisesRegex(InstallError, "Catalog was modified"):
-            self.install()
-        self.assertEqual(snapshot(self.home), before)
-        self.assertEqual(self.backend.mutations, [])
-
     def test_install_repeat_and_update_use_native_registration_and_preserve_unrelated_files(self) -> None:
         first = self.install()
         self.assertEqual(first["status"], "installed")
@@ -1056,8 +788,8 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(self.backend.mutations.count("add_marketplace"), 1)
         self.assertEqual(len([row for row in self.backend.plugins() if row["pluginId"] == PLUGIN_ID]), 1)
         updated = self.install(self.changed_bundle())
-        self.assertEqual(updated["version"], "1.1.1")
-        self.assertEqual(self.receipt()["version"], "1.1.1")
+        self.assertEqual(updated["version"], "2.0.0")
+        self.assertEqual(self.receipt()["version"], "2.0.0")
         self.assertIn("Updated synthetic release.", (self.cache() / f"skills/{self.module}/references/workflow.md").read_text())
         self.assert_unrelated_preserved()
 
@@ -1195,24 +927,6 @@ class SyntheticInstallationTests(BundleCase):
         _state, _identity, revision = self.create_default_state(self.home, self.cache())
         self.assertGreater(revision, 0)
 
-    @unittest.skipUnless("quant-research" in MODULES, "This distribution omits quant-research")
-    def test_historical_receipts_cannot_claim_a_later_module(self) -> None:
-        self.install(modules=["quant-research"])
-        path = self.home / "constellation/receipt.json"
-        original = self.receipt()
-        for schema in (1, 2):
-            with self.subTest(schema=schema):
-                invalid = {**original, "schema": schema}
-                invalid.pop("hook")
-                if schema == 1:
-                    invalid["version"] = "1.0.0"
-                write_json(path, invalid)
-                before, mutations = snapshot(self.home), list(self.backend.mutations)
-                with self.assertRaisesRegex(InstallError, "Invalid installation receipt"):
-                    self.install(modules=["quant-research"])
-                self.assertEqual(snapshot(self.home), before)
-                self.assertEqual(self.backend.mutations, mutations)
-        write_json(path, original)
 
     @unittest.skipUnless("quant-research" in MODULES, "This distribution omits quant-research")
     def test_current_receipt_requires_every_quant_research_identity(self) -> None:
@@ -1223,7 +937,7 @@ class SyntheticInstallationTests(BundleCase):
         for relative in paths:
             with self.subTest(identity=relative):
                 self.install(modules=["quant-research"])
-                self.rewrite_owned_shared_resources(remove=(relative,))
+                self.rewrite_current_resources(remove=(relative,))
                 before, mutations = snapshot(self.home), list(self.backend.mutations)
                 with self.assertRaisesRegex(InstallError, "Invalid installation receipt"):
                     self.install(modules=["quant-research"])
@@ -1233,31 +947,7 @@ class SyntheticInstallationTests(BundleCase):
                 # inventory; production installation is intentionally rejected.
                 payload = self.home / "constellation/catalog/plugins/constellation"
                 shutil.copy2(self.bundle / relative, payload / relative)
-                self.rewrite_owned_shared_resources()
-
-    def test_current_receipt_accepts_a_later_optional_agent_resource(self) -> None:
-        self.install()
-        source = self.source_copy("future-agent-source")
-        relative = "ecosystem/agents/future-analyst.toml"
-        (source / relative).write_text(
-            'name = "ecosystem_future_analyst"\n'
-            'description = "Synthetic future release profile."\n'
-            'developer_instructions = "Use the assigned evidence."\n'
-        )
-        metadata = json.loads((source / "ecosystem/manifests/codex-plugin.json").read_text())
-        write_json(source / "ecosystem/manifests/codex-plugin.json", {**metadata, "version": "1.2.1"})
-        metadata = json.loads((source / "ecosystem/manifests/claude-plugin.json").read_text())
-        write_json(source / "ecosystem/manifests/claude-plugin.json", {**metadata, "version": "1.2.1"})
-        with patch.object(builder, "COMMON_FILES", (*builder.COMMON_FILES, relative)):
-            updated = self.root / "future-agent-bundle"
-            build_bundle(updated, MODULES, source_root=source)
-            before, mutations = snapshot(self.home), list(self.backend.mutations)
-            self.assertEqual(self.install(updated, check=True)["status"], "checked")
-            self.assertEqual(snapshot(self.home), before)
-            self.assertEqual(self.backend.mutations, mutations)
-            self.assertEqual(self.install(updated)["status"], "updated")
-            self.assertIn(relative, self.receipt()["cache"])
-            self.assertEqual(self.install(updated, check=True)["status"], "checked")
+                self.rewrite_current_resources()
 
     def test_check_is_read_only_before_and_after_installation(self) -> None:
         for installed in (False, True):
@@ -1476,8 +1166,9 @@ class SyntheticInstallationTests(BundleCase):
                     installer._load_receipt(path)
                 path.rmdir() if kind == "directory" else path.unlink()
 
-    def test_legacy_manifest_inconsistency_is_rejected_even_with_updated_receipt_hashes(self) -> None:
-        self.seed_legacy_installation()
+    def test_current_manifest_inconsistency_is_rejected_even_with_updated_receipt_hashes(self) -> None:
+        self.install()
+        self.backend.mutations.clear()
         for metadata_path in ("bundle.json", PLUGIN_MANIFEST):
             with self.subTest(path=metadata_path):
                 receipt = self.receipt()
@@ -1720,17 +1411,16 @@ class NativeAdapterSubprocessTests(unittest.TestCase):
         self.assertEqual([row["args"] for row in calls],
                          [["plugin", "list", "--marketplace", "constellation", "--json"]])
 
-    def test_installed_rows_normalize_legacy_and_current_cli_envelopes(self) -> None:
-        row = {"pluginId": PLUGIN_ID, "enabled": True, "version": "1.3.0"}
+    def test_installed_rows_use_the_current_cli_envelope_for_both_queries(self) -> None:
+        row = {"pluginId": PLUGIN_ID, "enabled": True, "version": "2.0.0"}
         available = {"pluginId": "candidate@constellation", "enabled": True}
-        for response in ({"plugins": [row]}, {"installed": [row]},
-                         {"installed": [row], "available": [available]}):
-            with self.subTest(envelope=list(response)):
-                write_json(self.home / "plugin-response.json", response)
-                self.assertEqual(self.client.plugins(marketplace="constellation"), [row])
+        write_json(self.home / "plugin-response.json",
+                   {"installed": [row], "available": [available]})
+        self.assertEqual(self.client.plugins(), [row])
+        self.assertEqual(self.client.plugins(marketplace="constellation"), [row])
 
     def test_available_rows_never_establish_installation(self) -> None:
-        row = {"pluginId": PLUGIN_ID, "enabled": True, "version": "1.3.0"}
+        row = {"pluginId": PLUGIN_ID, "enabled": True, "version": "2.0.0"}
         write_json(self.home / "plugin-response.json", {"installed": [], "available": [row]})
         self.assertEqual(self.client.plugins(marketplace="constellation"), [])
         self.assertEqual(installer._registered(self.client, self.root / "catalog"), (False, None))
@@ -1738,6 +1428,7 @@ class NativeAdapterSubprocessTests(unittest.TestCase):
     def test_ambiguous_and_malformed_plugin_envelopes_are_rejected(self) -> None:
         row = {"pluginId": PLUGIN_ID, "enabled": True}
         responses = ([], {}, {"plugins": None}, {"plugins": [None]},
+                     {"plugins": [row]}, {"installed": [row]},
                      {"installed": [], "plugins": []}, {"installed": [], "available": {}},
                      {"available": [row]}, {"installed": [row], "available": [None]},
                      {"installed": [row], "unknown": []},

@@ -2,121 +2,89 @@
 
 Constellation coordina requisitos, evidencia, revisión y publicación sobre
 Codex y Claude Code. Los clientes ejecutan modelos, herramientas y agentes;
-cada proyecto conserva sus archivos, datos, permisos y dueño Git. Una sola
-distribución reúne cuatro skills y ocho roles canónicos, con entradas nativas
-para ambos clientes.
+cada proyecto conserva sus archivos, permisos y dueño Git. La distribución
+actual `1.4.0-rc.1` reúne cuatro skills y ocho roles con un único runtime.
 
-El coordinador parte del resultado pedido, consulta el catálogo de su sesión y
-carga las capacidades pertinentes. Descubrir una herramienta no prueba acceso
-ni ejecución; una capacidad ausente se comunica o se sustituye por una alternativa
-comprobada. La [arquitectura](docs/architecture.md) explica estas responsabilidades
-y la [evaluación](docs/evaluation.md) define cómo contrastarlas.
+El coordinador consulta el catálogo de su sesión y carga las instrucciones
+pertinentes. Descubrimiento, habilitación, autorización, ejecución y calidad del
+resultado son hechos distintos. La [arquitectura](docs/architecture.md) delimita
+esas responsabilidades; la [compatibilidad](docs/compatibility.md) conserva la
+evidencia y sus límites.
 
 ## Elegir el flujo
 
-| Trabajo | Ejecución |
+| Resultado | Ejecución |
 | --- | --- |
-| Pregunta breve | Respuesta directa y comprobación pertinente. |
-| Cambio en un repositorio | Un contrato del receptor, pruebas, revisión y publicación por su dueño Git. |
-| Investigación o documento con evidencia persistida | Núcleo portable, aunque no haya repositorio ni publicación. |
-| Trabajo mixto | Capacidades y dependencias según sus obligaciones; sin registrar dos veces la misma entrega. |
+| Pregunta breve o edición local pequeña | Respuesta y comprobación proporcional, respetando cualquier contrato receptor activo. |
+| Cambio Git | Un contrato del dueño, checks, revisión y publicación con `ecosystem/cli.py git`. |
+| Coordinación de repositorios | `ecosystem/cli.py workspace`; contratos separados por dueño Git. |
+| Investigación o documento con evidencia persistente | Protocolo portable, incluso sin Git; su cierre no publica. |
 
-Cuando están disponibles y respetan las instrucciones del receptor, las skills
-`constellation:coding`, `constellation:mathematics`, `constellation:quant-research`
-y `constellation:writter` cubren ingeniería, argumentos matemáticos, investigación
-sistemática y escritura sustantivas. Un diagnóstico de ingeniería sin editar
-archivos o una demostración no trivial también requieren su método pertinente.
-Las preguntas breves, la aritmética simple y las traducciones cortas no necesitan
-ese flujo. En Codex se pueden invocar con `$constellation:nombre`; en Claude,
-con `/constellation:nombre`. Nombrar una skill no carga sus instrucciones.
-
-`UserPromptSubmit` aporta un recordatorio estático para consultar el catálogo,
-aunque no haya contrato. No consulta ni clasifica el texto del prompt ni lo
-almacena; tampoco inicia una tarea. Los controles de alcance y cierre siguen
-actuando sobre contratos activos. La selección efectiva requiere observación,
-no se acredita por la presencia del recordatorio. Los formatos y conectores
-permanecen en sus proveedores; el módulo cuantitativo no activa órdenes reales.
-
-Los [criterios de trabajo por responsabilidad](docs/architecture.md#criterios-de-trabajo-por-responsabilidad)
-concretan la explicación didáctica, el diseño de código pedido y la investigación
-adversarial. Sus [ensayos dirigidos](docs/evaluation.md#ensayos-dirigidos-de-las-instrucciones)
-comprueban la aplicación del método; se distinguen de la selección automática.
+Las skills `coding`, `mathematics`, `quant-research` y `writter` cubren ingeniería,
+argumentos matemáticos, investigación sistemática y escritura sustantivas. Úsalas
+según la tarea y las instrucciones del receptor. Una explicación breve no crea
+por sí sola un equipo o contrato. El recordatorio estático de métodos no lee ni
+almacena prompts y no prueba selección correcta de una skill.
 
 ## Estructura
 
-| Ubicación en las fuentes | Responsabilidad |
+| Fuente | Responsabilidad |
 | --- | --- |
-| `.codex/skills/` | Cuerpo canónico de cada skill y sus referencias específicas. |
-| `.codex/ecosystem/runtime/` | Workflow Git, coordinación, reparto, revisión y progreso compartidos. |
-| `.codex/ecosystem/core.py`, `storage.py`, `cli.py` | Evidencia portable, persistencia local y entrada pública. |
-| `.codex/ecosystem/manifests/` | Fuentes de los manifiestos nativos de plugins y hooks. |
-| `.codex/ecosystem/agents/` | Ocho roles canónicos; el constructor proyecta el formato de Claude. |
-| `.codex/ecosystem/references/` | Protocolo y fundamentos metodológicos usados por las skills. |
-| `.codex/ecosystem/docs/` | Arquitectura, instalación, progreso, compatibilidad y evaluación mantenidas. |
-| `.codex/ecosystem/tests/`, `evals/` | Pruebas de comportamiento y casos de evaluación. |
-| `docs/history/`, `evals/results/`, dentro de `ecosystem/` | Informes y resultados históricos conservados sólo en las fuentes. |
+| `.codex/skills/` | Instrucciones y referencias específicas de las cuatro skills. |
+| `.codex/ecosystem/runtime/` | Git, workspace, reparto, revisión y progreso. |
+| `core.py`, `storage.py`, `cli.py` | Contratos portables, persistencia privada y entrada pública. |
+| `platform_support.py` | Primitivas de filesystem y acceso por plataforma. |
+| `manifests/` y `agents/` | Manifiestos nativos y ocho roles canónicos. |
+| `references/` y `docs/` | Método, protocolo y guías vigentes. |
+| `tests/` y `evals/` | Pruebas y fixtures de evaluación actuales. |
+| `locales/en/` | Traducciones fuente seleccionadas al construir; no otra instalación activa. |
 
-Los módulos `build.py`, `install.py`, `native.py`, `claude.py` y los adaptadores de
-hooks mantienen sus entradas públicas. En el paquete, `skills/` y los manifiestos
-nativos se proyectan desde esas fuentes. Los dos archivos distribuidos de hooks
-conservan sus rutas porque participan en su identidad nativa; no son copias
-fuente adicionales. Mantener una ruta no conserva ni concede confianza: el
-cliente puede exigir una nueva aprobación. Los archivos privados de ejecución
-y configuración personal quedan fuera de la distribución.
+El constructor permite sólo un inventario explícito. Genera los agentes Claude
+desde los TOML y el bootstrap autónomo desde las fuentes canónicas; no mantiene
+otro cuerpo manual. El historial se consulta en Git, sin informes retirados como
+dependencias de la entrega.
 
 ## Instalar y actualizar
 
-Se requiere Python 3.11+ y el cliente elegido; Git se usa para publicación.
-El destino predeterminado conserva macOS/Linux. El candidato 1.4.0-rc.1 añade
-el destino nativo de Claude en Windows, cuya aceptación real en Windows sigue
-pendiente. Consulta [su guía](docs/windows.md); construir el paquete no acredita
-esa ejecución. Para el destino POSIX, usa fuentes publicadas y un destino nuevo:
+Se requiere Python 3.11+ y el cliente elegido. El destino `posix` cubre
+macOS/Linux; `windows-claude` es el candidato para Claude en Windows nativo, sin
+WSL. Su aceptación real allí sigue pendiente. Sigue la
+[guía de Windows](docs/windows.md) para ese destino.
+
+Desde las fuentes, usa un destino nuevo:
 
 ```sh
-python3 .codex/ecosystem/build.py --output /tmp/constellation-1.4.0-rc.1 \
-  --archive /tmp/constellation-1.4.0-rc.1.zip
-shasum -a 256 /tmp/constellation-1.4.0-rc.1.zip
+python3 .codex/ecosystem/build.py --language en \
+  --output /tmp/constellation-1.4.0-rc.1-en \
+  --archive /tmp/constellation-1.4.0-rc.1-en.zip
+shasum -a 256 /tmp/constellation-1.4.0-rc.1-en.zip
 ```
 
-La edición inglesa se construye desde la misma fuente añadiendo `--language en`.
-Traduce instrucciones, roles, guías, evaluaciones y las cadenas de presentación
-del diario; conserva módulos, políticas, lógica y los instaladores. La edición
-predeterminada sigue en español. Ambas usan el mismo identificador y versión:
-instala una edición por cliente, sin activar dos copias. Las
-reglas de `ecosystem/locales/README.md` en las fuentes describen su inventario y límites.
+La edición predeterminada conserva las fuentes españolas. Ambas ediciones usan
+el mismo identificador: instala una por cliente. El paquete no copia cuentas,
+credenciales, conversaciones, perfiles personales ni datos de proyectos.
 
-Copia el paquete por un canal autorizado y comprueba el hash. La
-[guía de instalación](docs/migrations.md#instalar-y-actualizar) contiene los
-comandos de ambos clientes, comprobación previa, actualización y recuperación.
-No copies los directorios personales completos de Codex o Claude. Cada portátil
-conserva sus cuentas, datos, conectores y políticas locales.
-
-La reorganización 1.3.1 mantiene las interfaces nativas y separa las guías de la
-evidencia histórica. Su aceptación exige verificar la actualización desde 1.3.0,
-además de una instalación nueva. Consulta el
-[estado observado](docs/compatibility.md); un número de versión no acredita
-instalación, confianza ni ejecución. Abre sesiones nuevas después de actualizar.
+La [guía de instalación](docs/migrations.md#instalar-y-actualizar) describe
+preflight, verificación y actualizaciones del formato actual. Los formatos
+retirados se rechazan conservando sus archivos; no hay una conversión implícita.
+Instalar o conservar una ruta no concede confianza a los hooks.
 
 ## Trabajar y comprobar
 
-En el hub, usa `.codex/ecosystem/cli.py git --session ID` o
-`.codex/ecosystem/cli.py workspace --session ID`. Los lanzadores antiguos
-de la raíz se han retirado; las sesiones abiertas deben cargar los cambios según
-su cliente. En un paquete independiente:
+En el checkout, usa `.codex/ecosystem/cli.py git --session ID` o
+`.codex/ecosystem/cli.py workspace --session ID`. Desde un paquete:
 
 ```sh
-python3 /ruta/al/paquete/ecosystem/cli.py git --root /ruta/proyecto --session ID begin
-python3 /ruta/al/paquete/ecosystem/cli.py git --root /ruta/proyecto --session ID plan < contrato.json
+python3 /ruta/paquete/ecosystem/cli.py git --root /ruta/proyecto --session ID begin
+python3 /ruta/paquete/ecosystem/cli.py git --root /ruta/proyecto --session ID plan < contrato.json
 ```
 
-En Claude, el ciclo usa `claude-<session_id>`; los autores y revisores conservan
-sus IDs nativos. El [protocolo](references/protocol.md) distingue ciclos Git y
-portable, comprobaciones, revisión y límites. El trabajo sustancial conserva
-[progreso recuperable](docs/progress.md) en su almacén existente.
+El [protocolo](references/protocol.md) separa Git y entrega portable. En Claude,
+la identidad de ciclo es `claude-<session_id>`; los autores y revisores conservan
+sus IDs nativos. El trabajo sustancial mantiene
+[progreso recuperable](docs/progress.md) en el almacén existente.
 
-El [comando completo de diagnóstico de Codex](docs/migrations.md#diagnóstico-de-codex)
-consulta un proceso nuevo del CLI; no representa automáticamente este chat.
-Para Claude, `claude.py verify` comprueba la integridad de la instalación.
-Comprueba después catálogo, confianza y eventos en el cliente real. La
-[matriz de compatibilidad](docs/compatibility.md) separa esas evidencias de los
-tests y de la calidad de las respuestas del modelo.
+Las comprobaciones de inventario y revisión vinculan versión y evidencia;
+no demuestran por sí solas verdad matemática, calidad editorial o rendimiento.
+La [evaluación](docs/evaluation.md) distingue esas obligaciones y conserva los
+resultados negativos.

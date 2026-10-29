@@ -302,9 +302,10 @@ Una ampliación requiere la revisión actual y un motivo explícito; no borra
 rondas ni historial. Este control no mide tokens ni cambia límites del cliente.
 
 Cambiar la política invalida la evidencia: abre otra ronda, conservando los
-hallazgos y los mínimos más estrictos de riesgo y cobertura. La migración de
-políticas de esquema 1 elimina el antiguo `max_rounds`; el esquema 2 ya no lo
-admite. Los demás mínimos se conservan, incluidos los más estrictos del receptor.
+hallazgos y los mínimos más estrictos de riesgo y cobertura. Sólo se admite el
+esquema 2 vigente. Las políticas de esquema 1 y el campo retirado `max_rounds`
+se rechazan sin mutar el estado. Se conservan el historial y los mínimos del
+formato actual, incluidos los más estrictos del receptor.
 
 Después registra la evidencia de cada requisito con `review` y publica con el
 flujo habitual. `commit` y `finish` comprueban también esta puerta. Los comandos

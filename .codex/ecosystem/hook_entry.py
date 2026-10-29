@@ -24,6 +24,128 @@ CATALOG_MANIFEST = ".agents/plugins/marketplace.json"
 CHECK_SECONDS = 1.0
 
 
+# BEGIN CONSTELLATION CURRENT INVENTORY
+# Generated from build.allowed_files; do not maintain a second inventory.
+_CURRENT_COMMON_FILES = frozenset((
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+    "agents/researcher.md",
+    "agents/reviewer.md",
+    "agents/security-reviewer.md",
+    "agents/verifier.md",
+    "ecosystem/README.md",
+    "ecosystem/__init__.py",
+    "ecosystem/agents/researcher.toml",
+    "ecosystem/agents/reviewer.toml",
+    "ecosystem/agents/security-reviewer.toml",
+    "ecosystem/agents/verifier.toml",
+    "ecosystem/build.py",
+    "ecosystem/claude-hooks.json",
+    "ecosystem/claude.py",
+    "ecosystem/claude_hooks.py",
+    "ecosystem/cli.py",
+    "ecosystem/core.py",
+    "ecosystem/docs/architecture.md",
+    "ecosystem/docs/compatibility.md",
+    "ecosystem/docs/evaluation.md",
+    "ecosystem/docs/migrations.md",
+    "ecosystem/docs/progress.md",
+    "ecosystem/docs/windows.md",
+    "ecosystem/evals/cases.json",
+    "ecosystem/evals/rubric.json",
+    "ecosystem/hook_entry.py",
+    "ecosystem/hooks.json",
+    "ecosystem/hooks.py",
+    "ecosystem/install.py",
+    "ecosystem/native.py",
+    "ecosystem/platform_support.py",
+    "ecosystem/references/protocol.md",
+    "ecosystem/requirements-dev.txt",
+    "ecosystem/runtime/__init__.py",
+    "ecosystem/runtime/agent_policy.py",
+    "ecosystem/runtime/dispatch.py",
+    "ecosystem/runtime/progress.py",
+    "ecosystem/runtime/review-policy.json",
+    "ecosystem/runtime/review_gate.py",
+    "ecosystem/runtime/workflow.py",
+    "ecosystem/runtime/workspace.py",
+    "ecosystem/storage.py",
+    "ecosystem/tests/helpers.py",
+    "ecosystem/tests/native_claude_probe.py",
+    "ecosystem/tests/test_capabilities.py",
+    "ecosystem/tests/test_claude_hooks.py",
+    "ecosystem/tests/test_claude_install.py",
+    "ecosystem/tests/test_claude_package.py",
+    "ecosystem/tests/test_core.py",
+    "ecosystem/tests/test_hook_entry.py",
+    "ecosystem/tests/test_hooks.py",
+    "ecosystem/tests/test_package.py",
+    "ecosystem/tests/test_platform_support.py",
+    "ecosystem/tests/test_progress.py",
+    "ecosystem/tests/test_progress_core.py",
+    "ecosystem/tests/test_validation.py",
+    "ecosystem/tests/test_windows_claude.py",
+    "ecosystem/tests/windows_acceptance.py",
+    "ecosystem/validate.py",
+))
+_CURRENT_MODULE_FILES = {
+    "coding": frozenset((
+        "agents/coder.md",
+        "ecosystem/agents/coder.toml",
+        "skills/coding/SKILL.md",
+        "skills/coding/agents/openai.yaml",
+        "skills/coding/references/workflow.md",
+    )),
+    "mathematics": frozenset((
+        "agents/counterexample.md",
+        "agents/mathematician.md",
+        "ecosystem/agents/counterexample.toml",
+        "ecosystem/agents/mathematician.toml",
+        "ecosystem/references/ontology-examples.md",
+        "ecosystem/references/ontology.md",
+        "skills/mathematics/SKILL.md",
+        "skills/mathematics/agents/openai.yaml",
+        "skills/mathematics/references/workflow.md",
+    )),
+    "quant-research": frozenset((
+        "agents/coder.md",
+        "agents/counterexample.md",
+        "agents/mathematician.md",
+        "ecosystem/agents/coder.toml",
+        "ecosystem/agents/counterexample.toml",
+        "ecosystem/agents/mathematician.toml",
+        "skills/quant-research/SKILL.md",
+        "skills/quant-research/agents/openai.yaml",
+        "skills/quant-research/references/workflow.md",
+    )),
+    "writter": frozenset((
+        "agents/coder.md",
+        "agents/editor.md",
+        "agents/mathematician.md",
+        "ecosystem/agents/coder.toml",
+        "ecosystem/agents/editor.toml",
+        "ecosystem/agents/mathematician.toml",
+        "ecosystem/references/ontology-examples.md",
+        "ecosystem/references/ontology.md",
+        "skills/writter/SKILL.md",
+        "skills/writter/agents/openai.yaml",
+        "skills/writter/references/workflow.md",
+    )),
+}
+
+
+def _current_files(modules):
+    """Return the active trusted inventory without importing package code."""
+    if (not isinstance(modules, (list, tuple)) or not modules
+            or not all(isinstance(module, str) for module in modules)
+            or len(set(modules)) != len(modules)
+            or not set(modules) <= set(_CURRENT_MODULE_FILES)):
+        raise ValueError("Invalid current package modules")
+    return set(_CURRENT_COMMON_FILES).union(
+        *(_CURRENT_MODULE_FILES[module] for module in modules))
+# END CONSTELLATION CURRENT INVENTORY
+
+
 class EntryError(ValueError):
     """The installed release cannot safely be selected."""
 
@@ -108,14 +230,29 @@ def _verified_hook(home: Path, entry: Path) -> Path:
     if (not isinstance(modules, list) or not modules
             or not all(isinstance(module, str) for module in modules)
             or len(set(modules)) != len(modules)
-            or not set(modules) <= {"coding", "mathematics", "quant-research", "writter"}):
+            or not set(modules) <= set(_CURRENT_MODULE_FILES)):
         raise EntryError("invalid installed modules")
     version = receipt["version"]
     if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):
         raise EntryError("invalid installed version")
     catalog_records = _records(receipt["catalog"])
     cache_records = _records(receipt["cache"])
-    _records(receipt["agents"])
+    if set(cache_records) != _current_files(modules) | {"bundle.json"}:
+        raise EntryError("installed inventory differs from the active layout")
+    expected_agents = {
+        "constellation-" + Path(relative).name: {
+            "sha256": cache_records[relative]["sha256"], "mode": 0o644}
+        for relative in sorted(_current_files(modules))
+        if relative.startswith("ecosystem/agents/")
+    }
+    # Validate names before even interpreting receipt-supplied agent paths.
+    # Native profiles normalize source permissions while retaining source bytes.
+    if (not isinstance(receipt["agents"], dict)
+            or set(receipt["agents"]) != set(expected_agents)):
+        raise EntryError("native agent receipt differs from the current projection")
+    agent_records = _records(receipt["agents"])
+    if agent_records != expected_agents:
+        raise EntryError("native agent receipt differs from the current projection")
     _records({"hook.py": receipt["hook"]})
     if receipt["hook"] != _record(entry) or receipt["hook"]["mode"] != 0o644:
         raise EntryError("stable entry differs from its receipt")
@@ -141,6 +278,12 @@ def _verified_hook(home: Path, entry: Path) -> Path:
     plugin = _object(root / ".codex-plugin/plugin.json")
     if plugin.get("name") != "constellation" or plugin.get("version") != version:
         raise EntryError("plugin and receipt differ")
+    for name, expected in expected_agents.items():
+        try:
+            if _record(_path(home, "agents/" + name)) != expected:
+                raise EntryError("owned native agent projection was modified")
+        except OSError as exc:
+            raise EntryError("owned native agent projection is missing or unsafe") from exc
     hook = _path(root, "ecosystem/hooks.py")
     if "ecosystem/hooks.py" not in cache_records:
         raise EntryError("installed hook is unrecorded")

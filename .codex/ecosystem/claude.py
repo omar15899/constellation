@@ -16,12 +16,12 @@ from typing import Iterator
 
 sys.dont_write_bytecode = True
 if __package__:
-    from .build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle, verify_owned_bundle
+    from .build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle
     from .install import InstallError, _read_object, _replace_bytes
     from . import platform_support as platform
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle, verify_owned_bundle
+    from build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle
     from install import InstallError, _read_object, _replace_bytes
     import platform_support as platform
 
@@ -109,7 +109,7 @@ def verify_installation(plugin_root: Path) -> dict:
             raise InstallError("Installation receipt permissions changed") from exc
         receipt = _read_object(marker)
         _single_links(root)
-        manifest = verify_owned_bundle(root, installation=True)
+        manifest = verify_bundle(root, installation=True)
         if type(receipt.get("schema")) is not int or receipt != _receipt(root, manifest):
             raise InstallError("Installation ownership receipt differs from the verified release")
         return {"manifest": manifest, "receipt": receipt}

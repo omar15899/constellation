@@ -75,8 +75,9 @@ siendo necesaria.
 
 En el motor portable se usan las mismas operaciones `progress-show`,
 `progress-update`, `progress-export` y `progress-ack` con `session_id`, `task_id`
-y `agent_id`. Update y ack conservan `expected_revision` **global del motor** y
-el replay mediante `request_id`; no usan `expected_task_start`. Consulta el
+y `agent_id`. Update y ack usan la `expected_revision` que devuelve el motor
+para la tarea seleccionada, no un contador separado de hitos, y conservan el
+replay mediante `request_id`; no usan `expected_task_start`. Consulta el
 [protocolo](../references/protocol.md) para el contrato portable. No abras un segundo
 contrato Git o portable para registrar el progreso del primero.
 

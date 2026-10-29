@@ -263,6 +263,101 @@ class GitFixture(unittest.TestCase):
             validate.assert_called_once()
             inspect.assert_not_called()
 
+    def test_current_check_records_reject_retired_raw_command_proofs_without_mutation(self):
+        from copy import deepcopy
+        self.flow.begin("current-check-records")
+        self.flow.plan({"requirements": ["works"], "paths": ["tool.py"]})
+        (self.root / "tool.py").write_text("pass\n", encoding="utf-8")
+        with patch("sys.stdout", new=io.StringIO()):
+            self.flow.check([sys.executable, "tool.py"])
+        original = self.flow.load()
+        self.flow.validate_checks(original)
+        invalid = [None, False, "", "a" * 63, "a" * 65, "A" * 64, "z" * 64]
+        cases = []
+        retired = deepcopy(original)
+        retired["checks"][0].pop("command_sha256")
+        retired["checks"][0]["command"] = ["SYNTHETIC-RETIRED-ARGV-NOT-EXECUTED"]
+        cases.append(retired)
+        for value in invalid:
+            state = deepcopy(original)
+            state["checks"][0]["command_sha256"] = value
+            cases.append(state)
+        both = deepcopy(original)
+        both["checks"][0]["command"] = ["SYNTHETIC-RETIRED-ARGV-NOT-EXECUTED"]
+        cases.append(both)
+        for state in cases:
+            before = deepcopy(state)
+            with self.subTest(record=state["checks"][0]), \
+                    patch.object(w.subprocess, "run", side_effect=AssertionError("Retired proof must not execute.")), \
+                    self.assertRaisesRegex(w.Blocked, "Unsupported check record"):
+                self.flow.validate_checks(state)
+            self.assertEqual(state, before)
+        self.assertEqual(self.flow.load(), original)
+
+    def checkpoint_request(self, state):
+        return {"expected_task_start": state["started"], "expected_revision": 0,
+                "checkpoint": {"id": "current-checkpoint", "summary": "Synthetic current progress.",
+                    "visibility": "unknown", "snapshot": {
+                        "objectives": ["Current objective"], "current": "Current state.",
+                        "completed": [], "decisions": [], "findings": [], "verification": [],
+                        "unresolved": [], "next_steps": [], "references": []}}}
+
+    def test_retired_coordinator_forms_cannot_be_adopted_or_mutate_actions(self):
+        from copy import deepcopy
+        self.flow.begin("current-coordinator")
+        self.flow.plan({"requirements": ["current objective"], "paths": []})
+        original = self.flow.load()
+        for identity in (None, self.flow.key, "another-coordinator"):
+            state = deepcopy(original)
+            state["author"] = identity
+            before_dict = deepcopy(state)
+            with self.subTest(identity=identity), self.assertRaisesRegex(w.Blocked, "frozen coordinator"):
+                self.flow.identify_author(state)
+            self.assertEqual(state, before_dict)
+            self.flow.save(state)
+            before = self.flow.path.read_bytes()
+            actions = [
+                lambda: self.flow.plan({"requirements": ["current objective"], "paths": []}),
+                lambda: self.flow.review({"current objective": "Read the actual result."}),
+                lambda: self.flow.review_operation("prepare"),
+                lambda: self.flow.progress_operation("update", self.checkpoint_request(state)),
+                lambda: self.flow.check([sys.executable, "-c", "pass"]),
+            ]
+            for action in actions:
+                with self.subTest(identity=identity, action=action), self.assertRaisesRegex(w.Blocked, "frozen coordinator"):
+                    action()
+                self.assertEqual(self.flow.path.read_bytes(), before)
+        missing = deepcopy(original)
+        missing.pop("author")
+        before = deepcopy(missing)
+        with self.assertRaises(w.Blocked):
+            self.flow.identify_author(missing)
+        self.assertEqual(missing, before)
+        self.flow.save(original)
+
+    def test_current_coordinator_can_update_unknown_visibility_progress(self):
+        self.flow.begin("current-progress")
+        self.flow.plan({"requirements": ["current objective"], "paths": []})
+        state = self.flow.load()
+        result = self.flow.progress_operation("update", self.checkpoint_request(state))
+        self.assertEqual(result["task_progress"]["milestones"][0]["visibility"], "unknown")
+        self.assertEqual(self.flow.load()["author"], self.flow.session)
+
+    def test_current_failed_begin_can_freeze_first_available_upstream_in_plan(self):
+        w.git(self.root, "config", "--unset", "branch.main.remote")
+        w.git(self.root, "config", "--unset", "branch.main.merge")
+        state = self.flow.begin("unavailable-upstream")
+        self.assertEqual(state["author"], self.flow.session)
+        self.assertIn("sync_error", state)
+        self.assertNotIn("target", state)
+        w.git(self.root, "config", "branch.main.remote", "origin")
+        w.git(self.root, "config", "branch.main.merge", "refs/heads/main")
+        current = self.flow.plan({"requirements": ["current objective"], "paths": ["answer.md"]})
+        self.assertEqual(current["author"], self.flow.session)
+        self.assertNotIn("sync_error", current)
+        self.assertEqual(current["target"], w.publication_target(self.root))
+        self.assertEqual(current["initial_head"], w.git(self.root, "rev-parse", "HEAD"))
+
     def test_permission_change_invalidates_review(self):
         self.task()
         (self.root / "answer.md").chmod(0o755)
@@ -403,8 +498,10 @@ class GitFixture(unittest.TestCase):
                 "deadline_at": "9999-01-01T00:00:00Z", "reason": "A worker cannot choose the budget."})
         self.assertEqual(self.flow.path.read_bytes(), before)
         frozen = {"author": self.flow.key, "review_budget": {"revision": 1}}
-        self.flow.identify_author(frozen)
-        self.assertEqual(frozen["author"], self.flow.key)
+        before = dict(frozen)
+        with self.assertRaisesRegex(w.Blocked, "frozen coordinator"):
+            self.flow.identify_author(frozen)
+        self.assertEqual(frozen, before)
 
     def test_review_start_cli_forwards_continuation_and_rejects_partial_pair(self):
         self.task()

@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import tomllib
 from typing import Any, Iterator
 
 from . import workspace_root
@@ -85,14 +86,24 @@ def configured_limit(source: str) -> int | None:
         if clean.startswith("["):
             width = 2 if clean.startswith("[[") else 1
             table = _key_parts(clean[width:-width].strip())
+            if table[:2] == ("agents", "max_threads"):
+                raise Blocked(f"Retired agents.max_threads is unsupported; use agents.{KEY}.")
+            if table[:2] == ("agents", KEY):
+                raise Blocked("Native agent concurrency must be a scalar, not a TOML table.")
             if width == 2:
+                if table == ("agents",):
+                    raise Blocked("Inspect concurrency in one ordinary agents table, not an array of tables.")
                 table += ("[]",)
             continue
         key, value = _assignment(clean)
         full = table + key
         if full == ("agents",):
             raise Blocked("Inspect concurrency in a regular agents table; inline agents declarations are ambiguous here.")
-        if full in {("agents", KEY), ("agents", "max_threads")}:
+        if full[:2] == ("agents", "max_threads"):
+            raise Blocked(f"Retired agents.max_threads is unsupported; use agents.{KEY}.")
+        if full[:2] == ("agents", KEY) and len(full) != 2:
+            raise Blocked("Native agent concurrency must be a scalar, not a nested setting.")
+        if full == ("agents", KEY):
             if not re.fullmatch(r"\+?[0-9][0-9_]*", value):
                 raise Blocked("Native agent concurrency must be a positive integer.")
             count = int(value.replace("_", ""))
@@ -112,7 +123,7 @@ def _statements(source: str) -> Iterator[tuple[int, int, str]]:
 
     This is a conservative structural reader, not a general TOML parser. It
     keeps multiline string/array contents from impersonating keys or tables.
-    On Python 3.11+ tomllib additionally validates the complete document.
+    The required tomllib parser validates the complete document first.
     """
     start = 0
     index = 0
@@ -167,8 +178,8 @@ def _statements(source: str) -> Iterator[tuple[int, int, str]]:
 
 
 def _key_parts(source: str) -> tuple[str, ...]:
-    # Escaped quoted keys are uncommon and easy to misinterpret without a full
-    # parser on Python 3.9. Reject them instead of risking a hidden duplicate.
+    # Keep the byte-preserving reader conservative: escaped keys are valid TOML
+    # but must not conceal a declaration from the structural editing pass.
     pattern = r'''\s*(?:([A-Za-z0-9_-]+)|"([^"\\\r\n]*)"|'([^'\r\n]*)')\s*'''
     parts = []
     offset = 0
@@ -199,10 +210,6 @@ def _assignment(source: str) -> tuple[tuple[str, ...], str]:
 
 
 def _validate_toml(source: str) -> None:
-    try:
-        import tomllib
-    except ImportError:
-        return
     try:
         tomllib.loads(source)
     except tomllib.TOMLDecodeError:
@@ -267,7 +274,7 @@ def render_config(source: str, limit: int) -> str:
         full = table + key
         if full[:1] == ("agents",):
             if full[:2] in {("agents", KEY), ("agents", "max_threads")}:
-                raise Blocked("Unmanaged agent concurrency setting exists (including legacy max_threads); reconcile it explicitly.")
+                raise Blocked("Unmanaged agent concurrency setting exists (including retired max_threads); reconcile it explicitly.")
             if full == ("agents",):
                 raise Blocked("Inline agents tables are not edited automatically; use a regular [agents] table.")
             if not table:

@@ -10,6 +10,8 @@ try:
 except ImportError:  # Native Codex bootstrap is outside the Windows Claude target.
     fcntl = None
 import json
+import importlib.util
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -416,3 +418,151 @@ class HookEntryTests(BundleCase):
             if process.poll() is None:
                 process.kill()
             process.communicate(timeout=5)
+
+
+    def test_reduced_current_receipt_inventory_rejects_before_runtime_import(self) -> None:
+        home, _ = self.installed(self.runtime_bundle("currentinventory"))
+        receipt_path = home / "constellation/receipt.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        payload = home / "constellation/catalog/plugins/constellation"
+        cache = home / "plugins/cache/constellation/constellation" / receipt["version"]
+        relative = "ecosystem/docs/windows.md"
+        for root in (payload, cache):
+            manifest_path = root / "bundle.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            (root / relative).unlink()
+            manifest["files"].pop(relative)
+            write_json(manifest_path, manifest)
+        receipt["cache"].pop(relative)
+        receipt["catalog"].pop("plugins/constellation/" + relative)
+        record = {"sha256": hashlib.sha256((cache / "bundle.json").read_bytes()).hexdigest(), "mode": 0o644}
+        receipt["cache"]["bundle.json"] = record
+        receipt["catalog"]["plugins/constellation/bundle.json"] = record
+        write_json(receipt_path, receipt)
+        before = snapshot(home)
+        spec = importlib.util.spec_from_file_location(
+            "synthetic_current_source_entry", SOURCE_DIR / "hook_entry.py")
+        assert spec is not None and spec.loader is not None
+        source_entry = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(source_entry)
+        with self.assertRaisesRegex(source_entry.EntryError, "active layout"):
+            source_entry._verified_hook(home, home / "constellation/hook.py")
+        self.assert_failure(self.invoke(home))
+        self.assertFalse((self.root / "runtime-imported").exists())
+        self.assertEqual(snapshot(home), before)
+
+
+    @staticmethod
+    def source_entry():
+        spec = importlib.util.spec_from_file_location(
+            "synthetic_current_agent_source_entry", SOURCE_DIR / "hook_entry.py")
+        assert spec is not None and spec.loader is not None
+        subject = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(subject)
+        return subject
+
+    def test_agent_receipt_projection_rejects_incomplete_or_mismatched_records_before_reads(self) -> None:
+        home, _ = self.installed(self.runtime_bundle("agentrecords"))
+        receipt_path = home / "constellation/receipt.json"
+        original = json.loads(receipt_path.read_text(encoding="utf-8"))
+        owned = sorted(original["agents"])[0]
+        foreign = home / "agents/foreign-agent.toml"
+        foreign.write_bytes(b"Synthetic independently owned profile.\n")
+        subject = self.source_entry()
+        original_path, original_relative = subject._path, subject._relative
+        looked_up, interpreted = [], []
+
+        def traced_relative(relative):
+            interpreted.append(relative)
+            return original_relative(relative)
+
+        def traced_path(root, relative):
+            looked_up.append(relative)
+            return original_path(root, relative)
+
+        subject._path, subject._relative = traced_path, traced_relative
+        try:
+            for mutation in ("missing", "extra", "hash", "mode"):
+                candidate = json.loads(json.dumps(original))
+                if mutation == "missing":
+                    candidate["agents"].pop(owned)
+                elif mutation == "extra":
+                    candidate["agents"]["foreign-agent.toml"] = dict(original["agents"][owned])
+                elif mutation == "hash":
+                    candidate["agents"][owned]["sha256"] = "0" * 64
+                else:
+                    candidate["agents"][owned]["mode"] = 0o755
+                write_json(receipt_path, candidate)
+                before = snapshot(home)
+                looked_up.clear()
+                interpreted.clear()
+                with self.subTest(mutation=mutation):
+                    with self.assertRaisesRegex(subject.EntryError, "agent receipt"):
+                        subject._verified_hook(home, home / "constellation/hook.py")
+                    self.assertFalse(any(name.startswith("agents/") for name in looked_up))
+                    if mutation in {"missing", "extra"}:
+                        self.assertFalse(set(interpreted) & (set(original["agents"]) | {"foreign-agent.toml"}))
+                    self.assert_failure(self.invoke(home))
+                    self.assertFalse((self.root / "runtime-imported").exists())
+                    self.assertEqual(snapshot(home), before)
+        finally:
+            subject._path, subject._relative = original_path, original_relative
+            write_json(receipt_path, original)
+        self.assertEqual(self.invoke(home), {"systemMessage": "agentrecords"})
+        self.assertEqual(foreign.read_bytes(), b"Synthetic independently owned profile.\n")
+
+    def test_owned_agent_projection_damage_rejects_before_runtime_import(self) -> None:
+        home, _ = self.installed(self.runtime_bundle("agentfiles"))
+        receipt = json.loads((home / "constellation/receipt.json").read_text(encoding="utf-8"))
+        profile = home / "agents" / sorted(receipt["agents"])[0]
+        content, mode = profile.read_bytes(), profile.stat().st_mode & 0o777
+        external = self.root / "independently-held-agent.toml"
+        external.write_bytes(content)
+        subject = self.source_entry()
+        for mutation in ("missing", "bytes", "mode", "symlink"):
+            if mutation == "missing":
+                profile.unlink()
+            elif mutation == "bytes":
+                profile.write_bytes(content + b"\n# Synthetic edit.\n")
+            elif mutation == "mode":
+                profile.chmod(0o755)
+            else:
+                profile.unlink()
+                profile.symlink_to(external)
+            before = snapshot(home)
+            try:
+                with self.subTest(mutation=mutation):
+                    with self.assertRaises(subject.EntryError):
+                        subject._verified_hook(home, home / "constellation/hook.py")
+                    self.assert_failure(self.invoke(home))
+                    self.assertFalse((self.root / "runtime-imported").exists())
+                    self.assertEqual(snapshot(home), before)
+                    self.assertEqual(external.read_bytes(), content)
+            finally:
+                profile.unlink(missing_ok=True)
+                profile.write_bytes(content)
+                profile.chmod(mode)
+        self.assertEqual(self.invoke(home), {"systemMessage": "agentfiles"})
+
+    def test_current_agent_projection_normalizes_mode_and_preserves_foreign_profiles(self) -> None:
+        bundle = self.runtime_bundle("agentprojection")
+        source = bundle / "ecosystem/agents/reviewer.toml"
+        source.chmod(0o755)
+        manifest = json.loads((bundle / "bundle.json").read_text(encoding="utf-8"))
+        manifest["files"]["ecosystem/agents/reviewer.toml"]["mode"] = 0o755
+        write_json(bundle / "bundle.json", manifest)
+        home, _ = self.installed(bundle)
+        receipt = json.loads((home / "constellation/receipt.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["cache"]["ecosystem/agents/reviewer.toml"]["mode"], 0o755)
+        self.assertEqual(receipt["agents"]["constellation-reviewer.toml"]["mode"], 0o644)
+        foreign = home / "agents/unrelated-profile.toml"
+        foreign.write_bytes(b"Synthetic unrelated profile, preserved verbatim.\n")
+        held = self.root / "held-native-profile.toml"
+        os.link(home / "agents/constellation-reviewer.toml", held)
+        before = snapshot(home)
+        subject = self.source_entry()
+        self.assertEqual(subject._verified_hook(home, home / "constellation/hook.py").name, "hooks.py")
+        self.assertEqual(self.invoke(home), {"systemMessage": "agentprojection"})
+        self.assertEqual(snapshot(home), before)
+        self.assertEqual(foreign.read_bytes(), b"Synthetic unrelated profile, preserved verbatim.\n")
+        self.assertEqual(held.read_bytes(), source.read_bytes())

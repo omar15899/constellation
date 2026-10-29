@@ -103,9 +103,9 @@
       }
     }
   ],
-  "migration_1_1": {
-    "scope": "Public synthetic additions for migration 1.1; historical cases above are unchanged. Selection oracles are for evaluators, never executor inputs.",
-    "oracle_timing": "Formal oracle added after the initial descriptive selection runs; use prospectively. The missing-skill case remains ambiguous under the old selected_skills response field.",
+  "capability_evaluation": {
+    "scope": "Public synthetic cases for capability selection and execution. Selection oracles are for evaluators, never executor inputs.",
+    "oracle_use": "Apply the declared selection oracles prospectively. A response that does not separate current selection from a proposed alternative remains unscored for that distinction.",
     "selection_cases": [
       {
         "id": "simple-fact",
@@ -322,7 +322,7 @@
     ]
   },
   "learner_extension_acceptance": {
-    "scope": "Ten prospective acceptance scenarios for the teaching/calibration extension; synthetic fixtures only. They do not replace historical or migration_1_1 cases.",
+    "scope": "Ten prospective acceptance scenarios for teaching and calibration, using synthetic fixtures only. They complement the general task cases and capability_evaluation cases.",
     "execution_boundary": "Create exclusive temporary fixtures. An explicitly supplied synthetic profile path replaces every default profile location; no fallback to real profiles, memories, history or backups. Do not access external services, Git or global settings.",
     "executor_fields": [
       "executor_input.request",

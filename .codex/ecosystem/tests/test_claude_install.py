@@ -17,8 +17,7 @@ sys.dont_write_bytecode = True
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from build import (BUNDLE_MANIFEST, INSTALL_RECEIPT, build_bundle, file_record,
-                   legacy_files_131, verify_bundle)
+from build import BUNDLE_MANIFEST, INSTALL_RECEIPT, build_bundle, file_record, verify_bundle
 import claude as installer
 import platform_support as platform
 from install import InstallError
@@ -40,7 +39,7 @@ def snapshot(root: Path) -> dict:
     return result
 
 
-@unittest.skipIf(platform.IS_WINDOWS, "POSIX file-mode/predecessor fixtures; native Windows has its own acceptance cases")
+@unittest.skipIf(platform.IS_WINDOWS, "POSIX file-mode fixtures; native Windows has its own acceptance cases")
 class ClaudeInstallationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -69,144 +68,56 @@ class ClaudeInstallationTests(unittest.TestCase):
         for name in (".codex-plugin/plugin.json", ".claude-plugin/plugin.json"):
             path = result / name
             plugin = json.loads(path.read_text())
-            plugin["version"] = "1.3.2"
+            plugin["version"] = "2.0.0"
             path.write_text(json.dumps(plugin, sort_keys=True, indent=2) + "\n")
             manifest["files"][name] = file_record(path)
         (result / BUNDLE_MANIFEST).write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
         verify_bundle(result)
         return result
 
-    def owned_130(self, *, home: Path | None = None, modules: list[str] | None = None) -> Path:
-        """Reconstruct the old layout as data; never import or run its code."""
-        home = self.home if home is None else home
-        target = home / "skills/constellation"
-        build_bundle(target, modules=modules, source_root=self.bundle)
-        legacy_docs = {
-            "architecture": "ARCHITECTURE", "compatibility": "COMPATIBILITY",
-            "migrations": "MIGRATION", "progress": "PROGRESS", "evaluation": "EVALUATION",
-        }
-        manifest = json.loads((target / BUNDLE_MANIFEST).read_text(encoding="utf-8"))
-        predecessor = legacy_files_131(manifest["modules"])
-        for relative in sorted(set(manifest["files"]) - predecessor):
-            (target / relative).unlink()
-            del manifest["files"][relative]
-        for current, previous in legacy_docs.items():
-            source = f"ecosystem/docs/{current}.md"
-            destination = f"ecosystem/{previous}.md"
-            (target / source).rename(target / destination)
-            manifest["files"][destination] = manifest["files"].pop(source)
-        (target / "ecosystem/docs").rmdir()
-        historical = target / "ecosystem/evaluation.json"
-        historical.write_text('{"fixture":"historical evaluation"}\n')
-        historical.chmod(0o644)
-        manifest["files"]["ecosystem/evaluation.json"] = file_record(historical)
-        for relative in (".codex-plugin/plugin.json", ".claude-plugin/plugin.json"):
-            path = target / relative
-            metadata = json.loads(path.read_text())
-            metadata["version"] = "1.3.0"
-            path.write_text(json.dumps(metadata, sort_keys=True, indent=2) + "\n")
-            manifest["files"][relative] = file_record(path)
-        (target / BUNDLE_MANIFEST).write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
-        marker = target / INSTALL_RECEIPT
-        marker.write_text(json.dumps({
-            "schema": 1, "owner": "constellation-claude-skills-dir",
-            "plugin_id": "constellation@skills-dir", "version": "1.3.0",
-            "modules": manifest["modules"], "bundle_sha256": _manifest_hash(target),
-        }, sort_keys=True, indent=2) + "\n")
-        marker.chmod(0o600)
-        lock = home / installer.LOCK_PATH
-        lock.parent.mkdir(mode=0o700, parents=True)
-        lock.touch(mode=0o600)
-        return target
-
-    def test_130_upgrade_supports_full_and_partial_releases_without_executing_old_code(self) -> None:
-        available = json.loads((self.bundle / BUNDLE_MANIFEST).read_text())["modules"]
-        for label, modules in (("full", available), ("partial", available[:1])):
-            with self.subTest(layout=label):
-                home = self.base / label
-                target = self.owned_130(home=home, modules=modules)
-                settings = home / "settings.json"
-                settings.write_text('{"model":"unchanged-choice"}\n')
-                settings_before = settings.read_bytes(), settings.stat().st_mode
-                # A verified predecessor is data to the new installer, not an
-                # implementation that can participate in its own verification.
-                manifest = json.loads((target / BUNDLE_MANIFEST).read_text())
-                for relative in ("ecosystem/build.py", "ecosystem/claude.py"):
-                    path = target / relative
-                    path.write_text('raise AssertionError("previous code must not execute")\n')
-                    manifest["files"][relative] = file_record(path)
-                (target / BUNDLE_MANIFEST).write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
-                marker = target / INSTALL_RECEIPT
-                receipt = json.loads(marker.read_text())
-                receipt["bundle_sha256"] = _manifest_hash(target)
-                marker.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
-                self.assertEqual(installer.verify_installation(target)["receipt"]["version"], "1.3.0")
-                incoming = self.base / (label + "-incoming")
-                build_bundle(incoming, modules=modules, source_root=self.bundle)
-                result = installer.install_bundle(incoming, home)
-                self.assertEqual(result["status"], "updated")
-                incoming_version = json.loads((incoming / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
-                self.assertEqual(result["version"], incoming_version)
-                self.assertEqual(result["modules"], modules)
-                self.assertEqual((settings.read_bytes(), settings.stat().st_mode), settings_before)
-                self.assertFalse((target / "ecosystem/evaluation.json").exists())
-                self.assertFalse((target / "ecosystem/ARCHITECTURE.md").exists())
-                self.assertTrue((target / "ecosystem/docs/architecture.md").is_file())
-                self.assertEqual(installer.install_bundle(incoming, home)["status"], "unchanged")
-
-    def test_130_corruption_is_rejected_before_any_installation_change(self) -> None:
-        for case in ("modified", "unknown", "symlink", "mode", "mixed"):
-            with self.subTest(case=case):
-                home = self.base / case
-                target = self.owned_130(home=home)
-                resource = target / "ecosystem/ARCHITECTURE.md"
-                if case == "modified":
-                    resource.write_text("user changed this file\n")
-                elif case == "unknown":
-                    (target / "unowned.txt").write_text("preserve this file\n")
-                elif case == "symlink":
-                    resource.unlink()
-                    resource.symlink_to(target / "ecosystem/README.md")
-                elif case == "mode":
-                    resource.chmod(0o600)
+    def test_noncurrent_package_layout_is_rejected_without_mutating_either_copy(self) -> None:
+        installer.install_bundle(self.bundle, self.home)
+        before_home = snapshot(self.home)
+        for change in ("missing", "relocated", "extra"):
+            with self.subTest(layout=change):
+                source = self.base / ("unsupported-" + change)
+                shutil.copytree(self.bundle, source)
+                manifest = json.loads((source / BUNDLE_MANIFEST).read_text(encoding="utf-8"))
+                if change == "missing":
+                    relative = "ecosystem/platform_support.py"
+                    (source / relative).unlink()
+                    del manifest["files"][relative]
+                elif change == "relocated":
+                    old, current = "ecosystem/ARCHITECTURE.md", "ecosystem/docs/architecture.md"
+                    (source / current).rename(source / old)
+                    manifest["files"][old] = manifest["files"].pop(current)
                 else:
-                    destination = target / "ecosystem/docs/architecture.md"
-                    destination.parent.mkdir()
-                    resource.rename(destination)
-                    manifest = json.loads((target / BUNDLE_MANIFEST).read_text())
-                    manifest["files"]["ecosystem/docs/architecture.md"] = manifest["files"].pop("ecosystem/ARCHITECTURE.md")
-                    (target / BUNDLE_MANIFEST).write_text(json.dumps(manifest))
-                    marker = target / INSTALL_RECEIPT
-                    receipt = json.loads(marker.read_text())
-                    marker.write_text(json.dumps({**receipt, "bundle_sha256": _manifest_hash(target)}))
-                before = snapshot(home)
-                with self.assertRaises(InstallError):
-                    installer.install_bundle(self.bundle, home)
-                self.assertEqual(snapshot(home), before)
+                    relative = "ecosystem/evaluation.json"
+                    (source / relative).write_text('{"unsupported":true}\n', encoding="utf-8")
+                    manifest["files"][relative] = file_record(source / relative)
+                (source / BUNDLE_MANIFEST).write_text(
+                    json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+                before_source = snapshot(source)
+                for check in (True, False):
+                    with self.assertRaises((InstallError, ValueError)):
+                        installer.install_bundle(source, self.home, check=check)
+                    self.assertEqual(snapshot(self.home), before_home)
+                    self.assertEqual(snapshot(source), before_source)
 
-    def test_failed_130_upgrade_restores_exact_predecessor(self) -> None:
-        self.owned_130()
+    def test_claude_current_receipt_schema_is_not_an_old_codex_receipt(self) -> None:
+        installer.install_bundle(self.bundle, self.home)
+        marker = self.target / INSTALL_RECEIPT
+        original = marker.read_bytes()
+        current = json.loads(original)
+        self.assertEqual(current["schema"], 1)
+        marker.write_text(json.dumps({**current, "schema": 2}), encoding="utf-8")
         before = snapshot(self.home)
-        original = installer.platform.promote_directory
-
-        def fail_stage(path: Path, destination: Path):
-            if path.name == installer.STAGING_NAME:
-                raise OSError("synthetic upgrade promotion failure")
-            return original(path, destination)
-
-        with patch.object(installer.platform, "promote_directory", fail_stage):
-            with self.assertRaisesRegex(InstallError, "previous owned payload was restored"):
-                installer.install_bundle(self.bundle, self.home)
-        self.assertEqual(snapshot(self.home), before)
-        self.assertEqual(installer.verify_installation(self.target)["receipt"]["version"], "1.3.0")
-
-    def test_predecessor_compatibility_does_not_accept_legacy_as_incoming_release(self) -> None:
-        previous = self.owned_130()
-        (previous / INSTALL_RECEIPT).unlink()
-        other_home = self.base / "new-home"
-        with self.assertRaises(ValueError):
-            installer.install_bundle(previous, other_home)
-        self.assertFalse(other_home.exists())
+        for check in (True, False):
+            with self.assertRaises(InstallError):
+                installer.install_bundle(self.bundle, self.home, check=check)
+            self.assertEqual(snapshot(self.home), before)
+        marker.write_bytes(original)
+        self.assertEqual(installer.install_bundle(self.bundle, self.home)["status"], "unchanged")
 
     def test_two_homes_share_release_bytes_and_preserve_unrelated_settings(self) -> None:
         self.home.mkdir(parents=True)
@@ -244,7 +155,7 @@ class ClaudeInstallationTests(unittest.TestCase):
         self.assertEqual(snapshot(self.home), before)
         result = installer.install_bundle(self.changed_bundle(), self.home)
         self.assertEqual(result["status"], "updated")
-        self.assertEqual(result["version"], "1.3.2")
+        self.assertEqual(result["version"], "2.0.0")
         self.assertFalse((self.target.parent / installer.BACKUP_NAME).exists())
 
     def test_explicit_disablement_and_unowned_collision_preserve_every_byte(self) -> None:

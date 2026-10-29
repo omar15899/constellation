@@ -79,11 +79,14 @@ class PackageFixture:
                 self.write(relative, "A resource needed by the portable fixture.\n")
         # Project a deliberately inert helper without ever importing candidate code.
         helper = (self.root / "ecosystem/platform_support.py").read_bytes()
-        bootstrap = ("from __future__ import annotations\n"
+        inventory = _BUILDER.current_inventory_block() + "\n"
+        bootstrap = ("from __future__ import annotations\n" + inventory
                      + _BUILDER._PLATFORM_BEGIN + "\npass\n" + _BUILDER._PLATFORM_END
                      + "\nraise RuntimeError('Validation executed package code')\n").encode()
         self.write("ecosystem/claude_hooks.py",
                    _BUILDER.render_claude_bootstrap(bootstrap, helper).decode())
+        self.write("ecosystem/hook_entry.py",
+                   inventory + "raise RuntimeError('Validation executed package code')\n")
         self.write_json(self.manifest_path, {
             "name": "constellation", "version": "1.1.0",
             "description": "Portable fixture for package validation.",
@@ -458,18 +461,21 @@ class ValidationTests(unittest.TestCase):
                 self.assertEqual(validate(package.root), [])
                 self.assertEqual(validate(package.root, modules[:1]), [])
 
-    def test_current_source_and_bundle_cannot_claim_historical_release_identity(self) -> None:
+    def test_safe_matching_versions_share_the_current_layout(self) -> None:
         for bundled in (False, True):
-            with self.subTest(bundled=bundled):
-                package = PackageFixture(self.temporary / f"historical-identity-{bundled}", bundled=bundled)
-                claude_manifest = (".claude-plugin/plugin.json" if bundled
-                                   else "ecosystem/manifests/claude-plugin.json")
-                for relative in (package.manifest_path, claude_manifest):
-                    metadata = package.read_json(relative)
-                    package.write_json(relative, {**metadata, "version": "1.3.0"})
-                if bundled:
-                    package.inventory()
-                self.assert_rejected(package.manifest_path, package)
+            for version in ("2.0.0", "candidate-7", "build_8+revision.2"):
+                with self.subTest(bundled=bundled, version=version):
+                    package = PackageFixture(self.temporary / f"matching-version-{bundled}-{version}",
+                                             bundled=bundled)
+                    claude_manifest = (".claude-plugin/plugin.json" if bundled
+                                       else "ecosystem/manifests/claude-plugin.json")
+                    for relative in (package.manifest_path, claude_manifest):
+                        metadata = package.read_json(relative)
+                        package.write_json(relative, {**metadata, "version": version})
+                    if bundled:
+                        package.inventory()
+                        self.assertEqual(_BUILDER.verify_bundle(package.root)["modules"], list(package.modules))
+                    self.assertEqual(validate(package.root), [])
 
     def test_manifest_description_required_by_builder_is_required_by_validator(self) -> None:
         metadata = self.package.read_json(self.package.manifest_path)

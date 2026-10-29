@@ -529,8 +529,9 @@ class Workflow:
             if p not in previous_deletions:
                 git(self.root, "--literal-pathspecs", "ls-files", "--error-unmatch", "--", p)
         if paths or not state.get("sync_error"):
-            # Renewing a plan pins contracts made before destination freezing,
-            # while preserving their original ownership baseline and evidence.
+            # A current begin may fail before freezing an unavailable upstream.
+            # Its first successful plan pins that destination and retries sync,
+            # preserving the original ownership baseline and existing evidence.
             if not state.get("target"):
                 target = publication_target(self.root)
                 previous = state.get("sync", {})
@@ -586,8 +587,7 @@ class Workflow:
             return {"task_progress": journal.validate_progress(current) if current else None,
                     "expected_task_start": state["started"],
                     "revision": len(current["milestones"]) if current else 0}
-        if state.get("author") not in {None, self.key, self.session}:
-            raise Blocked("Progress requires the frozen coordinator identity.")
+        self.identify_author(state)
         if owner_root(self.root) != self.root:
             raise Blocked("Repository ownership changed since the task began.")
         if state.get("target"):
@@ -671,6 +671,7 @@ class Workflow:
 
     def check(self, command: list[str], *, timeout: int = 300) -> dict[str, Any]:
         state = self.load()
+        self.identify_author(state)
         if not command:
             raise Blocked("check needs a command after --.")
         if type(timeout) is not int or not 1 <= timeout <= 3600:
@@ -768,6 +769,7 @@ class Workflow:
                 replacement snapshot or append-only receipt invariants fail.
         """
         state = self.load()
+        self.identify_author(state)
         self.ensure_target(state)
         self.independent_reviewed(state)
         resolution = self._check_resolution(state, payload, self.independent_context(state))
@@ -805,8 +807,16 @@ class Workflow:
         return resolved
 
     def validate_checks(self, state: dict[str, Any]) -> None:
-        latest = {c.get("command_sha256", digest(json.dumps(c.get("command", [])).encode())): index
-                  for index, c in enumerate(state["checks"])}
+        checks = state["checks"]
+        if not isinstance(checks, list):
+            raise Blocked("Current check history must be a list of hashed records.")
+        latest = {}
+        for index, record in enumerate(checks):
+            if (not isinstance(record, dict) or "command" in record
+                    or not isinstance(record.get("command_sha256"), str)
+                    or re.fullmatch(r"[0-9a-f]{64}", record["command_sha256"]) is None):
+                raise Blocked("Unsupported check record: a current command_sha256 is required and raw commands are retired.")
+            latest[record["command_sha256"]] = index
         resolved = self.resolved_checks(state)
         if any(index not in resolved and (state["checks"][index]["exit_code"] != 0
                    or state["checks"][index]["changed_during_check"]) for index in latest.values()):
@@ -855,10 +865,9 @@ class Workflow:
         return result
 
     def identify_author(self, state: dict[str, Any]) -> None:
-        # Session IDs and reviewer IDs use the same declared representation.
-        # Upgrade earlier, not-yet-reviewed contracts without touching a ledger.
-        if not state.get("review_gate") and not state.get("review_budget") and state.get("author") in {None, self.key}:
-            state["author"] = self.session
+        """Require the current raw coordinator identity without adopting old data."""
+        if state.get("author") != self.session:
+            raise Blocked("The task requires its current frozen coordinator identity; missing, hashed or different authors are unsupported.")
 
     def review_context(self, state: dict[str, Any]) -> None:
         """Bind review and replacement attestations to checks and destination."""
@@ -877,6 +886,7 @@ class Workflow:
             raise Blocked(str(exc)) from exc
 
     def independent_reviewed(self, state: dict[str, Any]) -> None:
+        self.identify_author(state)
         self.review_context(state)
         engine = review_engine()
         try:
@@ -886,6 +896,7 @@ class Workflow:
 
     def review(self, evidence: dict[str, Any]) -> dict[str, Any]:
         state = self.load()
+        self.identify_author(state)
         if not state["requirements"] or set(evidence) != set(state["requirements"]):
             raise Blocked("Supply evidence for every requirement, using the exact requirement as the key.")
         if not all(isinstance(v, str) and v.strip() for v in evidence.values()):
@@ -922,6 +933,7 @@ class Workflow:
 
     def guard_patch(self, payload: dict[str, Any], cwd: Path, *, active_only: bool = False) -> None:
         state = self.load()
+        self.identify_author(state)
         if active_only and state.get("finished"):
             return
         if state.get("sync_error") or not state["requirements"]:
@@ -972,6 +984,7 @@ class Workflow:
 
     def publish(self) -> dict[str, Any]:
         state = self.load()
+        self.identify_author(state)
         if state.get("publication_blocker"):
             raise Blocked(state["publication_blocker"])
         info = self.sync_upstream(state)
@@ -990,6 +1003,7 @@ class Workflow:
 
     def commit(self, paths: list[str], message: str, *, preserve_index: bool = False) -> dict[str, Any]:
         state = self.load()
+        self.identify_author(state)
         if state.get("publication_blocker"):
             raise Blocked(state["publication_blocker"])
         state.update(finished=None, publication=None)
@@ -1057,6 +1071,7 @@ class Workflow:
     def recover(self, expected_head: str) -> dict[str, Any]:
         """Audit an externally repaired commit without modifying Git or publishing."""
         state = self.load()
+        self.identify_author(state)
         if not state.get("publication_blocker"):
             raise Blocked("There is no blocked publication to recover.")
         if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected_head):
@@ -1094,6 +1109,7 @@ class Workflow:
 
     def finish(self) -> dict[str, Any]:
         state = self.load()
+        self.identify_author(state)
         state.update(finished=None, publication=None)
         self.save(state)
         self.reviewed(state)
@@ -1110,6 +1126,7 @@ class Workflow:
 
     def stop(self, request_id: str | None = None, *, active_only: bool = False) -> dict[str, Any]:
         state = self.load()
+        self.identify_author(state)
         if active_only and state.get("finished"):
             return {}
         replay = stop_replay(state, request_id)

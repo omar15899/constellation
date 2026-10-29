@@ -786,9 +786,9 @@ finally:
         flow.save(state)
         self.assert_large_git_scope(self.root, flow.path, state)
 
-    def test_large_legacy_peer_contract_keeps_exact_patch_scope(self) -> None:
+    def test_large_omaros_peer_contract_keeps_exact_patch_scope(self) -> None:
         self.git_plan()
-        root, path, state = self.legacy_peer()
+        root, path, state = self.omaros_peer()
         state = self.large_git_snapshot(state)
         path.write_text(json.dumps(state, indent=2))
         self.assert_large_git_scope(root, path, state)
@@ -839,8 +839,8 @@ finally:
                 self.assertIn("hook input exceeds the byte limit", diagnostic)
         self.assertEqual(flow.path.read_bytes(), baseline)
 
-    def legacy_peer(self) -> tuple[Path, Path, dict[str, Any]]:
-        root = self.directory / "legacy-peer"
+    def omaros_peer(self) -> tuple[Path, Path, dict[str, Any]]:
+        root = self.directory / "omaros-peer"
         flow = self.git_plan(root)
         state = flow.load()
         directory = flow.home.parent / "omaros"
@@ -861,9 +861,9 @@ finally:
         flow.save(state)
         self.assert_denied(self.run_hook("PreToolUse", payload=payload, audit_git=True))
 
-    def test_legacy_peer_permits_only_same_session_exact_declared_paths(self) -> None:
+    def test_omaros_peer_permits_only_same_session_exact_declared_paths(self) -> None:
         self.git_plan()
-        peer, path, _state = self.legacy_peer()
+        peer, path, _state = self.omaros_peer()
         baseline = path.read_bytes()
         payload = self.payload("PreToolUse", tool_input={"command": patch(str(peer / "result.md"))})
         self.assertEqual(self.run_hook("PreToolUse", payload=payload, audit_git=True), {})
@@ -875,9 +875,9 @@ finally:
         self.assert_denied(self.run_hook("PreToolUse", payload=payload, audit_git=True))
         self.assertEqual(other.read_bytes(), baseline)
 
-    def test_legacy_peer_rejects_changed_target_failed_sync_and_malformed_state(self) -> None:
+    def test_omaros_peer_rejects_changed_target_failed_sync_and_malformed_state(self) -> None:
         self.git_plan()
-        peer, path, state = self.legacy_peer()
+        peer, path, state = self.omaros_peer()
         payload = self.payload("PreToolUse", tool_input={"command": patch(str(peer / "result.md"))})
         for fields in ({"target": {**state["target"], "branch": "synthetic-wrong-branch"}},
                        {"sync_error": "synthetic sync failure"}, {"sync": {}},
@@ -894,9 +894,9 @@ finally:
         path.symlink_to(self.private)
         self.assert_denied(self.run_hook("PreToolUse", payload=payload, audit_git=True))
 
-    def test_legacy_peer_preserves_private_and_symlink_boundaries(self) -> None:
+    def test_omaros_peer_preserves_private_and_symlink_boundaries(self) -> None:
         self.git_plan()
-        peer, path, state = self.legacy_peer()
+        peer, path, state = self.omaros_peer()
         private_name = "09_data_sources/email_exports/index.json"
         path.write_text(json.dumps({**state, "paths": ["result.md", private_name]}))
         self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
@@ -908,7 +908,7 @@ finally:
 
     def test_mixed_patch_rejects_any_undeclared_external_endpoint(self) -> None:
         flow = self.git_plan()
-        peer, path, _state = self.legacy_peer()
+        peer, path, _state = self.omaros_peer()
         baseline, peer_baseline = flow.path.read_bytes(), path.read_bytes()
         command = ("*** Begin Patch\n*** Update File: result.md\n@@\n-before\n+after\n"
                    f"*** Update File: {peer / 'result.md'}\n*** Move to: {peer / 'outside.md'}\n*** End Patch")

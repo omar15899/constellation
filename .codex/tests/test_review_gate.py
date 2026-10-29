@@ -136,7 +136,7 @@ class ReviewFixture(unittest.TestCase):
                 with self.assertRaises(gate.ReviewError):
                     self.call("prepare")
 
-    def test_quick_code_local_legacy_policy_withholds_permission(self):
+    def test_quick_code_local_policy_without_consent_withholds_permission(self):
         policy = {key: value for key, value in DEFAULT_POLICY.items() if key != "allow_quick_code"}
         config = self.root / ".codex"
         config.mkdir()
@@ -484,21 +484,19 @@ class ReviewFixture(unittest.TestCase):
         self.call("resolve", self.resolution())
         self.call("validate")
 
-    def test_legacy_policy_and_three_round_ledger_continue_with_all_other_floors(self):
-        legacy = {**deepcopy(MINIMAL_POLICY), "schema_version": 1, "max_rounds": 3,
-                  "allow_quick_code": False}
-        legacy["modes"]["standard"] = {"reviewers": 2, "focus": {"correctness": 2}}
-        legacy["modes"]["deep"] = {"reviewers": 3, "focus": {"correctness": 2, "security": 1}}
-        legacy["deep_patterns"].append("payments.py")
-        legacy["documentation_extensions"].remove(".txt")
-        self.policy_path.write_text(json.dumps(legacy))
+    def test_current_policy_and_incomplete_history_preserve_all_floors_and_chronology(self):
+        strict = {**deepcopy(MINIMAL_POLICY), "allow_quick_code": False}
+        strict["modes"]["standard"] = {"reviewers": 2, "focus": {"correctness": 2}}
+        strict["modes"]["deep"] = {"reviewers": 3, "focus": {"correctness": 2, "security": 1}}
+        strict["deep_patterns"].append("payments.py")
+        strict["documentation_extensions"].remove(".txt")
+        self.policy_path.write_text(json.dumps(strict))
         for number in range(1, 4):
             (self.root / "tool.py").write_text(f"version = {number}\n")
             self.start()
         self.call("report", self.payload(findings=[self.finding()]))
         ledger = self.state["review_gate"]
-        ledger["schema_version"] = 1
-        ledger["policy_floor"] = deepcopy(legacy)
+        self.assertEqual(ledger["schema_version"], 2)
         for revision in ledger["rounds"]:
             revision.pop("artifact_fingerprint")
             revision.pop("independent_basis")
@@ -508,18 +506,66 @@ class ReviewFixture(unittest.TestCase):
         (self.root / "tool.py").write_text("version = 4\n")
         current = self.start()
         self.assertEqual(current["round"], 4)
-        self.assertEqual(current["adaptation"]["signal"], "legacy_baseline")
+        self.assertEqual(current["adaptation"]["signal"], "incomplete_history")
         self.assertFalse(current["adaptation"]["history_complete"])
         self.assertEqual(current["required_reviewers"], 2)
         self.assertEqual(current["required_focus"], {"correctness": 2})
         floor = self.state["review_gate"]["policy_floor"]
         self.assertEqual(floor["schema_version"], 2)
-        self.assertNotIn("max_rounds", floor)
         self.assertFalse(floor["allow_quick_code"])
         self.assertIn("payments.py", floor["deep_patterns"])
         self.assertNotIn(".txt", floor["documentation_extensions"])
         self.assertEqual(self.state["review_gate"]["rounds"][:3], previous)
         self.assertEqual(self.state["review_gate"]["findings"]["empty-input"]["status"], "open")
+
+    def test_retired_policy_schema_and_round_cap_are_rejected_without_mutation(self):
+        cases = [{**deepcopy(MINIMAL_POLICY), "schema_version": 1},
+                 {**deepcopy(MINIMAL_POLICY), "schema_version": 1, "max_rounds": 3},
+                 {**deepcopy(MINIMAL_POLICY), "max_rounds": 3}]
+        for policy in cases:
+            self.policy_path.write_text(json.dumps(policy))
+            for operation in ("prepare", "start"):
+                with self.subTest(policy=policy, operation=operation):
+                    before = deepcopy(self.state)
+                    with self.assertRaises(gate.ReviewError):
+                        self.call(operation)
+                    self.assertEqual(self.state, before)
+
+    def test_retired_ledger_schema_is_rejected_by_all_operations_without_mutation(self):
+        self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        context = self.call("prepare")
+        original = deepcopy(self.state)
+        report = self.payload("another-reviewer")
+        resolution = self.resolution()
+        for version in (1, True, "2", 3):
+            for operation, payload in (
+                    ("prepare", None), ("start", None), ("validate", None),
+                    ("author", {"author": "writer", "paths": ["tool.py"]}),
+                    ("report", report), ("resolve", resolution),
+                    ("budget", {"expected_budget_revision": 0,
+                                "deadline_at": "2099-01-01T00:00:00Z",
+                                "reason": "A rejected schema must not create a budget."})):
+                self.state = deepcopy(original)
+                self.state["review_gate"]["schema_version"] = version
+                before = deepcopy(self.state)
+                with self.subTest(version=version, operation=operation), self.assertRaises(gate.ReviewError):
+                    self.call(operation, *([] if payload is None else [payload]))
+                self.assertEqual(self.state, before)
+                with self.assertRaises(gate.ReviewError):
+                    gate._ledger(self.state, context)
+                self.assertEqual(self.state, before)
+        self.state = original
+
+    def test_retired_policy_floor_is_rejected_without_rewriting_current_history(self):
+        self.start()
+        self.call("report", self.payload(findings=[self.finding()]))
+        self.state["review_gate"]["policy_floor"]["schema_version"] = 1
+        before = deepcopy(self.state)
+        for operation in ("prepare", "start", "validate"):
+            with self.subTest(operation=operation), self.assertRaises(gate.ReviewError):
+                self.call(operation)
+            self.assertEqual(self.state, before)
 
     def test_cycles_require_continuation_and_reject_exact_replay_without_progress(self):
         declaration = {"reason": "Two candidate implementations oscillate.",
@@ -1049,7 +1095,7 @@ class ReviewFixture(unittest.TestCase):
         self.start()
         self.call("report", self.payload(findings=[self.finding()]))
         policy["modes"]["standard"]["reviewers"] = 1
-        policy.update(schema_version=1, max_rounds=10)
+        policy.update(schema_version=2)
         policy["documentation_extensions"].append(".py")
         self.policy_path.write_text(json.dumps(policy))
         context = self.start()
@@ -1194,7 +1240,7 @@ class ReviewFixture(unittest.TestCase):
         config = self.root / ".codex"
         config.mkdir()
         strict = deepcopy(DEFAULT_POLICY)
-        strict.update(schema_version=1, max_rounds=2)
+        strict.update(schema_version=2)
         strict["deep_patterns"].append("tool.py")
         (config / "review-policy.json").write_text(json.dumps(strict))
         for git_owner in (False, True):
@@ -1210,7 +1256,7 @@ class ReviewFixture(unittest.TestCase):
         config = self.root / ".codex"
         config.mkdir()
         weakened = deepcopy(MINIMAL_POLICY)
-        weakened.update(schema_version=1, max_rounds=10)
+        weakened.update(schema_version=2)
         weakened["documentation_extensions"].append(".py")
         (config / "review-policy.json").write_text(json.dumps(weakened))
         context = gate.prepare(self.root, self.state)
@@ -1322,9 +1368,9 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
         with self.assertRaises(gate.ReviewError):
             gate.validate(self.root, self.state)
 
-    def test_implicit_legacy_policy_cannot_reduce_packaged_quorums(self):
+    def test_implicit_policy_cannot_reduce_packaged_quorums(self):
         weakened = deepcopy(MINIMAL_POLICY)
-        weakened.update(schema_version=1, max_rounds=10)
+        weakened.update(schema_version=2)
         self.register(self.hub, [{"path": "child", "management": "native"}], weakened)
         context = gate.prepare(self.root, self.state)
         self.assertEqual(context["required_reviewers"], 3)
@@ -1352,7 +1398,7 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
 
     def test_nested_native_registry_retains_stricter_ancestor_policy(self):
         strict = deepcopy(DEFAULT_POLICY)
-        strict.update(schema_version=1, max_rounds=2)
+        strict.update(schema_version=2)
         strict["modes"]["quick"] = {"reviewers": 2, "focus": {"correctness": 2}}
         strict["modes"]["standard"] = {"reviewers": 4, "focus": {"correctness": 4}}
         strict["modes"]["deep"] = {"reviewers": 6, "focus": {"correctness": 4, "security": 2}}
@@ -1382,7 +1428,7 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
     def test_external_child_can_explicitly_adopt_its_own_native_policy(self):
         self.register(self.hub, [{"path": "child", "management": "external"}])
         strict = deepcopy(DEFAULT_POLICY)
-        strict.update(schema_version=1, max_rounds=2)
+        strict.update(schema_version=2)
         self.register(self.root, [{"path": ".", "management": "native"}], strict)
         context = gate.prepare(self.root, self.state)
         self.assertTrue(context["enabled"])
@@ -1406,7 +1452,7 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
         config = self.root / ".codex"
         config.mkdir()
         strict = deepcopy(DEFAULT_POLICY)
-        strict.update(schema_version=1, max_rounds=2)
+        strict.update(schema_version=2)
         strict["deep_patterns"].append("tool.py")
         (config / "review-policy.json").write_text(json.dumps(strict))
         context = gate.prepare(self.root, self.state)
@@ -1416,7 +1462,7 @@ class ReviewPolicyDiscoveryTests(unittest.TestCase):
 
     def test_ancestor_policy_does_not_apply_to_nonmatching_native_owner(self):
         strict = deepcopy(DEFAULT_POLICY)
-        strict.update(schema_version=1, max_rounds=1)
+        strict.update(schema_version=2)
         self.register(self.hub, [{"path": "other", "management": "native"}], strict)
         self.register(self.root, [{"path": ".", "management": "native"}])
         self.assertNotIn("max_rounds", gate.prepare(self.root, self.state))
