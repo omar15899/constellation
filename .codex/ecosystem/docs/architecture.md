@@ -20,7 +20,7 @@ un servicio de selección semántica.
 | Progreso recuperable | `ecosystem/runtime/progress.py`; adaptadores existentes | `task_progress` en el JSON Git o SQLite portable; sin almacén nuevo | Trabajo sustancial y reanudación |
 | Diario personal | Receptor `progress_journal.py` de OmarOS y renderizado compartido | Política personal exacta, notas curadas e índice privado mínimo | Sólo fuentes y checkpoints personales autorizados |
 | Personalización pedagógica | Skill de enseñanza disponible y perfil explícito del usuario | Perfil local provisional, editable y ajeno al paquete | Explicaciones y feedback intencional reutilizable |
-| Eventos Codex | Entrada estable `CODEX_HOME/constellation/hook.py`, fuente `ecosystem/hook_entry.py`; adaptador `ecosystem/hooks.py` | Recibo e inventario verificados bajo lock; activación/confianza nativas; sólo contratos activos | Plugin instalado |
+| Eventos Codex | Entrada estable `CODEX_HOME/constellation/hook.py`, fuente `ecosystem/hook_entry.py`; adaptador `ecosystem/hooks.py` | Recibo e inventario verificados bajo lock; guía estática y controles sobre contratos activos; confianza nativa | Plugin instalado |
 | Eventos Claude | `ecosystem/claude_hooks.py`, traducción al mismo `ecosystem/hooks.py` | Identidad `claude-<session_id>`, metadata estructural y dueño de hooks explícito | Plugin Claude o adaptador receptor |
 | Distribución | `ecosystem/build.py`; instaladores `install.py` y `claude.py` | Un bundle permitido, hashes, recibos y proyecciones nativas | Codex, Claude y receptores autorizados |
 | Dominio | `AGENTS.md`, herramientas y validadores del proyecto | Archivos propios del receptor | Su trabajo especializado |
@@ -30,9 +30,32 @@ Las entradas históricas `.codex/workflow.py`, `workspace.py`, `dispatch.py`,
 contienen otra implementación. El hub mantiene el registro de sus repositorios;
 no determina la propiedad Git de OmarOS ni de un tercero.
 
+## Organización de fuentes y distribución
+
+La estructura separa cuatro responsabilidades: runtime, adaptación al cliente,
+documentación mantenida y evaluación. `runtime/` conserva los algoritmos comunes;
+los módulos públicos de instalación y hooks adaptan sus interfaces. `manifests/`
+contiene sus fuentes declarativas y `docs/` las guías operativas. `references/`
+conserva el método que consumen las skills; no duplica la documentación de operación.
+
+Los informes fechados en `docs/history/` y los resultados en `evals/results/`
+permanecen fuera del paquete instalable. Se conservan para auditar afirmaciones
+históricas; no son entradas del motor. Los fixtures y pruebas pertinentes sí
+acompañan al paquete para comprobarlo sin recuperar el checkout original.
+
+El constructor ya es la frontera entre fuente y distribución. Proyecta los
+manifiestos de plugin a las rutas exigidas por cada cliente y las instrucciones
+TOML de roles al Markdown de Claude. Los manifiestos distribuidos de hooks
+mantienen `ecosystem/hooks.json` y `ecosystem/claude-hooks.json`: esas rutas forman
+parte de la identidad nativa y no se cambian por estética. Conservarlas no
+mantiene ni concede confianza: una instalación o definición modificada puede
+requerir una nueva aprobación del cliente. Cada proyección procede de una fuente
+única en `manifests/`; no hay otro registro ni generador de arquitectura.
+
 ## Una distribución para varios portátiles
 
-La versión 1.3.0 distribuye un núcleo y dos entradas nativas. Las skills conservan
+La línea 1.3 distribuye un núcleo y dos entradas nativas; 1.3.1 reorganiza
+sus fuentes y guías sin reemplazar esas responsabilidades. Las skills conservan
 un único cuerpo canónico en `skills/`. Las instrucciones de roles permanecen en
 `ecosystem/agents/*.toml`; el constructor genera el Markdown que Claude requiere.
 Los manifiestos `.codex-plugin/plugin.json` y `.claude-plugin/plugin.json`
@@ -60,7 +83,7 @@ respuestas iguales ni que un proveedor esté disponible en ambos ordenadores.
 Los proyectos conservan sus fuentes originales y el dueño Git de cada entrega.
 
 OmarOS mantiene su adaptador y sus cuatro recursos derivados fijados en 1.2.0.
-El número 1.3.0 identifica esta distribución dual, no una actualización implícita
+La versión 1.3 identifica la distribución dual, no una actualización implícita
 del pin receptor. Su actualizador actual sólo admite bundles 1.2.0 y debe rechazar
 el nuevo hasta que se migre expresamente ese contrato. La distribución no se
 copia sobre los recursos derivados del vault.
@@ -74,7 +97,31 @@ permisos y las instrucciones superiores. El agente explica una selección cuando
 ayuda a entender el trabajo; no debe cargar instrucciones irrelevantes para
 justificar que conoce el catálogo.
 
-El diagnóstico `native.py --capabilities --cwd RUTA` consulta un app-server nuevo
+La selección se revisa al cambiar la tarea o aparecer nueva evidencia. El
+coordinador identifica primero las obligaciones del resultado: implementar,
+demostrar, contrastar fuentes, presentar un artefacto o usar un servicio externo.
+Después distingue capacidades necesarias, opcionales e improcedentes según el
+catálogo realmente expuesto. Lee las instrucciones elegidas antes de usarlas y
+comprueba dependencias, permisos y entradas en la superficie donde se ejecutarán.
+Un subagente recibe un alcance concreto y verifica sus propias capacidades;
+no se presupone que dispone de las conexiones del coordinador.
+
+Esta disciplina debe producir decisiones observables: una definición elemental
+puede no requerir ninguna skill; un algoritmo con una justificación matemática
+puede requerir ingeniería y matemática; un informe basado en datos ajenos exige
+proveniencia y acceso autorizado. Si falta una capacidad, se conserva la carencia
+y se prueba una alternativa antes de atribuirle resultados. Cargar todas las
+skills o lanzar todos los roles no satisface mejor esas obligaciones.
+
+Los controles negativos contrastan precisamente esas decisiones: una referencia
+irrelevante no debe activar otro flujo, una herramienta descubierta pero sin
+acceso no cuenta como usada y una salida incompleta de un agente no aprueba la
+entrega. La [metodología de evaluación](evaluation.md) separa pertinencia de
+selección, ejecución efectiva y corrección del resultado. Los hooks observan
+fronteras concretas; no pueden demostrar que cada decisión semántica futura del
+modelo será correcta.
+
+El [diagnóstico completo de Codex](migrations.md#diagnóstico-de-codex) consulta un app-server nuevo
 del CLI instalado. Esa superficie puede diferir del cliente que mantiene la
 conversación. Por ejemplo, en 0.163.0 se observaron plugins remotos instalados
 que no aparecían en `skills/list` del proceso nuevo aunque sus skills sí estaban
@@ -85,7 +132,7 @@ En Claude, `claude.py verify` comprueba la instalación y deja desconocidos carg
 confianza y ejecución. `/context`, `/skills`, `/agents`, `/hooks` y `/status`
 permiten inspeccionar una sesión concreta. Su validación de manifiesto tampoco
 ejecuta un experimento de investigación. Las comprobaciones y ensayos realmente
-observados quedan separados en [COMPATIBILITY.md](COMPATIBILITY.md).
+observados quedan separados en [compatibilidad observada](compatibility.md).
 
 Instalación, descubrimiento, habilitación, autorización, compatibilidad y
 ejecución son hechos diferentes. Una lista de herramientas MCP demuestra
@@ -114,6 +161,26 @@ modelo ni una ventana de contexto global. Se retiró el override del hub que
 imponía 1.000.000/900.000 tokens; cada cliente y modelo conserva sus límites
 nativos observados. Cambiar de modelo no modifica contratos ni perfiles locales,
 pero tampoco garantiza igualdad de herramientas, comportamiento o capacidad.
+
+## Criterios de trabajo por responsabilidad
+
+La escritura establece objetos, espacios, hipótesis y relaciones antes de usar
+notación; distingue una función de sus argumentos y valores y construye la
+explicación hasta el rigor necesario. Una edición acotada conserva voz y estructura
+con el mínimo cambio suficiente. El referente financiero autorizado se consultó
+como criterio editorial: ni su contenido ni el perfil personal se redistribuyen.
+
+La ingeniería elige el diseño y el nivel de abstracción que pide el encargo,
+reutiliza las estructuras reales del proyecto y aplica Google Style cuando sea
+pertinente al lenguaje y sus convenciones. Explicita precisión y rango, comprueba
+los casos límite y corrige los fallos: documentar una limitación no convierte un
+resultado incorrecto en aceptable.
+
+La investigación y la revisión usan fuentes primarias, búsqueda adversarial y
+hallazgos reproducibles. Sus handoffs separan resultados, evidencia y pendientes;
+antes de esperar a un agente, comprueban su estado real. Este refuerzo cambia
+instrucciones, no hooks de ejecución, formatos nativos ni contratos. No introduce
+un clasificador por palabras ni garantiza el cumplimiento semántico del modelo.
 
 ## Un ciclo suficiente por objetivo
 
@@ -160,7 +227,7 @@ interrumpidas. `RECEIVED_LOCAL` acredita recepción local, no publicación remot
 El estado operativo, la historia Git y las notas científicas son responsabilidades
 distintas. El diario no copia logs, conversaciones ni perfiles de aprendizaje.
 La selección de hitos sigue siendo responsabilidad del agente; no hay daemon,
-clasificador o base de memoria nuevos. [PROGRESS.md](PROGRESS.md) especifica el
+clasificador o base de memoria nuevos. [progreso recuperable](progress.md) especifica el
 protocolo, los permisos y la recuperación.
 
 ## Fronteras verificables
@@ -175,18 +242,33 @@ La revisión adapta su continuidad a progreso observable y presupuesto real,
 sin tope universal de tres rondas. El algoritmo común conserva independencia,
 historia, hallazgos y mínimos; las ampliaciones de presupuesto y continuaciones
 quedan explícitas. No incorpora otro clasificador ni planificador de agentes.
-El [protocolo](references/protocol.md#review-continuity-and-budget) define esos
+El [protocolo](../references/protocol.md#review-continuity-and-budget) define esos
 campos; los receptores mantienen las restricciones que añadan.
 
-Los hooks del plugin observan contratos activos. No convierten cualquier
-pregunta en un contrato, no hacen fetch al recibir un prompt y no publican.
+Los controles de alcance, revisión y cierre del plugin observan contratos
+activos. Además, `UserPromptSubmit` aporta una guía estática para consultar el
+catálogo y cargar las instrucciones pertinentes, también cuando no hay contrato.
+El texto común `METHOD_GUIDANCE` vive en `hooks.py`; Claude lo reutiliza en su
+inicio y contexto nativos. El adaptador procesa el JSON del evento, pero no
+consulta los campos de prompt o transcripción, no clasifica su contenido y no
+los almacena. El recordatorio no inicia, sincroniza ni publica tareas.
+
+La guía identifica `constellation:coding`, `constellation:mathematics`,
+`constellation:quant-research` y `constellation:writter` como opciones que deben
+usarse sólo si existen y las instrucciones del receptor lo permiten. Incluye el diagnóstico
+de ingeniería sin edición y los argumentos matemáticos no triviales; conserva
+la respuesta directa para consultas breves, traducciones cortas y aritmética
+simple. Un equivalente seleccionado por el proyecto prevalece cuando corresponde.
+La existencia del texto no demuestra que el modelo haya cargado una skill:
+la selección y su resultado se evalúan por separado.
+
 Las definiciones del hub quedan retiradas para evitar eventos duplicados.
 El comando del plugin apunta a la entrada estable fuera del caché versionado.
 Un lock compartido protege validación y ejecución del hook; el instalador usa
 el mismo lock en exclusiva para actualizar. Una colisión o instalación incoherente
 produce una respuesta controlada, sin ejecutar código parcialmente actualizado.
 El contrato de instalación, confianza y primera recarga está en
-[README.md](README.md#instalar-y-actualizar).
+[README.md](../README.md#instalar-y-actualizar).
 El guard de patches no intercepta todas las escrituras por shell o MCP.
 Un puente acotado de migración reconoce contratos OmarOS activos como datos
 para autorizar únicamente sus rutas explícitas en la misma sesión y destino
@@ -213,6 +295,36 @@ o push manual no exige la revisión de Constellation**. La revisión y el destin
 congelado se exigen en el camino de publicación del workflow. Los hooks de
 Sweeplab y GasStorage conservan sus responsabilidades propias. No se promete
 enforcement fuera de los caminos que realmente lo implementan.
+
+## Criterios publicados por OpenAI y Anthropic
+
+Esta comparación usa documentación y experiencias públicas, consultadas el
+2026-10-29. No describe una arquitectura interna universal de los laboratorios
+ni transfiere a Constellation sus métricas experimentales. Las decisiones del
+paquete se contrastan con sus consumidores y pruebas locales.
+
+OpenAI describe en [Harness engineering](https://openai.com/index/harness-engineering/)
+un mapa de instrucciones breve, documentación estructurada e invariantes
+comprobadas mecánicamente. Constellation aplica esa separación: README orienta,
+las guías explican responsabilidades y los controles validan alcance, evidencia
+y publicación. Una organización de carpetas facilita mantener el sistema; no
+prueba que sus agentes produzcan mejores resultados.
+
+La [personalización de Codex](https://learn.chatgpt.com/docs/customization/overview)
+y las [skills de Claude](https://code.claude.com/docs/en/skills) distinguen
+metadatos disponibles e instrucciones cargadas cuando hacen falta. La
+[ingeniería de contexto de Anthropic](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents)
+apoya recuperar contexto pertinente progresivamente. Por eso la selección usa
+el catálogo de la sesión y las obligaciones de la tarea, sin cargar todos los
+cuerpos ni construir otro selector persistente.
+
+Las interfaces de [subagentes Codex](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+y [subagentes Claude](https://code.claude.com/docs/en/sub-agents) requieren
+respetar su contexto, herramientas y permisos efectivos. La delegación de
+Constellation asigna alcance y resultados verificables, pero no presupone que
+el hijo herede las conexiones o las skills ya leídas por el coordinador.
+La evidencia publicada sobre multiagentes no elimina la necesidad de comprobar
+si una división concreta del trabajo mejora esa tarea.
 
 ## Correspondencia con diseños publicados por Anthropic
 

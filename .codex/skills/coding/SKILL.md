@@ -29,10 +29,26 @@ entregas con evidencia persistente sin Git. Conserva los contratos ya activos.
 ## Implementar y verificar
 
 Define el comportamiento observable y comprueba la causa antes de corregir.
-Implementa la solución más sencilla que satisfaga el encargo; verifica entradas,
-límites y consumidores pertinentes. Para controles, prueba tanto el rechazo como
-el caso permitido. Reutiliza checks útiles; no añadas pruebas que solo repitan la
-edición ni amplíes la suite tras aprobarla sin cambios, fallos o dudas concretas.
+Busca código potente, general dentro del dominio pedido, simple y extraordinariamente
+legible. Mantén el cambio mínimo compatible con el resultado y los contratos reales;
+compara una solución directa con una abstracción justificada cuando la decisión
+importe. Si el usuario pide construir sobre abstracciones, define sus contratos y
+composición; si pide una solución limpia y simple, no impongas capas incidentales.
+Reutiliza lo existente y justifica toda complejidad añadida por una necesidad concreta.
+
+Haz visible el recorrido entrada → transformación → salida mediante nombres,
+estructuras de datos y flujo de control claros. En Python, documenta las interfaces
+públicas y la lógica no evidente con Google Style: contexto útil, contratos y ejemplos
+pequeños comprobados cuando hagan falta para entender los datos. Desarrolla documentación
+extensa donde el contrato, los datos o las decisiones lo requieran; no repitas firmas
+ni operaciones obvias. El [flujo de ingeniería](references/workflow.md#documentar-decisiones-y-datos)
+detalla dónde explicar estructuras, invariantes y decisiones. Distingue costes
+razonados de rendimiento medido; no declares mejoras de velocidad sin medición.
+
+Verifica entradas, límites y consumidores pertinentes. Para controles, prueba tanto
+el rechazo como el caso permitido. Reutiliza checks útiles; no añadas pruebas que
+solo repitan la edición ni amplíes la suite tras aprobarla sin cambios, fallos o
+dudas concretas.
 
 Requisitos, artefactos actuales y evidencia deben corresponderse. Adapta la
 revisión al riesgo sin rebajar el mínimo receptor; permisos, hooks y fronteras

@@ -19,12 +19,14 @@ from typing import Iterable, Iterator
 sys.dont_write_bytecode = True
 if __package__:
     from .build import (BUNDLE_MANIFEST, MODULES, PLUGIN_MANIFEST, BundleError, allowed_files,
-                        build_bundle, file_record, regular_file, select_modules, verify_bundle)
+                        build_bundle, file_record, legacy_files_130, regular_file, select_modules,
+                       verify_bundle, verify_owned_bundle)
     from .native import NativeClient, NativeError, PLUGIN_ID
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from build import (BUNDLE_MANIFEST, MODULES, PLUGIN_MANIFEST, BundleError, allowed_files,
-                       build_bundle, file_record, regular_file, select_modules, verify_bundle)
+                       build_bundle, file_record, legacy_files_130, regular_file, select_modules,
+                       verify_bundle, verify_owned_bundle)
     from native import NativeClient, NativeError, PLUGIN_ID
 
 CATALOG_MANIFEST = ".agents/plugins/marketplace.json"
@@ -156,11 +158,9 @@ def _load_receipt(path: Path) -> dict | None:
         if value["schema"] == 1:
             files = _legacy_receipt_files(modules)
         else:
-            # A receipt describes the owned release, not the incoming release.
-            # Additive resources must not make a previously valid installation
-            # unupgradable. Keep the current allowlist as an outer boundary and
-            # the initial module/profile identities as the stable minimum.
-            # Current modules need not have existed in historical schemas.
+            # A receipt describes one owned layout, not a union of old and new
+            # paths. The removed 1.3.0 resources have an exact frozen inventory;
+            # earlier schemas keep their historical additive-resource contract.
             files = set(value["cache"]) - {BUNDLE_MANIFEST}
             identity_files = (_legacy_receipt_files(modules) if schema == 2
                               else _initial_receipt_identities(modules))
@@ -168,7 +168,14 @@ def _load_receipt(path: Path) -> dict | None:
                 path for path in identity_files
                 if path.startswith(("skills/", "ecosystem/agents/"))
             }
-            if not identities <= files <= allowed_files(modules):
+            if value["version"] == "1.3.0":
+                valid = schema == 3 and files == legacy_files_130(modules)
+            else:
+                current_layout = identities <= files <= allowed_files(modules)
+                older_layout = ((schema == 2 or value["version"] in {"1.1.0", "1.2.0"})
+                                and identities <= files <= legacy_files_130(modules))
+                valid = current_layout or older_layout
+            if not valid:
                 raise ValueError("recorded release resources")
         expected = {f"{PLUGIN_DIRECTORY}/{p}" for p in files | {BUNDLE_MANIFEST}}
         expected.add(CATALOG_MANIFEST)
@@ -233,6 +240,8 @@ def _verify_recorded_bundle(root: Path, receipt: dict) -> None:
         plugin = _read_object(root / PLUGIN_MANIFEST)
         if plugin.get("name") != "constellation" or plugin.get("version") != receipt["version"]:
             raise ValueError("plugin manifest differs from receipt")
+        if receipt["version"] == "1.3.0":
+            verify_owned_bundle(root)
     except (OSError, ValueError, TypeError) as exc:
         raise InstallError("Owned bundle metadata differs from the installation receipt") from exc
 

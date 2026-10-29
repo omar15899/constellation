@@ -1,7 +1,7 @@
 # Redacción y revisión sustancial
 
 Para trabajo sustancial o prolongado, conserva decisiones, hallazgos, evidencia y
-siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/PROGRESS.md).
+siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/docs/progress.md).
 Sincroniza hitos personales sólo cuando la política local lo autorice; no abras
 otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimiento.
 
@@ -10,8 +10,10 @@ otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimient
 Establece qué debe conseguir el texto, para quién, con qué grado de conocimiento
 previo y en qué idioma, voz, extensión y formato. En una revisión, identifica
 qué puede cambiar: expresión, estructura, argumento o investigación. Respeta
-los materiales y convenciones aportados. Deduce lo suficiente para avanzar;
-una pregunta se justifica si la respuesta cambia el resultado, no como ritual.
+los materiales y convenciones aportados, la profundidad y la superficie pedidas.
+Una explicación en conversación no se convierte por defecto en un archivo.
+Deduce lo suficiente para avanzar; una pregunta se justifica si la respuesta
+cambia el resultado, no como ritual.
 
 Una entrega significativa es, por ejemplo, un artículo completo, un informe
 destinado a una decisión o una revisión que altera un argumento esencial. Una
@@ -119,10 +121,28 @@ al encargo ni repitas todos los ciclos por cada skill seleccionada. En el inform
 existente basta indicar qué capacidad se usó, para qué, con qué evidencia y qué
 falló; no crees un registro separado de selección ni guardes conversaciones.
 
-Consulta la [ontología](../../../ecosystem/references/ontology.md) solo si las
-distinciones conceptuales sostienen el texto; sus
-[ejemplos](../../../ecosystem/references/ontology-examples.md) ayudan a resolver
-un caso concreto sin copiar toda la ontología al documento.
+En una explicación técnica, parte de la pregunta y de la clase de objeto que
+puede responderla. Presenta el marco general que permita obtener los casos
+pedidos y explicita qué añade cada especialización. Un ejemplo puede abrir el
+texto o venir primero si se pide así; debe permitir volver a la regla general
+sin confundir el caso finito, euclídeo o matricial con la definición. Escoge la
+generalidad que explique las dependencias reales, sin imponer un recorrido
+axiomático ajeno al alcance.
+
+Consulta la [ontología](../../../ecosystem/references/ontology.md) cuando las
+distinciones entre objetos, espacios, funciones, valores o representaciones
+sostengan el argumento. Aplícala para justificar qué estructura habilita cada
+operación y qué hipótesis necesita el paso decisivo; carga únicamente el
+[ejemplo](../../../ecosystem/references/ontology-examples.md) pertinente. En otros
+temas, distingue entidades, relaciones y afirmaciones según su propio marco;
+no les impongas formalismo matemático.
+
+Introduce símbolos cuando permitan expresar una relación o una distinción que
+el texto necesite. Explica antes los ingredientes, presenta la fórmula y lee
+después su consecuencia. Conserva nombres estables y evita cadenas de símbolos
+que obliguen a descifrar lo que la prosa puede decir mejor. La profundidad no
+se mide por cantidad de notación ni por longitud. Usa ejemplos transferibles:
+al variar una hipótesis o representación, muestra qué cambia y qué se conserva.
 
 En un informe con texto, demostración y código, declara las obligaciones que
 correspondan a cada entregable y, si comparten archivo, a cada requisito del
@@ -138,11 +158,21 @@ objeciones materiales. Después ajusta precisión, voz, ritmo y extensión. El
 integrador elimina repeticiones y contradicciones entre contribuciones y vuelve
 a verificar las afirmaciones afectadas por la integración.
 
+Contrasta apertura, desarrollo y conclusión como un solo argumento, con
+definiciones, hipótesis y alcance compatibles. Comprueba a qué casos se aplican
+términos absolutos como «sólo» o «siempre». No conviertas una igualdad o
+propiedad teórica en una conclusión más fuerte o empírica sin justificar el
+enlace y comprobar las hipótesis adicionales necesarias.
+
 Cada entrega significativa pasa una revisión independiente proporcional al
 riesgo y con la cobertura vigente del protocolo común. Entrega al revisor los
 requisitos, archivos actuales, evidencia pertinente y token del motor cuando
 corresponda. Debe evaluar el resultado real con independencia de su autor,
 incluidas claridad, estructura, voz, exactitud y límites de las conclusiones.
+Para una explicación, comprueba si el lector puede decir qué es cada objeto,
+obtener el caso particular desde el marco general y reconstruir el paso
+decisivo sin completar mentalmente una premisa ausente. Corregir esas lagunas
+aporta evidencia de comprensión; contar símbolos o encabezados no la aporta.
 Registra hallazgos concretos y resuélvelos con evidencia; los cambios posteriores
 requieren renovar las comprobaciones y la revisión afectadas. La falta de
 revisores disponibles es una limitación, no una aprobación implícita.

@@ -27,6 +27,10 @@ FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,120}\Z")
 MARKER = ".constellation-install.json"
 MAX_METADATA_BYTES = 1024 * 1024
+PYTHON_REQUIREMENT = (
+    "Constellation INCOMPLETE: Python 3.11 or newer is required. "
+    "Set PATH for Claude so python3 selects a supported interpreter, then restart Claude."
+)
 
 
 class AdapterError(ValueError):
@@ -162,8 +166,12 @@ def _context(event: str, message: str) -> dict[str, Any]:
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": message}}
 
 
-def _bootstrap(event: str, native: str, session: str, root: Path) -> str:
+def _bootstrap(event: str, native: str, session: str, root: Path, *,
+               include_method_guidance: bool = True) -> str:
+    from ecosystem.hooks import METHOD_GUIDANCE
+
     command = shlex.join([sys.executable, "-I", str(root / "ecosystem/cli.py")])
+    method = METHOD_GUIDANCE + " " if include_method_guidance else ""
     return (
         f"Constellation shared research environment. Your lifecycle identity is {session!r}; "
         f"your actual native author/reviewer identity is {native!r}. Shared CLI: {command}. "
@@ -176,7 +184,9 @@ def _bootstrap(event: str, native: str, session: str, root: Path) -> str:
         "Use native agents with exclusive scopes and real identities; inherit session model, effort and "
         "permissions and respect the effective client capacity. Findings, stale evidence and failed checks "
         "remain open until independently verified. Shared gates, not Stop alone, determine completion. "
-        "Hooks do not start tasks, fetch, install, publish or confine arbitrary shell/MCP writes."
+        "Hooks do not start tasks, fetch, install, publish or confine arbitrary shell/MCP writes. "
+        + method + "In Claude, invoke the native Skill tool for the relevant available entry; "
+        "if that entry cannot be invoked, read its SKILL.md with an available tool."
     )
 
 
@@ -234,12 +244,13 @@ def handle_event(payload: Any, state_dir: Path | None = None,
         if not result:
             return _context(event, _bootstrap(event, native, session, root))
         if isinstance(details, dict) and details.get("hookEventName") == event:
-            details["additionalContext"] = str(details.get("additionalContext", "")) + " " + _bootstrap(event, native, session, root)
+            details["additionalContext"] = str(details.get("additionalContext", "")) + " " + _bootstrap(
+                event, native, session, root, include_method_guidance=False)
     return result
 
 
-def _failure(event: str) -> dict[str, Any]:
-    message = "Constellation INCOMPLETE: the Claude hook or verified release is unavailable. Inspect installation and task state."
+def _failure(event: str, message: str | None = None) -> dict[str, Any]:
+    message = message or "Constellation INCOMPLETE: the Claude hook or verified release is unavailable. Inspect installation and task state."
     if event == "PreToolUse":
         return {"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": message}}
     return {"systemMessage": message}
@@ -258,12 +269,16 @@ def main(argv: list[str] | None = None) -> int:
     if os.environ.get("CONSTELLATION_HOOK_OWNER") == "project":
         print("{}")
         return 0
+    if sys.version_info < (3, 11):
+        if args.event == "UserPromptSubmit":
+            print(PYTHON_REQUIREMENT, file=sys.stderr)
+            return 2
+        print(json.dumps(_failure(args.event, PYTHON_REQUIREMENT), ensure_ascii=True, separators=(",", ":")))
+        return 0
     timer_supported = hasattr(signal, "SIGALRM") and hasattr(signal, "setitimer")
     previous_handler = None
     timer_armed = False
     try:
-        if sys.version_info < (3, 11):
-            raise AdapterError("Python 3.11 or newer is required.")
         if timer_supported:
             previous_handler = signal.signal(signal.SIGALRM, _timed_out)
             signal.setitimer(signal.ITIMER_REAL, 8.0)

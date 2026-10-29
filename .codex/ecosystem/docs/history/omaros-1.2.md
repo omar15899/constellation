@@ -1,5 +1,10 @@
 # Constellation 1.2: proveedor de la alineación de OmarOS
 
+Informe histórico del 2026-10-18, conservado como antecedente de publicación.
+Sus versiones, métricas y estados corresponden a aquella entrega; no acreditan
+el funcionamiento de una instalación actual. La guía mantenida está en el
+[README del paquete](../../README.md).
+
 Esta entrega publica la fuente del runtime 1.2 y sus dependencias de
 instalación para que OmarOS pueda fijar un commit remoto que contenga
 realmente sus recursos. La instalación local ya disponía de un bundle íntegro

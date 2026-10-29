@@ -338,6 +338,6 @@ ni salidas. Ninguna comprobación de hashes demuestra por sí sola que una
 revisión intelectual sea suficiente.
 
 Para trabajos sustanciales, conserva objetivos, decisiones, evidencia y pendientes
-mediante [progreso persistente](ecosystem/PROGRESS.md). El estado fuente permite
+mediante [progreso persistente](ecosystem/docs/progress.md). El estado fuente permite
 reanudar sin OmarOS; el receptor recibe únicamente hitos personales autorizados
 y no convierte una recepción local en publicación remota.

@@ -7,6 +7,21 @@ una distinción sostenga el argumento; no conviertas cada respuesta en un
 inventario formal. Los [cuatro ejemplos desarrollados](ontology-examples.md)
 permiten profundizar sin cargar la pauta general.
 
+## Elegir la generalidad que explica
+
+Parte de la pregunta y de la clase de objeto que puede responderla. Presenta el
+marco general pertinente antes de particularizarlo, cuando ese orden permita
+comprender la construcción. Si el encargo pide primero un ejemplo o un cálculo,
+respeta ese orden y sitúalo después en el marco que lo justifica. La generalidad
+útil permite recuperar los casos pedidos; no exige remontarse a fundamentos
+que no intervengan en el argumento.
+
+Haz visibles las dependencias: construir un objeto, añadir estructura, imponer
+una propiedad, elegir una representación y perder información son operaciones
+distintas. Explica qué habilita cada transición y qué conserva. Un ejemplo
+pequeño puede acompañar ese recorrido, pero no reemplazar la definición general
+por sus particularidades finitas, euclídeas o matriciales.
+
 ## Establecer el objeto antes de operar
 
 Introduce el conjunto o espacio ambiente, el tipo de sus elementos y la
@@ -15,12 +30,26 @@ función, una clase de equivalencia o una transformación. Decir que algo es un
 «punto» sólo afirma su pertenencia a un espacio; no lo convierte en una tupla
 de números ni impone que ese espacio sea geométrico.
 
+Diferentes papeles no implican objetos distintos: una misma función puede ser
+un elemento de un espacio de funciones. Decide la identidad por las definiciones,
+no por los nombres de sus papeles. Evaluar y representar son operaciones que
+hay que precisar; un valor puede ser otra función si el codominio lo permite.
+Distingue también el índice temporal o la etiqueta de un sensor de la
+configuración o lectura que selecciona.
+
 Separa el portador de su estructura: un conjunto con operaciones lineales, una
 topología, una norma, un producto interno o una medida determina problemas
 distintos. Añade únicamente las estructuras que vayas a usar. Una norma permite
-hablar de continuidad y aproximación; por sí sola no proporciona la identificación
-entre vectores y funcionales que da un producto interno. Una estructura suave
-permite diferenciar; una métrica riemanniana es un dato adicional.
+hablar de continuidad y aproximación; no identifica en general un espacio con
+su dual continuo. Si \(H\) tiene producto interno, para la norma inducida el mapa
+\(J:H\to H^*\), \(J(v)(u)=\langle u,v\rangle\), es inyectivo; \(H^*\)
+denota aquí los funcionales lineales continuos. Con el producto interno lineal
+en la primera entrada, \(J\) es lineal en el caso real y conjugado-lineal en el
+complejo. Si \(H\) es completo para esa norma (un espacio de Hilbert), Riesz
+garantiza además la sobreyectividad; en un espacio incompleto puede haber
+funcionales continuos sin representante.
+Una estructura suave permite diferenciar; una métrica riemanniana es un dato
+adicional.
 
 Introduce cada mapa con dominio y codominio, y comprueba que las composiciones
 tienen sentido. Para una restricción, un cociente o una construcción local,
@@ -78,8 +107,15 @@ matriz de un mapa respecto de dos bases aparece en
 [Axler, *Linear Algebra Done Right*, 4.ª ed., §3C](https://linear.axler.net/LADR4e.pdf).
 La siguiente comparación se obtiene directamente de esa composición.
 
-Si \(e_{B'}=e_B\circ P\) y \(e_{C'}=e_C\circ Q\), con
-\(P\in GL_n(\mathbb K)\), \(Q\in GL_m(\mathbb K)\), entonces
+Sean \(B',C'\) otras bases ordenadas de \(V,W\), respectivamente. Las matrices
+de cambio \(P\in GL_n(\mathbb K)\), \(Q\in GL_m(\mathbb K)\) se definen por
+
+\[
+e_{B'}(a')=e_B(Pa'),\qquad e_{C'}(b')=e_C(Qb')
+\]
+
+para todo \(a'\in\mathbb K^n\), \(b'\in\mathbb K^m\). Si \(A'\) representa
+a \(L\) en las bases \(B',C'\), entonces
 
 \[
 [v]_{B'}=P^{-1}[v]_B,\qquad A'=Q^{-1}AP.
@@ -88,23 +124,28 @@ Si \(e_{B'}=e_B\circ P\) y \(e_{C'}=e_C\circ Q\), con
 El rango sigue siendo \(\dim\operatorname{im}L\), porque componer con
 isomorfismos no cambia la dimensión de la imagen. La semejanza
 \(A'=P^{-1}AP\) corresponde al caso \(V=W\) con la misma base en entrada
-y salida. Una forma bilineal real \(\beta:V\times V\to\mathbb R\)
-es otro tipo de objeto: si
+y salida. Supongamos ahora \(\mathbb K=\mathbb R\). Una forma bilineal
+\(\beta:V\times V\to\mathbb R\) es otro tipo de objeto: si
 \(\beta(e_B(a),e_B(b))=a^{\mathsf T}Gb\), sustituir \(a=Pa'\),
 \(b=Pb'\) da \(G'=P^{\mathsf T}GP\), una congruencia. No traslades
 una ley de transformación a otra por la mera apariencia de sus matrices.
 
 ## Construir el argumento
 
-Ordena cada paso como prosa, fórmula e interpretación: explica qué relación vas
-a expresar, escríbela con sus tipos e hipótesis y explica qué permite concluir.
-Define un término antes de usarlo como premisa. Introduce una construcción
-abstracta cuando resuelva una ambigüedad o comprima estructura real.
+Introduce notación cuando aclare una relación o comprima estructura que el
+argumento necesita, con nombres estables y sin convertir la prosa en un código
+por descifrar. Cuando uses una fórmula, explica qué relación expresa, escríbela
+con sus tipos e hipótesis y desarrolla su consecuencia. Define un término antes
+de usarlo como premisa. Introduce una construcción abstracta cuando resuelva
+una ambigüedad o revele una dependencia real.
 
 Distingue los siguientes compromisos sin exigir etiquetas en cada frase:
 
 - Una **definición** fija un significado o una convención; declara las
   convenciones variables, como el orden de los índices de un tensor.
+- Los **axiomas** fijan la clase de estructuras; los **supuestos de modelización**
+  vinculan una estructura con el sistema estudiado. Deducir consecuencias dentro
+  del modelo no demuestra que ese vínculo describa el sistema.
 - Una **hipótesis** restringe los casos considerados. Debe estar presente antes
   del paso que la usa, con sus cuantificadores y alcance local o global.
 - Una **consecuencia** requiere un argumento o un teorema cuyas hipótesis se
@@ -114,6 +155,12 @@ Distingue los siguientes compromisos sin exigir etiquetas en cada frase:
 - La **evidencia** numérica o empírica informa sobre los casos observados;
   no demuestra por sí sola una afirmación universal. Una conjetura o inferencia
   debe conservar ese estatus.
+
+Si la pregunta exige probabilidades o esperanzas, establece primero el modelo
+probabilístico, el objeto aleatorio y la realización observada; conserva esos
+papeles al operar. La insesgadez pertenece al estimador bajo una ley y respecto
+de un objetivo declarados, no al número que devuelve una observación aislada.
+No añadas estructura estadística cuando no contribuya a la pregunta.
 
 Busca un caso que rompa la afirmación al retirar una hipótesis importante.
 Comprueba además el cambio de representación: el mismo vector debe producir el
@@ -134,6 +181,8 @@ Estas preguntas se transfieren a otros dominios sin imponerles geometría:
    y qué cálculo demuestra esa invariancia?
 5. ¿Qué hipótesis hace válido el paso crucial, y qué caso lo refutaría al
    retirarla? ¿Qué evidencia falta para cerrar la afirmación?
+6. ¿Puede el lector obtener el caso concreto desde el marco general y reconstruir
+   el paso decisivo sin aportar mentalmente una premisa o identificación ausente?
 
 ## Consultar ejemplos y fuentes
 
@@ -147,12 +196,14 @@ diferencial, gradiente y cambio de variable estocástico. Los cálculos propios
 se presentan como tales; las fuentes enlazadas respaldan definiciones y
 teoremas concretos. Una referencia no reemplaza la justificación esencial.
 
-Si se mencionan materiales como «máster de finanzas», «reflexiones a LaTeX» o
-«espacios de configuración» sin archivos aportados, sus títulos no autorizan
-a reconstruir su contenido. Trabaja con ejemplos propios y fuentes públicas
-identificadas. Para adaptar fielmente esos materiales, solicita sus rutas o
-archivos explícitos; incorpora los autorizados como `inputs` del plan, con
-procedencia y hash. Leerlos para la tarea y redistribuirlos son autorizaciones
-distintas: conserva los materiales privados fuera del paquete publicable salvo
-consentimiento específico. No uses conversaciones, transcripciones ni archivos
-privados encontrados incidentalmente para suplir una fuente ausente.
+Si el usuario menciona un referente, localízalo primero en el contexto y las
+fuentes autorizadas del encargo. No solicites una ruta que ya puedas determinar;
+pregunta solo si queda una ambigüedad material o falta acceso necesario. Un
+título no permite atribuir contenido no leído: mientras falte el original,
+distingue tus ejemplos y fuentes de lo que todavía no has comprobado. Registra
+procedencia y, cuando el ciclo elegido lo requiera, los archivos como `inputs`
+con su hash. Leer un material para adaptar el criterio de explicación y
+redistribuirlo son autorizaciones distintas: conserva los materiales privados
+fuera del paquete publicable salvo consentimiento específico. No uses
+conversaciones, transcripciones ni archivos privados encontrados incidentalmente
+para suplir una fuente ausente.

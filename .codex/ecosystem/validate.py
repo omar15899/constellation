@@ -328,6 +328,8 @@ class _Validator:
         version = data.get("version")
         if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):
             self.error(relative, "version must be a safe non-empty release identifier")
+        elif version == "1.3.0":
+            self.error(relative, "version 1.3.0 is reserved for the historical owned layout")
         if "description" in data and (not isinstance(data["description"], str) or not data["description"].strip()):
             self.error(relative, "description must be a non-empty string")
 
@@ -340,7 +342,7 @@ class _Validator:
                 _LAYOUT._check_claude_plugin(metadata)
             except ValueError:
                 self.error(relative, "invalid native Claude plugin manifest")
-            codex = self.json(_LAYOUT.PLUGIN_MANIFEST if bundled else "ecosystem/plugin.json")
+            codex = self.json(_LAYOUT.PLUGIN_MANIFEST if bundled else _LAYOUT.source_path(_LAYOUT.PLUGIN_MANIFEST))
             if codex is not None and metadata.get("version") != codex.get("version"):
                 self.error(relative, "native plugin versions must agree")
         for resource in sorted(_LAYOUT.allowed_files(modules)):
@@ -357,7 +359,7 @@ class _Validator:
                         self.error(resource, "Claude agent must match its canonical role and inherit runtime choices")
             except ValueError:
                 self.error(_LAYOUT.source_path(resource), "canonical role cannot produce a native Claude agent")
-        relative = "ecosystem/claude-hooks.json"
+        relative = "ecosystem/claude-hooks.json" if bundled else _LAYOUT.source_path("ecosystem/claude-hooks.json")
         data = self.json(relative)
         events = data.get("hooks") if data is not None else None
         if not isinstance(events, dict) or set(events) != set(CLAUDE_EVENTS):
@@ -386,8 +388,8 @@ class _Validator:
             if hook != expected or type(hook.get("timeout")) is not int or not 1 <= hook["timeout"] <= 60:
                 self.error(relative, f"{event} requires the isolated native command and declared failure policy")
 
-    def hooks(self) -> None:
-        relative = "ecosystem/hooks.json"
+    def hooks(self, *, bundled: bool) -> None:
+        relative = "ecosystem/hooks.json" if bundled else _LAYOUT.source_path("ecosystem/hooks.json")
         data = self.json(relative)
         if data is None:
             return
@@ -432,7 +434,7 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
     if not selected or any(name not in MODULES for name in selected) or len(selected) != len(set(selected)):
         return ["modules must be a non-empty unique selection of: " + ", ".join(MODULES)]
     bundled = (root / ".codex-plugin").exists()
-    manifest = _LAYOUT.PLUGIN_MANIFEST if bundled else "ecosystem/plugin.json"
+    manifest = _LAYOUT.PLUGIN_MANIFEST if bundled else _LAYOUT.source_path(_LAYOUT.PLUGIN_MANIFEST)
     required = _required_files(selected, manifest)
     agents = [Path(path).stem for path in required if path.startswith("ecosystem/agents/") and path.endswith(".toml")]
     try:
@@ -441,13 +443,13 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
         else:
             for module in selected:
                 validator.scan(f"skills/{module}")
-            for directory in ("ecosystem/agents", "ecosystem/references", "ecosystem/evals", "ecosystem/tests", "ecosystem/runtime"):
+            for directory in ("ecosystem/agents", "ecosystem/references", "ecosystem/evals", "ecosystem/tests", "ecosystem/runtime", "ecosystem/manifests", "ecosystem/docs"):
                 validator.scan(directory)
         for relative in required:
             validator.path(relative)
         validator.manifest(manifest)
         validator.claude(bundled=bundled, modules=selected)
-        validator.hooks()
+        validator.hooks(bundled=bundled)
         for module in selected:
             validator.skill(module)
         for name in agents:

@@ -33,6 +33,28 @@ COMMON_FILES = (
     "ecosystem/runtime/review-policy.json",
     *(f"ecosystem/{name}.py" for name in
       ("__init__", "core", "storage", "cli", "hooks", "hook_entry", "build", "install", "native", "validate")),
+    "ecosystem/hooks.json", "ecosystem/README.md", "ecosystem/docs/compatibility.md",
+    "ecosystem/docs/architecture.md", "ecosystem/docs/migrations.md", "ecosystem/docs/progress.md",
+    "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
+    "ecosystem/docs/evaluation.md",
+    "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
+    *(f"ecosystem/tests/{name}.py" for name in
+      ("helpers", "test_core", "test_hooks", "test_hook_entry", "test_package", "test_validation", "test_capabilities",
+       "test_progress", "test_progress_core")),
+    *(f"ecosystem/agents/{name}.toml" for name in
+      ("researcher", "reviewer", "security-reviewer", "verifier")),
+)
+# Frozen ownership inventory for the dual-client release being replaced.
+# Never derive historical membership from the current release or load old code.
+_LEGACY_130_COMMON_FILES = (
+    "ecosystem/claude.py", "ecosystem/claude_hooks.py", "ecosystem/claude-hooks.json",
+    "ecosystem/tests/test_claude_install.py", "ecosystem/tests/test_claude_hooks.py",
+    "ecosystem/tests/test_claude_package.py", "ecosystem/tests/native_claude_probe.py",
+    *(f"ecosystem/runtime/{name}.py" for name in
+      ("__init__", "workflow", "workspace", "dispatch", "review_gate", "agent_policy", "progress")),
+    "ecosystem/runtime/review-policy.json",
+    *(f"ecosystem/{name}.py" for name in
+      ("__init__", "core", "storage", "cli", "hooks", "hook_entry", "build", "install", "native", "validate")),
     "ecosystem/hooks.json", "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
     "ecosystem/ARCHITECTURE.md", "ecosystem/MIGRATION.md", "ecosystem/PROGRESS.md",
     "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
@@ -80,12 +102,34 @@ def allowed_files(modules: Iterable[str]) -> set[str]:
     return paths
 
 
+def legacy_files_130(modules: Iterable[str]) -> set[str]:
+    """Exact 1.3.0 membership, used only to verify an already-owned release."""
+    selected = select_modules(modules)
+    paths = set(_LEGACY_130_COMMON_FILES) | {PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST}
+    roles = {"coding": ("coder",), "mathematics": ("mathematician", "counterexample"),
+             "quant-research": ("coder", "mathematician", "counterexample"),
+             "writter": ("editor", "mathematician", "coder")}
+    for module in selected:
+        paths.update(f"skills/{module}/{name}" for name in
+                     ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
+        paths.update(f"ecosystem/agents/{name}.toml" for name in roles[module])
+    if {"mathematics", "writter"} & set(selected):
+        paths.update(("ecosystem/references/ontology.md", "ecosystem/references/ontology-examples.md"))
+    paths.update(f"agents/{Path(path).stem}.md" for path in tuple(paths)
+                 if path.startswith("ecosystem/agents/") and path.endswith(".toml"))
+    return paths
+
+
 def source_path(relative: str) -> str:
     """Map a distributed resource to its canonical source, without loading code."""
     if relative == PLUGIN_MANIFEST:
-        return "ecosystem/plugin.json"
+        return "ecosystem/manifests/codex-plugin.json"
     if relative == CLAUDE_PLUGIN_MANIFEST:
-        return "ecosystem/claude-plugin.json"
+        return "ecosystem/manifests/claude-plugin.json"
+    if relative == "ecosystem/hooks.json":
+        return "ecosystem/manifests/codex-hooks.json"
+    if relative == "ecosystem/claude-hooks.json":
+        return "ecosystem/manifests/claude-hooks.json"
     path = Path(relative)
     if len(path.parts) == 2 and path.parts[0] == "agents" and path.suffix == ".md":
         return f"ecosystem/agents/{path.stem}.toml"
@@ -172,7 +216,7 @@ def _write_json(path: Path, value: dict) -> None:
     path.chmod(0o644)
 
 
-def _check_plugin(value: dict) -> None:
+def _check_plugin(value: dict, *, legacy: bool = False) -> None:
     if (not isinstance(value, dict) or set(value) != {"name", "version", "description", "skills", "hooks"}
             or value.get("name") != "constellation" or not isinstance(value.get("version"), str)
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value["version"])
@@ -180,6 +224,8 @@ def _check_plugin(value: dict) -> None:
             or value.get("skills") != "./skills/"
             or value.get("hooks") != "./ecosystem/hooks.json"):
         raise BundleError("Plugin manifest does not match the Constellation contract")
+    if value["version"] == "1.3.0" and not legacy:
+        raise BundleError("Version 1.3.0 is reserved for the historical owned layout")
 
 
 def _check_claude_plugin(value: dict) -> None:
@@ -194,7 +240,25 @@ def _check_claude_plugin(value: dict) -> None:
 
 
 def verify_bundle(root: Path, *, installation: bool = False) -> dict:
-    """Verify exact file membership, hashes, modes and the compat manifest."""
+    """Verify the current distribution; legacy layouts are not new inputs."""
+    return _verify_bundle(root, installation=installation, legacy=False)
+
+
+def verify_owned_bundle(root: Path, *, installation: bool = False) -> dict:
+    """Verify current or exact 1.3.0 bytes without executing the owned package.
+
+    Installers use this only for an existing installation and rollback. Incoming
+    releases must still pass verify_bundle against the current allowlist.
+    """
+    root = Path(root)
+    if root.is_symlink() or not root.is_dir():
+        raise BundleError("Bundle must be a real directory")
+    plugin = _json(regular_file(root, PLUGIN_MANIFEST))
+    return _verify_bundle(root, installation=installation, legacy=plugin.get("version") == "1.3.0")
+
+
+def _verify_bundle(root: Path, *, installation: bool, legacy: bool) -> dict:
+    """Check membership, content and metadata against one complete layout."""
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise BundleError("Bundle must be a real directory")
@@ -206,7 +270,7 @@ def verify_bundle(root: Path, *, installation: bool = False) -> dict:
     if not isinstance(manifest.get("modules"), list):
         raise BundleError("Bundle modules must be an explicit list")
     selected = select_modules(manifest["modules"])
-    expected = allowed_files(selected)
+    expected = legacy_files_130(selected) if legacy else allowed_files(selected)
     if not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != expected:
         raise BundleError("Bundle file list differs from the allowlist")
     actual = set()
@@ -230,10 +294,10 @@ def verify_bundle(root: Path, *, installation: bool = False) -> dict:
             raise BundleError(f"Bundle integrity mismatch: {relative}")
     codex = _json(regular_file(root, PLUGIN_MANIFEST))
     claude = _json(regular_file(root, CLAUDE_PLUGIN_MANIFEST))
-    _check_plugin(codex)
+    _check_plugin(codex, legacy=legacy)
     _check_claude_plugin(claude)
-    if codex["version"] != claude["version"]:
-        raise BundleError("Native plugin versions differ")
+    if codex["version"] != claude["version"] or (legacy and codex["version"] != "1.3.0"):
+        raise BundleError("Native plugin versions differ from the owned release")
     for relative in sorted(expected):
         if relative.startswith("agents/") and relative.endswith(".md"):
             canonical = regular_file(root, source_path(relative))

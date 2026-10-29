@@ -1,7 +1,7 @@
 # Flujo de ingeniería
 
 Para trabajo sustancial o prolongado, conserva decisiones, hallazgos, evidencia y
-siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/PROGRESS.md).
+siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/docs/progress.md).
 Sincroniza hitos personales sólo cuando la política local lo autorice; no abras
 otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimiento.
 
@@ -77,10 +77,59 @@ inicialices un repositorio para satisfacer este procedimiento.
 
 ## Implementar y comprobar
 
-Implementa la solución más sencilla que satisfaga los contratos e invariantes.
-Reutiliza las abstracciones del proyecto y cambia los consumidores afectados
-dentro del alcance autorizado. Justifica las decisiones que alteren compatibilidad
-o costes; evita shims, capas o refactors preventivos sin necesidad demostrada.
+Elige el diseño según la petición y los contratos observados. Compara la solución
+mínima compatible con una abstracción que resuelva variaciones o reutilización
+concretas: la brevedad por sí sola no prueba simplicidad ni una capa prueba generalidad.
+Si se pide construir sobre abstracciones, explicita sus responsabilidades, contratos
+y composición; si se pide una solución directa, no añadas una arquitectura por rutina.
+Reutiliza las estructuras existentes y cambia los consumidores afectados dentro del
+alcance. Mantén el delta mínimo salvo necesidad demostrada; justifica cambios de
+compatibilidad o costes y evita shims, dependencias y refactors preventivos.
+
+La legibilidad exige poder seguir entrada → transformación → salida. Elige nombres
+que expresen el dominio, estructuras que hagan visibles las relaciones y pasos que
+puedan leerse sin reconstruir estado oculto. Generaliza sobre variaciones requeridas,
+no sobre futuros hipotéticos; verifica esas variaciones con casos representativos.
+Al valorar eficiencia, identifica qué crece —registros, bytes, llamadas o dimensiones—
+y el coste relevante de tiempo, memoria o E/S. Distingue complejidad razonada de
+medición: una mejora de rendimiento requiere carga, unidades, entorno y comparación
+reproducibles; sin esos datos, conserva la conclusión como hipótesis.
+
+### Documentar decisiones y datos
+
+En Python usa [Google Style para comentarios y docstrings](https://google.github.io/styleguide/pyguide.html#s3.8-comments-and-docstrings).
+Documenta APIs públicas y código de tamaño o lógica no trivial. Una docstring abre
+con un resumen y desarrolla el contexto necesario para usar la interfaz sin leer su
+implementación. Desarrolla con amplitud el contexto y los datos que sostienen el
+contrato; un getter obvio puede necesitar sólo una línea. Conserva las convenciones aplicables del proyecto
+y evita duplicar texto en cada envoltorio.
+
+Explica el propósito y recorrido de los datos en el módulo o clase responsable;
+en cada función documenta su parte del contrato. Usa `Args:`, `Returns:` o `Yields:`
+y `Raises:` cuando aporten información, y `Attributes:` para atributos públicos
+que lo necesiten. Describe significados y restricciones que las anotaciones no
+expresan; añade tipos si faltan y puedes establecerlos. En generadores describe los
+valores producidos, consumo de entradas y recursos mantenidos durante la iteración.
+No rellenes secciones vacías ni repitas literalmente la firma.
+
+Cuando condicionen el uso, declara precondiciones, invariantes, efectos, límites,
+propiedad y duración de recursos, mutación y aliasing. Para colecciones, registros,
+tablas o tensores, precisa campos, claves, relaciones, esquema, shape, dtype,
+unidades, nulos, vacíos, duplicados y orden que importen al contrato. Acompaña las
+estructuras difíciles de un ejemplo pequeño de entrada y salida compatible con
+la implementación, con valores sintéticos identificados y comprobados; muestra
+qué se conserva, transforma o descarta. Usa estructuras reales del programa y
+verifica los ejemplos: no inventes tipos, columnas, garantías ni resultados para
+completar documentación. Si no puede establecerse un contrato, declara la laguna.
+
+`Raises:` recoge errores que forman parte de la interfaz ofrecida y sus condiciones;
+no convierte fallos accidentales fuera de las precondiciones en garantías. El motivo
+de una decisión va junto a su dueño: contrato y consecuencias para quien llama en
+la docstring, detalles internos no evidentes en comentarios junto al código. Explica
+por qué se elige una estructura o algoritmo cuando afecte a su comprensión,
+invariantes o costes; evita comentarios que traduzcan cada línea de Python.
+
+### Comprobar comportamiento y documentación
 
 Comprueba comportamiento observable con entradas representativas y límites que
 puedan refutar la solución. Ante una regresión automatizable, conserva una prueba
@@ -88,6 +137,13 @@ que falle antes del arreglo y pase después. Un cambio en un control necesita
 ejercitar tanto el rechazo como un caso permitido para detectar falsos bloqueos.
 Incluye consumidores o integración cuando una prueba aislada no alcance el
 contrato. Un comando no ejecutado o una prueba omitida no cuentan como éxito.
+
+En código numérico, explicita el rango y la precisión del contrato. Comprueba
+extremos válidos, desbordamientos intermedios y cancelación que puedan violarlo,
+con una referencia independiente o cotas pertinentes cuando hagan falta. Una
+advertencia en la documentación no excusa un incumplimiento ni permite restringir
+silenciosamente el dominio pedido; corrige el cálculo o declara la obligación
+pendiente. Justifica el coste de la solución elegida sin imponer un algoritmo.
 
 Registra checks definitivos con el ciclo que corresponda, sobre los artefactos
 actuales. Las pruebas preliminares de un trabajador ayudan al coordinador, pero

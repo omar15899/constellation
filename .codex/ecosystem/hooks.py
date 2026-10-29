@@ -16,6 +16,7 @@ import re
 import signal
 import stat
 import sys
+import time
 from typing import Any, BinaryIO
 
 # The manifest invokes Python in isolated mode. Reintroduce only our fixed code
@@ -28,9 +29,26 @@ MAX_INPUT_BYTES = 1024 * 1024
 # Its bounded metadata budget is independent of the client event's input limit.
 MAX_GIT_STATE_BYTES = 16 * 1024 * 1024
 MAX_PATCH_PATHS = 4096
+OBSERVATION_RETRY_SECONDS = 4.0
 EVENTS = frozenset({"UserPromptSubmit", "PreToolUse", "SubagentStart", "SubagentStop", "Stop"})
 PATCH_TOOL = re.compile(r"^(?:[A-Za-z0-9_]+[.:])*(?:apply_patch|Edit|Write)$")
 IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
+METHOD_GUIDANCE = (
+    "Before substantive work, consult the current native skill catalogue and load the relevant "
+    "instructions through their native entry or SKILL.md before solving. When these exact entries "
+    "are available and consistent with the owning project's instructions: use constellation:coding "
+    "for substantive implementation or engineering diagnosis, including concurrency, failures and "
+    "behavior analysis even when no files are edited; constellation:mathematics to prove, audit, "
+    "derive or refute nontrivial mathematical claims; constellation:quant-research for systematic "
+    "strategy research and causal evaluation; constellation:writter for substantive writing or revision. "
+    "A diagnostic answer in chat is still engineering; a nontrivial proof or counterexample is still "
+    "mathematical work. Use project-selected equivalents when required, and combine only the methods "
+    "and output-format skills actually needed. Naming a skill does not load it. Brief factual replies, "
+    "simple arithmetic, short translations and trivial syntax questions need no skill, team or "
+    "persistent contract. Skill use does not start a lifecycle or authorize new data, tools, "
+    "external actions or publication."
+)
+
 LIMITS = (
     "Constellation only checks registered task metadata and apply_patch paths. "
     "Shell, MCP and other tool paths remain outside this guard; client permissions "
@@ -387,7 +405,7 @@ def _handle_git(payload: dict[str, Any], contract: dict[str, Any], cwd: Path,
         return _context(event,
             f"Constellation has an active Git {contract['kind']} contract. Use --session {session!r}. "
             "Inspect its existing requirements and incorporate corrections explicitly. "
-            "This prompt does not start, reset, synchronize or publish a task. " + LIMITS)
+            "This prompt does not start, reset, synchronize or publish a task. " + METHOD_GUIDANCE + " " + LIMITS)
     if event == "SubagentStart":
         _identifier(payload.get("agent_id"))
         return subagent_context(session, payload)
@@ -406,6 +424,37 @@ def _handle_git(payload: dict[str, Any], contract: dict[str, Any], cwd: Path,
         return flow.stop(request_id=_request_id(payload, {
             "session_id": session, "task_id": str(contract["root"]),
         }), active_only=True)
+
+
+def _observe_agent(payload: dict[str, Any], task: dict[str, Any], cwd: Path,
+                   session: str, state_dir: Path) -> None:
+    """Retry an idempotent observation without changing its task attribution.
+
+    Native agents can start together. Their metadata must not be lost merely
+    because another observation won the optimistic revision check. Contract
+    changes still use CAS and are never replayed by this adapter.
+    """
+    from ecosystem.core import Engine, RevisionConflict, discover_active
+
+    identity = (task["root"], task["session_id"], task["task_id"])
+    request = {"session_id": session, "task_id": task["task_id"],
+               "expected_revision": task["revision"], "request_id": _request_id(payload, task),
+               "observed_agent_id": _identifier(payload.get("agent_id")),
+               "event": "start" if payload["hook_event_name"] == "SubagentStart" else "stop"}
+    engine = Engine(Path(task["root"]), state_dir)
+    deadline = time.monotonic() + OBSERVATION_RETRY_SECONDS
+    while True:
+        try:
+            engine.execute("observe-agent", request)
+            return
+        except RevisionConflict:
+            if time.monotonic() >= deadline:
+                raise HookError("subagent observation exceeded its conflict retry deadline") from None
+            candidates = discover_active(state_dir, session, cwd)["tasks"]
+            if (len(candidates) != 1 or _git_contracts(cwd, session)
+                    or (candidates[0]["root"], candidates[0]["session_id"], candidates[0]["task_id"]) != identity):
+                raise HookError("subagent task attribution changed during observation; no retry applied") from None
+            request["expected_revision"] = candidates[0]["revision"]
 
 
 def handle_event(payload: dict[str, Any], state_dir: Path | None = None,
@@ -433,23 +482,18 @@ def handle_event(payload: dict[str, Any], state_dir: Path | None = None,
     if git_contracts:
         return _handle_git(payload, git_contracts[0], cwd, session, state_dir)
     if not tasks:
-        return {}
+        return _context(event, METHOD_GUIDANCE) if event == "UserPromptSubmit" else {}
     if event == "PreToolUse":
         return _guard_patch(payload, tasks, cwd, state_dir, Engine)
     if event == "UserPromptSubmit":
         return _context(event,
             "Constellation has registered tasks for this session and directory. "
             "Use the explicit skill/CLI protocol to inspect or revise their obligations. "
-            "This hook does not infer a profile or scope from the prompt. " + LIMITS)
+            "This hook does not infer a profile or scope from the prompt. " + METHOD_GUIDANCE + " " + LIMITS)
     if event in {"SubagentStart", "SubagentStop"}:
         if len(tasks) != 1:
             return _warning("subagent event is ambiguous across registered tasks; no attribution recorded")
-        task = tasks[0]
-        agent = _identifier(payload.get("agent_id"))
-        request = {"session_id": session, "task_id": task["task_id"],
-                   "expected_revision": task["revision"], "request_id": _request_id(payload, task),
-                   "observed_agent_id": agent, "event": "start" if event == "SubagentStart" else "stop"}
-        Engine(Path(task["root"]), state_dir).execute("observe-agent", request)
+        _observe_agent(payload, tasks[0], cwd, session, state_dir)
         if event == "SubagentStart":
             return _context(event,
                 "Constellation observed this native subagent for one registered task. "

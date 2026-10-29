@@ -33,11 +33,15 @@ class ClaudePackageTests(unittest.TestCase):
         shutil.copytree(self.bundle, target)
         (target / "bundle.json").unlink()
         for distributed, canonical in (
-            (builder.PLUGIN_MANIFEST, "ecosystem/plugin.json"),
-            (builder.CLAUDE_PLUGIN_MANIFEST, "ecosystem/claude-plugin.json"),
+            (builder.PLUGIN_MANIFEST, "ecosystem/manifests/codex-plugin.json"),
+            (builder.CLAUDE_PLUGIN_MANIFEST, "ecosystem/manifests/claude-plugin.json"),
+            ("ecosystem/hooks.json", "ecosystem/manifests/codex-hooks.json"),
+            ("ecosystem/claude-hooks.json", "ecosystem/manifests/claude-hooks.json"),
         ):
+            (target / canonical).parent.mkdir(parents=True, exist_ok=True)
             (target / distributed).replace(target / canonical)
-            (target / distributed).parent.rmdir()
+            if distributed.startswith("."):
+                (target / distributed).parent.rmdir()
         shutil.rmtree(target / "agents")
         return target
 
@@ -125,7 +129,7 @@ class ClaudePackageTests(unittest.TestCase):
 
     def test_native_versions_cannot_diverge(self) -> None:
         source = self.source_copy()
-        path = source / "ecosystem/claude-plugin.json"
+        path = source / "ecosystem/manifests/claude-plugin.json"
         metadata = json.loads(path.read_text())
         path.write_text(json.dumps({**metadata, "version": "99.0.0"}))
         with self.assertRaisesRegex(builder.BundleError, "versions differ"):
@@ -177,9 +181,9 @@ class ClaudePackageTests(unittest.TestCase):
 
     def test_source_build_rejects_duplicate_native_metadata_before_creating_output(self) -> None:
         source = self.source_copy()
-        variants = (("ecosystem/plugin.json", "root"),
-                    ("ecosystem/claude-plugin.json", "root"),
-                    ("ecosystem/claude-plugin.json", "author"))
+        variants = (("ecosystem/manifests/codex-plugin.json", "root"),
+                    ("ecosystem/manifests/claude-plugin.json", "root"),
+                    ("ecosystem/manifests/claude-plugin.json", "author"))
         for index, (relative, location) in enumerate(variants):
             with self.subTest(manifest=relative, location=location):
                 candidate = self.root / f"ambiguous-source-{index}"
@@ -214,7 +218,7 @@ class ClaudePackageTests(unittest.TestCase):
 
     def test_native_hook_failure_policy_is_structurally_required(self) -> None:
         source = self.source_copy()
-        path = source / "ecosystem/claude-hooks.json"
+        path = source / "ecosystem/manifests/claude-hooks.json"
         hooks = json.loads(path.read_text())
         hooks["hooks"]["PreToolUse"][0]["hooks"][0].pop("onFailure")
         path.write_text(json.dumps(hooks))

@@ -149,7 +149,7 @@ licencia, calidad de todos los datos ni rentabilidad de una estrategia.
    estadístico aprobado no autoriza órdenes reales.
 5. Publica el veredicto y `run_class` con baseline, familia, código/datos,
    configuración, semillas, pruebas, límites y criterio de revisión. Los
-   hallazgos sustanciales pasan al [diario de progreso](ecosystem/PROGRESS.md)
+   hallazgos sustanciales pasan al [diario de progreso](ecosystem/docs/progress.md)
    y a OmarOS sólo dentro de las raíces personales autorizadas. Mantén fuera
    datos corporativos/restringidos, credenciales y material sin derechos de
    redistribución; conserva referencias a las fuentes en lugar de copiarlas.

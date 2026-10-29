@@ -28,11 +28,11 @@ class HookEntryTests(BundleCase):
     def runtime_bundle(self, label: str, *, hold: bool = False) -> Path:
         """Ship a visible runtime through the normal bundle and receipt checks."""
         source = self.source_copy("source-" + label)
-        metadata = json.loads((source / "ecosystem/plugin.json").read_text())
+        metadata = json.loads((source / "ecosystem/manifests/codex-plugin.json").read_text())
         metadata["version"] = "8.0." + label
-        write_json(source / "ecosystem/plugin.json", metadata)
-        claude = json.loads((source / "ecosystem/claude-plugin.json").read_text())
-        write_json(source / "ecosystem/claude-plugin.json", {**claude, "version": metadata["version"]})
+        write_json(source / "ecosystem/manifests/codex-plugin.json", metadata)
+        claude = json.loads((source / "ecosystem/manifests/claude-plugin.json").read_text())
+        write_json(source / "ecosystem/manifests/claude-plugin.json", {**claude, "version": metadata["version"]})
         runtime = textwrap.dedent(f"""\
             import json
             import os

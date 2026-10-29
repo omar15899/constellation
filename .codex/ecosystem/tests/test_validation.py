@@ -40,10 +40,10 @@ CORE_RESOURCES = (
     "ecosystem/__init__.py", "ecosystem/core.py", "ecosystem/storage.py",
     "ecosystem/cli.py", "ecosystem/hooks.py", "ecosystem/hook_entry.py", "ecosystem/build.py",
     "ecosystem/install.py", "ecosystem/native.py", "ecosystem/validate.py",
-    "ecosystem/README.md", "ecosystem/COMPATIBILITY.md",
-    "ecosystem/ARCHITECTURE.md", "ecosystem/MIGRATION.md", "ecosystem/PROGRESS.md",
+    "ecosystem/README.md", "ecosystem/docs/compatibility.md",
+    "ecosystem/docs/architecture.md", "ecosystem/docs/migrations.md", "ecosystem/docs/progress.md",
     "ecosystem/requirements-dev.txt", "ecosystem/references/protocol.md",
-    "ecosystem/EVALUATION.md", "ecosystem/evaluation.json",
+    "ecosystem/docs/evaluation.md",
     "ecosystem/evals/cases.json", "ecosystem/evals/rubric.json",
     "ecosystem/tests/helpers.py", "ecosystem/tests/test_core.py",
     "ecosystem/tests/test_hooks.py", "ecosystem/tests/test_hook_entry.py", "ecosystem/tests/test_package.py",
@@ -64,8 +64,9 @@ class PackageFixture:
 
     def __init__(self, root: Path, modules: tuple[str, ...] = ("coding",), *, bundled: bool = False):
         self.root = root
+        self.bundled = bundled
         self.modules = modules
-        self.manifest_path = ".codex-plugin/plugin.json" if bundled else "ecosystem/plugin.json"
+        self.manifest_path = ".codex-plugin/plugin.json" if bundled else "ecosystem/manifests/codex-plugin.json"
         for relative in CORE_RESOURCES:
             if relative.endswith(".py"):
                 self.write(relative, 'raise RuntimeError("Validation executed package code")\n')
@@ -78,7 +79,7 @@ class PackageFixture:
             "description": "Portable fixture for package validation.",
             "skills": "./skills/", "hooks": "./ecosystem/hooks.json",
         })
-        self.write_json(".claude-plugin/plugin.json" if bundled else "ecosystem/claude-plugin.json", {
+        self.write_json(".claude-plugin/plugin.json" if bundled else "ecosystem/manifests/claude-plugin.json", {
             "name": "constellation", "version": "1.1.0",
             "author": {"name": "Constellation"},
             "description": "Native Claude fixture for package validation.",
@@ -131,8 +132,14 @@ class PackageFixture:
         if bundled:
             self.inventory()
 
+    def resource_path(self, relative: str) -> str:
+        if self.bundled:
+            return relative
+        return {"ecosystem/hooks.json": "ecosystem/manifests/codex-hooks.json",
+                "ecosystem/claude-hooks.json": "ecosystem/manifests/claude-hooks.json"}.get(relative, relative)
+
     def write(self, relative: str, content: str) -> Path:
-        path = self.root / relative
+        path = self.root / self.resource_path(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         path.chmod(0o644)
@@ -142,7 +149,7 @@ class PackageFixture:
         return self.write(relative, json.dumps(content, ensure_ascii=False, indent=2) + "\n")
 
     def read_json(self, relative: str) -> dict:
-        return json.loads((self.root / relative).read_text(encoding="utf-8"))
+        return json.loads((self.root / self.resource_path(relative)).read_text(encoding="utf-8"))
 
     def skill(self, module: str = "coding", *, name: object | None = None,
               description: object = "Validate a portable package using observable evidence.",
@@ -190,7 +197,9 @@ class ValidationTests(unittest.TestCase):
 
     def assert_rejected(self, path: str, package: PackageFixture | None = None,
                         modules: tuple[str, ...] | None = None) -> list[str]:
-        errors = validate((package or self.package).root, modules)
+        fixture = package or self.package
+        path = fixture.resource_path(path)
+        errors = validate(fixture.root, modules)
         self.assertIsInstance(errors, list)
         self.assertTrue(errors, "Malformed package was accepted")
         self.assertTrue(all(isinstance(error, str) for error in errors), errors)
@@ -394,7 +403,7 @@ class ValidationTests(unittest.TestCase):
         for relative in ("ecosystem/core.py", "ecosystem/runtime/review_gate.py", "ecosystem/references/protocol.md",
                          "ecosystem/agents/verifier.toml", "ecosystem/runtime/progress.py",
                          "ecosystem/tests/test_progress.py", "ecosystem/tests/test_progress_core.py",
-                         "ecosystem/PROGRESS.md"):
+                         "ecosystem/docs/progress.md"):
             with self.subTest(relative=relative):
                 path = self.package.root / relative
                 original = path.read_bytes()
@@ -428,6 +437,19 @@ class ValidationTests(unittest.TestCase):
                 self.assertFalse((package.root / "ecosystem/plugin.json").exists())
                 self.assertEqual(validate(package.root), [])
                 self.assertEqual(validate(package.root, modules[:1]), [])
+
+    def test_current_source_and_bundle_cannot_claim_historical_release_identity(self) -> None:
+        for bundled in (False, True):
+            with self.subTest(bundled=bundled):
+                package = PackageFixture(self.temporary / f"historical-identity-{bundled}", bundled=bundled)
+                claude_manifest = (".claude-plugin/plugin.json" if bundled
+                                   else "ecosystem/manifests/claude-plugin.json")
+                for relative in (package.manifest_path, claude_manifest):
+                    metadata = package.read_json(relative)
+                    package.write_json(relative, {**metadata, "version": "1.3.0"})
+                if bundled:
+                    package.inventory()
+                self.assert_rejected(package.manifest_path, package)
 
     def test_manifest_description_required_by_builder_is_required_by_validator(self) -> None:
         metadata = self.package.read_json(self.package.manifest_path)

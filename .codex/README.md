@@ -7,7 +7,7 @@ los proyectos propios usan perfiles nativos y `ruflo` conserva su perfil externo
 La sección de uso siguiente documenta el motor de **un solo repositorio**.
 
 El perfil mantiene instrucciones breves y entradas al runtime compartido de
-[Constellation](ecosystem/ARCHITECTURE.md). Codex trabaja directamente; no necesita proyectar Claude,
+[Constellation](ecosystem/docs/architecture.md). Codex trabaja directamente; no necesita proyectar Claude,
 cargar el sistema de agentes de Claude ni recorrer una cadena de skills. El modelo,
 esfuerzo y permisos se heredan de los ajustes del usuario.
 
@@ -69,7 +69,7 @@ Cambiar entre modelos compatibles no exige editar proyectos ni skills.
 Consulta `model/list` y la configuración efectiva del cliente para disponibilidad
 y esfuerzos. La ventana anunciada por una API no sustituye al presupuesto de
 contexto del cliente instalado. Las pruebas con modelos concretos constan en
-[compatibilidad](ecosystem/COMPATIBILITY.md); no prueban modelos futuros.
+[compatibilidad](ecosystem/docs/compatibility.md); no prueban modelos futuros.
 [Configuración nativa](https://learn.chatgpt.com/docs/config-file/config-reference).
 
 ## Uso

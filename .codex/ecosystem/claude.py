@@ -16,11 +16,11 @@ from typing import Iterator
 
 sys.dont_write_bytecode = True
 if __package__:
-    from .build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle
+    from .build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle, verify_owned_bundle
     from .install import InstallError, _read_object, _replace_bytes
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle
+    from build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle, verify_owned_bundle
     from install import InstallError, _read_object, _replace_bytes
 
 PLUGIN_ID = "constellation@skills-dir"
@@ -88,7 +88,7 @@ def verify_installation(plugin_root: Path) -> dict:
         if stat.S_IMODE(metadata.st_mode) != 0o600:
             raise InstallError("Installation receipt permissions changed")
         receipt = _read_object(marker)
-        manifest = verify_bundle(root, installation=True)
+        manifest = verify_owned_bundle(root, installation=True)
         _single_links(root)
         if type(receipt.get("schema")) is not int or receipt != _receipt(root, manifest):
             raise InstallError("Installation ownership receipt differs from the verified release")

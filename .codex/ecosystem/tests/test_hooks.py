@@ -7,6 +7,7 @@ guard has deliberately limited coverage: shell and MCP writes remain outside it.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -25,8 +27,9 @@ from typing import Any
 sys.dont_write_bytecode = True
 SOURCE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE.parent))
-from ecosystem.core import Engine, Error  # noqa: E402
+from ecosystem.core import Engine, Error, RevisionConflict, discover_active  # noqa: E402
 from ecosystem import hooks  # noqa: E402
+from ecosystem.build import source_resource  # noqa: E402
 from helpers import AVAILABLE_PROFILES, DEFAULT_PROFILE  # noqa: E402
 
 
@@ -196,7 +199,7 @@ finally:
         self.assertNotIn("updatedInput", output)
 
     def test_manifest_filters_are_event_specific(self) -> None:
-        manifest = json.loads((SOURCE / "hooks.json").read_text())
+        manifest = json.loads(source_resource(SOURCE.parent, "ecosystem/hooks.json")[0])
         self.assertEqual(set(manifest["hooks"]), EVENTS)
         for event, groups in manifest["hooks"].items():
             with self.subTest(event=event):
@@ -218,10 +221,18 @@ finally:
         for name in ("Bash", "exec_command", "mcp__fs__write", "apply_patch_evil"):
             self.assertFalse(any(regex.fullmatch(name) for regex in matchers), name)
 
+    def assert_unregistered_response(self, event: str, result: dict[str, Any]) -> None:
+        if event == "UserPromptSubmit":
+            self.assertEqual(set(result), {"hookSpecificOutput"})
+            self.assertEqual(result["hookSpecificOutput"], {
+                "hookEventName": event, "additionalContext": hooks.METHOD_GUIDANCE})
+        else:
+            self.assertEqual(result, {})
+
     def test_unregistered_session_does_not_create_state_or_block(self) -> None:
         for event in sorted(EVENTS):
             with self.subTest(event=event):
-                self.assertEqual(self.run_hook(event), {})
+                self.assert_unregistered_response(event, self.run_hook(event, audit=True))
         self.assertFalse(self.state.exists())
         self.assertFalse((self.directory / "codex-home").exists())
 
@@ -233,8 +244,33 @@ finally:
         for event in sorted(EVENTS):
             for fields in ({"session_id": "synthetic-unregistered-session"}, {"cwd": str(sibling)}):
                 with self.subTest(event=event, fields=fields):
-                    self.assertEqual(self.run_hook(event, payload=self.payload(event, **fields)), {})
+                    self.assert_unregistered_response(event, self.run_hook(event, payload=self.payload(event, **fields)))
         self.assertEqual(self.status(), baseline)
+
+    def test_method_guidance_is_static_and_never_reads_prompt_or_starts_work(self) -> None:
+        class StructuralOnly(dict):
+            def get(self, key, default=None):
+                if key in {"prompt", "transcript_path", "last_assistant_message"}:
+                    raise AssertionError("Private content must not select methods")
+                return super().get(key, default)
+
+        payload = StructuralOnly(self.payload("UserPromptSubmit"))
+        before = {path.name: path.read_bytes() for path in self.root.iterdir() if path.is_file()}
+        with mock.patch.object(Engine, "execute") as execute:
+            result = hooks.handle_event(payload, self.state, "UserPromptSubmit")
+            execute.assert_not_called()
+        self.assert_unregistered_response("UserPromptSubmit", result)
+        self.assertFalse(self.state.exists())
+        self.assertEqual({path.name: path.read_bytes() for path in self.root.iterdir() if path.is_file()}, before)
+        self.plan()
+        registered = self.status()
+        with mock.patch.object(Engine, "execute") as execute:
+            result = hooks.handle_event(payload, self.state, "UserPromptSubmit")
+            execute.assert_not_called()
+        self.assertIn(hooks.METHOD_GUIDANCE, result["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(self.status(), registered)
+        self.assert_denied(self.run_hook("PreToolUse", payload=self.payload(
+            "PreToolUse", tool_input={"command": patch("outside.md")})))
 
     def test_prompt_does_not_select_profile_or_grant_a_role(self) -> None:
         self.plan()
@@ -295,6 +331,78 @@ finally:
         self.assertEqual(self.run_hook("SubagentStop"), {})
         self.assertEqual(self.status()["observed_agents"], {"synthetic-native-worker": "stop"})
         self.assertEqual(self.status()["stop_attempts"], 0)
+
+    def test_simultaneous_agent_observations_survive_revision_conflicts(self) -> None:
+        self.plan()
+        original = Engine.execute
+        identities = [f"synthetic-parallel-worker-{index}" for index in range(8)]
+        initial = self.status()
+        for event, expected in (("SubagentStart", "start"), ("SubagentStop", "stop")):
+            barrier = threading.Barrier(len(identities))
+            lock = threading.Lock()
+            entered: set[str] = set()
+
+            def simultaneous(engine, operation, payload):
+                first = False
+                if operation == "observe-agent":
+                    with lock:
+                        identity = payload["observed_agent_id"]
+                        first = identity not in entered
+                        entered.add(identity)
+                    if first:
+                        barrier.wait(timeout=5)
+                return original(engine, operation, payload)
+
+            def observe(identity):
+                return hooks.handle_event(self.payload(event, agent_id=identity), self.state, event)
+
+            with mock.patch.object(Engine, "execute", simultaneous), ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(observe, identities))
+            if event == "SubagentStart":
+                self.assertTrue(all(result["hookSpecificOutput"]["hookEventName"] == event for result in results))
+            else:
+                self.assertEqual(results, [{}] * len(identities))
+            current = self.status()
+            self.assertEqual(current["observed_agents"], dict.fromkeys(identities, expected))
+            self.assertEqual(current["agents"], initial["agents"])
+            self.assertEqual(current["contract"], initial["contract"])
+            for identity in identities:
+                observe(identity)
+            self.assertEqual(self.status(), current, "Replaying native events must not create revisions")
+        self.assertEqual(current["revision"], initial["revision"] + 2 * len(identities))
+
+    def test_observation_retry_rejects_changed_or_ambiguous_task_attribution(self) -> None:
+        self.plan()
+        selected = discover_active(self.state, SESSION, self.root)["tasks"][0]
+        alternatives = [[], [selected, selected], [{**selected, "root": str(self.directory)}],
+                        [{**selected, "session_id": "another-session"}],
+                        [{**selected, "task_id": "another-task"}]]
+        for candidates in alternatives:
+            with self.subTest(candidates=candidates), \
+                    mock.patch("ecosystem.core.discover_active", side_effect=[{"tasks": [selected]}, {"tasks": candidates}]), \
+                    mock.patch.object(Engine, "execute", side_effect=RevisionConflict("fixture race")) as execute:
+                with self.assertRaisesRegex(hooks.HookError, "attribution changed"):
+                    hooks.handle_event(self.payload("SubagentStart"), self.state, "SubagentStart")
+                execute.assert_called_once()
+        with mock.patch.object(hooks, "_git_contracts", side_effect=[[], [{"kind": "repository"}]]), \
+                mock.patch.object(Engine, "execute", side_effect=RevisionConflict("fixture race")) as execute:
+            with self.assertRaisesRegex(hooks.HookError, "attribution changed"):
+                hooks.handle_event(self.payload("SubagentStart"), self.state, "SubagentStart")
+            execute.assert_called_once()
+        self.assertEqual(self.status()["observed_agents"], {})
+
+    def test_observation_retry_has_deadline_and_does_not_retry_other_errors(self) -> None:
+        self.plan()
+        with mock.patch.object(hooks.time, "monotonic", side_effect=[0.0, hooks.OBSERVATION_RETRY_SECONDS]), \
+                mock.patch.object(Engine, "execute", side_effect=RevisionConflict("fixture race")) as execute:
+            with self.assertRaisesRegex(hooks.HookError, "retry deadline"):
+                hooks.handle_event(self.payload("SubagentStart"), self.state, "SubagentStart")
+            execute.assert_called_once()
+        with mock.patch.object(Engine, "execute", side_effect=Error("fixture integrity failure")) as execute:
+            with self.assertRaisesRegex(Error, "integrity failure"):
+                hooks.handle_event(self.payload("SubagentStart"), self.state, "SubagentStart")
+            execute.assert_called_once()
+        self.assertEqual(self.status()["observed_agents"], {})
 
     def test_missing_subagent_identity_does_not_invent_one(self) -> None:
         self.plan()
@@ -804,7 +912,7 @@ finally:
     def test_minimal_git_project_needs_no_scaffold_or_hook_state(self) -> None:
         flow = self.make_git()
         for event in sorted(EVENTS):
-            self.assertEqual(self.run_hook(event, audit_git=True), {})
+            self.assert_unregistered_response(event, self.run_hook(event, audit_git=True))
         self.assertFalse(flow.home.exists())
         self.assertFalse(self.state.exists())
         self.assertFalse((self.root / ".codex").exists())
@@ -869,7 +977,7 @@ finally:
         flow.save(state)
         baseline = flow.path.read_bytes()
         for event in sorted(EVENTS):
-            self.assertEqual(self.run_hook(event, audit_git=True), {})
+            self.assert_unregistered_response(event, self.run_hook(event, audit_git=True))
         self.assertEqual(flow.path.read_bytes(), baseline)
 
     def test_git_portable_conflict_is_explicit_and_never_falls_back(self) -> None:
@@ -934,8 +1042,8 @@ finally:
         self.assert_denied(self.run_hook("PreToolUse", audit_git=True, payload=self.payload(
             "PreToolUse", cwd=str(child), tool_input={"command": patch("../result.md")})))
         for event in sorted(EVENTS):
-            self.assertEqual(self.run_hook(event, audit_git=True, payload=self.payload(
-                event, cwd=str(unrelated))), {})
+            self.assert_unregistered_response(event, self.run_hook(event, audit_git=True, payload=self.payload(
+                event, cwd=str(unrelated))))
         stopped = self.run_hook("Stop", audit_git=True, payload=self.payload("Stop", cwd=str(child)))
         self.assertEqual(stopped["decision"], "block")
         self.assertEqual(workspace.load()["stop_attempts"], 1)

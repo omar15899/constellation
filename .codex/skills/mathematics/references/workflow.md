@@ -1,7 +1,7 @@
 # Investigación y auditoría matemática
 
 Para trabajo sustancial o prolongado, conserva decisiones, hallazgos, evidencia y
-siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/PROGRESS.md).
+siguientes pasos mediante el [progreso del ciclo elegido](../../../ecosystem/docs/progress.md).
 Sincroniza hitos personales sólo cuando la política local lo autorice; no abras
 otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimiento.
 

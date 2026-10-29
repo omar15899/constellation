@@ -5,8 +5,10 @@ event dispatch. All state, repositories, remotes and event content are fixtures.
 """
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 import fcntl
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -82,6 +84,27 @@ class ClaudeAdapterTests(unittest.TestCase):
                 else:
                     self.assertEqual(result, {})
         self.assertFalse(self.state.exists())
+
+    def test_shared_method_guidance_does_not_infer_scope_from_private_prompt(self) -> None:
+        class StructuralOnly(dict):
+            def get(self, key, default=None):
+                if key in {"prompt", "transcript_path", "last_assistant_message"}:
+                    raise AssertionError("Private content must not select methods")
+                return super().get(key, default)
+
+        for event in ("SessionStart", "UserPromptSubmit"):
+            result = adapter.handle_event(StructuralOnly(self.payload(event)), self.state, event)
+            context = result["hookSpecificOutput"]["additionalContext"]
+            self.assertEqual(context.count(hooks.METHOD_GUIDANCE), 1)
+            self.assertIn("native Skill tool", context)
+            self.assertNotIn(PRIVATE, context)
+        self.assertFalse(self.state.exists())
+        scenario = self.scenario()
+        before = scenario.call("status")
+        context = self.handle("UserPromptSubmit")["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(context.count(hooks.METHOD_GUIDANCE), 1)
+        self.assertEqual(scenario.call("status"), before)
+        self.denied(self.handle("PreToolUse", tool_input={"file_path": "undeclared.md"}))
 
     def test_only_structural_fields_reach_shared_dispatch(self) -> None:
         for tool, field in adapter.FILE_TOOLS.items():
@@ -311,6 +334,38 @@ class ClaudeLoaderTests(unittest.TestCase):
         self.assertNotIn("LEAK-IMPORT-SENTINEL", tool.stdout + tool.stderr + prompt.stdout + prompt.stderr)
         self.assertNotIn(PRIVATE, tool.stdout + tool.stderr + prompt.stdout + prompt.stderr)
         self.assertFalse(marker.exists())
+
+    def test_unsupported_python_rejects_without_loading_runtime_or_reading_event(self) -> None:
+        for event in sorted(adapter.EVENTS):
+            output, errors = io.StringIO(), io.StringIO()
+            private_input = mock.Mock()
+            private_input.buffer.read.side_effect = AssertionError("Private input must remain unread")
+            with self.subTest(event=event), \
+                    mock.patch.dict(os.environ, {"CONSTELLATION_HOOK_OWNER": "shared"}), \
+                    mock.patch.object(adapter.sys, "version_info", (3, 9, 6)), \
+                    mock.patch.object(adapter.sys, "stdin", private_input), \
+                    mock.patch.object(adapter, "verified_release") as verify, \
+                    mock.patch.object(adapter, "handle_event") as dispatch, \
+                    redirect_stdout(output), redirect_stderr(errors):
+                code = adapter.main([event])
+            verify.assert_not_called()
+            dispatch.assert_not_called()
+            private_input.buffer.read.assert_not_called()
+            combined = output.getvalue() + errors.getvalue()
+            self.assertIn("Python 3.11", combined)
+            self.assertIn("PATH", combined)
+            self.assertNotIn(PRIVATE, combined)
+            if event == "UserPromptSubmit":
+                self.assertEqual(code, 2)
+                self.assertEqual(output.getvalue(), "")
+            else:
+                self.assertEqual(code, 0)
+                response = json.loads(output.getvalue())
+                if event == "PreToolUse":
+                    self.assertEqual(response["hookSpecificOutput"]["permissionDecision"], "deny")
+                else:
+                    self.assertEqual(set(response), {"systemMessage"})
+                self.assertNotIn("additionalContext", combined)
 
     def test_project_owned_cli_needs_no_package_import_or_manifest(self) -> None:
         root = self.release()

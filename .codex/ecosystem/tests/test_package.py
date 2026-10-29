@@ -55,7 +55,7 @@ CORE_FILES = {
     "ecosystem/runtime/agent_policy.py", "ecosystem/runtime/progress.py",
     "ecosystem/storage.py", "ecosystem/cli.py", "ecosystem/build.py",
     "ecosystem/install.py", "ecosystem/native.py", "ecosystem/validate.py",
-    "ecosystem/hooks.py", "ecosystem/hook_entry.py", "ecosystem/hooks.json", "ecosystem/references/protocol.md", "ecosystem/PROGRESS.md",
+    "ecosystem/hooks.py", "ecosystem/hook_entry.py", "ecosystem/hooks.json", "ecosystem/references/protocol.md", "ecosystem/docs/progress.md",
     "ecosystem/agents/researcher.toml", "ecosystem/agents/reviewer.toml",
     "ecosystem/agents/security-reviewer.toml", "ecosystem/agents/verifier.toml",
     "ecosystem/tests/test_progress.py", "ecosystem/tests/test_progress_core.py",
@@ -211,21 +211,24 @@ class BundleCase(unittest.TestCase):
         source = self.root / name
         shutil.copytree(self.bundle, source)
         (source / "bundle.json").unlink()
-        (source / PLUGIN_MANIFEST).replace(source / "ecosystem/plugin.json")
+        (source / "ecosystem/manifests").mkdir(exist_ok=True)
+        (source / PLUGIN_MANIFEST).replace(source / "ecosystem/manifests/codex-plugin.json")
         (source / ".codex-plugin").rmdir()
-        (source / CLAUDE_PLUGIN_MANIFEST).replace(source / "ecosystem/claude-plugin.json")
+        (source / CLAUDE_PLUGIN_MANIFEST).replace(source / "ecosystem/manifests/claude-plugin.json")
         (source / ".claude-plugin").rmdir()
+        for origin, target in (("hooks.json", "codex-hooks.json"), ("claude-hooks.json", "claude-hooks.json")):
+            (source / "ecosystem" / origin).replace(source / "ecosystem/manifests" / target)
         shutil.rmtree(source / "agents")
         return source
 
     def changed_bundle(self, version: str = "1.1.1", *, change_agent: bool = False,
                        change_entry: bool = False) -> Path:
         source = self.source_copy("update-source")
-        metadata = json.loads((source / "ecosystem/plugin.json").read_text())
+        metadata = json.loads((source / "ecosystem/manifests/codex-plugin.json").read_text())
         metadata["version"] = version
-        write_json(source / "ecosystem/plugin.json", metadata)
-        claude = json.loads((source / "ecosystem/claude-plugin.json").read_text())
-        write_json(source / "ecosystem/claude-plugin.json", {**claude, "version": version})
+        write_json(source / "ecosystem/manifests/codex-plugin.json", metadata)
+        claude = json.loads((source / "ecosystem/manifests/claude-plugin.json").read_text())
+        write_json(source / "ecosystem/manifests/claude-plugin.json", {**claude, "version": version})
         workflow = source / f"skills/{self.module}/references/workflow.md"
         workflow.write_text(workflow.read_text() + "\nUpdated synthetic release.\n")
         if change_agent:
@@ -499,10 +502,10 @@ class BuildTests(BundleCase):
     def test_common_gate_and_policy_are_source_bytes_and_manifest_has_one_native_location(self) -> None:
         for relative in ("ecosystem/runtime/review_gate.py", "ecosystem/runtime/review-policy.json"):
             self.assertEqual((self.bundle / relative).read_bytes(), (CODEX_DIR / relative).read_bytes())
-        origin = CODEX_DIR / PLUGIN_MANIFEST if IS_DISTRIBUTED else SOURCE_DIR / "plugin.json"
+        origin = CODEX_DIR / PLUGIN_MANIFEST if IS_DISTRIBUTED else SOURCE_DIR / "manifests/codex-plugin.json"
         self.assertEqual((self.bundle / PLUGIN_MANIFEST).read_bytes(), origin.read_bytes())
         self.assertFalse((self.bundle / "plugin.json").exists())
-        self.assertFalse((self.bundle / "ecosystem/plugin.json").exists())
+        self.assertFalse((self.bundle / "ecosystem/manifests/codex-plugin.json").exists())
         metadata = json.loads((self.bundle / PLUGIN_MANIFEST).read_text())
         self.assertEqual(metadata["skills"], "./skills/")
         self.assertEqual(metadata["hooks"], "./ecosystem/hooks.json")
@@ -617,7 +620,7 @@ class BuildTests(BundleCase):
 
     def test_native_manifest_paths_and_version_cannot_escape_the_package(self) -> None:
         source = self.source_copy()
-        path = source / "ecosystem/plugin.json"
+        path = source / "ecosystem/manifests/codex-plugin.json"
         original = json.loads(path.read_text())
         for field, value in (("skills", "../private"), ("hooks", "/tmp/unowned-hooks.json"),
                              ("version", "../escape"), ("version", "/tmp/escape")):
@@ -625,6 +628,51 @@ class BuildTests(BundleCase):
             with self.subTest(field=field, value=value), self.assertRaises(BundleError):
                 build_bundle(self.root / "rejected-metadata", MODULES, source_root=source)
             self.assertFalse((self.root / "rejected-metadata").exists())
+
+    def test_current_layout_cannot_claim_historical_130_identity(self) -> None:
+        import claude as claude_installer
+
+        source = self.source_copy()
+        for relative in (PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST):
+            path = source / builder.source_path(relative)
+            metadata = json.loads(path.read_text())
+            write_json(path, {**metadata, "version": "1.3.0"})
+        before_source = snapshot(source)
+        output = self.root / "historical-label-output"
+        with self.assertRaisesRegex(BundleError, "reserved for the historical"):
+            build_bundle(output, MODULES, source_root=source)
+        self.assertFalse(output.exists())
+        self.assertEqual(snapshot(source), before_source)
+
+        # This is a structurally current package with correct hashes, not a
+        # corrupt file or a genuine historical release. Both inputs must fail
+        # before either installer can create an ownership receipt or register it.
+        manifest = json.loads((self.bundle / "bundle.json").read_text())
+        for relative in (PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST):
+            path = self.bundle / relative
+            metadata = json.loads(path.read_text())
+            write_json(path, {**metadata, "version": "1.3.0"})
+            manifest["files"][relative] = builder.file_record(path)
+        write_json(self.bundle / "bundle.json", manifest)
+        before_bundle = snapshot(self.bundle)
+        with self.assertRaisesRegex(BundleError, "reserved for the historical"):
+            verify_bundle(self.bundle)
+        with self.assertRaises(BundleError):
+            builder.verify_owned_bundle(self.bundle)
+        codex_home = self.root / "rejected-codex-home"
+        claude_home = self.root / "rejected-claude-home"
+        backend = SyntheticNativeClient(codex_home)
+        for check in (True, False):
+            with self.subTest(client="codex", check=check):
+                with self.assertRaisesRegex(BundleError, "reserved for the historical"):
+                    install_bundle(self.bundle, codex_home, check=check, client=backend)
+                self.assertFalse(codex_home.exists())
+                self.assertEqual(backend.mutations, [])
+            with self.subTest(client="claude", check=check):
+                with self.assertRaisesRegex(BundleError, "reserved for the historical"):
+                    claude_installer.install_bundle(self.bundle, claude_home, check=check)
+                self.assertFalse(claude_home.exists())
+        self.assertEqual(snapshot(self.bundle), before_bundle)
 
     def test_bundle_modules_require_an_explicit_list_before_rebuild(self) -> None:
         path = self.bundle / "bundle.json"
@@ -703,6 +751,10 @@ class SyntheticInstallationTests(BundleCase):
         receipt = self.receipt()
         catalog = self.home / "constellation/catalog"
         payload = catalog / "plugins/constellation"
+        for current, old in (("compatibility", "COMPATIBILITY"), ("architecture", "ARCHITECTURE"),
+                             ("migrations", "MIGRATION"), ("progress", "PROGRESS"), ("evaluation", "EVALUATION")):
+            (payload / f"ecosystem/docs/{current}.md").replace(payload / f"ecosystem/{old}.md")
+        write_json(payload / "ecosystem/evaluation.json", {"historical_fixture": True})
         for name in ("review_gate.py", "review-policy.json"):
             (payload / "ecosystem/runtime" / name).replace(payload / name)
         shutil.rmtree(payload / "ecosystem/runtime")
@@ -739,7 +791,7 @@ class SyntheticInstallationTests(BundleCase):
         self.install(modules=modules)
         self.rewrite_owned_shared_resources(remove=(
             "ecosystem/runtime/progress.py", "ecosystem/tests/test_progress.py",
-            "ecosystem/tests/test_progress_core.py", "ecosystem/PROGRESS.md",
+            "ecosystem/tests/test_progress_core.py", "ecosystem/docs/progress.md",
             "ecosystem/hook_entry.py", "ecosystem/tests/test_hook_entry.py",
             *builder.CLAUDE_FILES, CLAUDE_PLUGIN_MANIFEST,
             *(relative for relative in builder.allowed_files(modules) if relative.startswith("agents/")),
@@ -749,6 +801,92 @@ class SyntheticInstallationTests(BundleCase):
         receipt["schema"] = 2
         (self.home / "constellation/hook.py").unlink()
         write_json(self.home / "constellation/receipt.json", receipt)
+
+    def seed_dual_130_installation(self, modules: list[str] | None = None) -> None:
+        """Use real files with the independently specified previous layout.
+
+        This tests migration semantics with synthetic payload bytes. A release
+        smoke test can additionally seed the published 1.3.0 artifact.
+        """
+        self.install(modules=modules)
+        receipt = self.receipt()
+        catalog = self.home / "constellation/catalog"
+        payload = catalog / "plugins/constellation"
+        for current, old in (("compatibility", "COMPATIBILITY"), ("architecture", "ARCHITECTURE"),
+                             ("migrations", "MIGRATION"), ("progress", "PROGRESS"), ("evaluation", "EVALUATION")):
+            (payload / f"ecosystem/docs/{current}.md").replace(payload / f"ecosystem/{old}.md")
+        (payload / "ecosystem/docs").rmdir()
+        write_json(payload / "ecosystem/evaluation.json", {"historical_fixture": True})
+        for relative in (PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST):
+            metadata = json.loads((payload / relative).read_text())
+            write_json(payload / relative, {**metadata, "version": "1.3.0"})
+        records = installer._inventory(payload)
+        records.pop("bundle.json")
+        write_json(payload / "bundle.json", {"schema": 1, "modules": receipt["modules"], "files": records})
+        self.backend.add_plugin()
+        write_json(self.home / "constellation/receipt.json", {
+            **receipt, "version": "1.3.0", "catalog": installer._inventory(catalog),
+            "cache": installer._inventory(self.cache("1.3.0")),
+        })
+        self.backend.mutations.clear()
+
+    def test_dual_130_upgrade_reorganizes_each_subset_and_preserves_unrelated_state(self) -> None:
+        for modules in [*([module] for module in MODULES), list(MODULES)]:
+            with self.subTest(modules=modules):
+                self.seed_dual_130_installation(modules)
+                previous = snapshot(self.home)
+                self.assertEqual(self.install(modules=modules, check=True)["status"], "checked")
+                self.assertEqual(snapshot(self.home), previous)
+                self.assertEqual(self.backend.mutations, [])
+                result = self.install(modules=modules)
+                self.assertEqual(result["version"], self.current_version)
+                self.assertEqual(verify_bundle(self.cache())["modules"], modules)
+                self.assertTrue((self.cache() / "ecosystem/docs/architecture.md").is_file())
+                self.assertFalse((self.cache() / "ecosystem/ARCHITECTURE.md").exists())
+                self.assertFalse((self.cache() / "ecosystem/evaluation.json").exists())
+                self.assert_unrelated_preserved()
+
+    def test_dual_130_upgrade_failure_restores_exact_previous_files(self) -> None:
+        self.seed_dual_130_installation()
+        before = snapshot(self.home)
+        self.backend.fail_once = "add_plugin"
+        with self.assertRaisesRegex(InstallError, "previous owned files and registration restored"):
+            self.install()
+        self.assertEqual(snapshot(self.home), before)
+        self.assertEqual(self.receipt()["version"], "1.3.0")
+        self.assertEqual(self.install()["version"], self.current_version)
+
+    def test_dual_130_receipt_rejects_mixed_missing_and_unknown_inventory(self) -> None:
+        for change in ({"add": ("ecosystem/docs/architecture.md",)},
+                       {"add": ("ecosystem/unknown.py",)},
+                       {"remove": ("ecosystem/evaluation.json",)}):
+            with self.subTest(change=change):
+                self.seed_dual_130_installation()
+                original = snapshot(self.home)
+                self.rewrite_owned_shared_resources(**change)
+                before = snapshot(self.home)
+                with self.assertRaisesRegex(InstallError, "Invalid installation receipt"):
+                    self.install()
+                self.assertEqual(snapshot(self.home), before)
+                self.assertEqual(self.backend.mutations, [])
+                shutil.rmtree(self.home)
+                self.home.mkdir()
+                for relative, (kind, content, mode) in original.items():
+                    self.assertEqual(kind, "file")
+                    path = self.home / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                    path.chmod(mode)
+
+    def test_dual_130_previous_package_is_read_as_data(self) -> None:
+        self.seed_dual_130_installation()
+        payload = self.home / "constellation/catalog/plugins/constellation"
+        marker = self.root / "previous-release-was-executed"
+        (payload / "ecosystem/build.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n")
+        self.rewrite_owned_shared_resources()
+        self.assertEqual(self.install()["version"], self.current_version)
+        self.assertFalse(marker.exists())
 
     def rewrite_owned_shared_resources(self, *, remove: tuple[str, ...] = (),
                                        add: tuple[str, ...] = ()) -> None:
@@ -1100,10 +1238,10 @@ class SyntheticInstallationTests(BundleCase):
             'description = "Synthetic future release profile."\n'
             'developer_instructions = "Use the assigned evidence."\n'
         )
-        metadata = json.loads((source / "ecosystem/plugin.json").read_text())
-        write_json(source / "ecosystem/plugin.json", {**metadata, "version": "1.2.1"})
-        metadata = json.loads((source / "ecosystem/claude-plugin.json").read_text())
-        write_json(source / "ecosystem/claude-plugin.json", {**metadata, "version": "1.2.1"})
+        metadata = json.loads((source / "ecosystem/manifests/codex-plugin.json").read_text())
+        write_json(source / "ecosystem/manifests/codex-plugin.json", {**metadata, "version": "1.2.1"})
+        metadata = json.loads((source / "ecosystem/manifests/claude-plugin.json").read_text())
+        write_json(source / "ecosystem/manifests/claude-plugin.json", {**metadata, "version": "1.2.1"})
         with patch.object(builder, "COMMON_FILES", (*builder.COMMON_FILES, relative)):
             updated = self.root / "future-agent-bundle"
             build_bundle(updated, MODULES, source_root=source)
@@ -1868,7 +2006,7 @@ class RealNativeSourceExclusionTests(BundleCase):
                     client.exclude_source_skills(unsafe)
                 self.assertEqual(self.preference_snapshot(home), before)
 
-        manifest = source / "ecosystem/plugin.json"
+        manifest = source / "ecosystem/manifests/codex-plugin.json"
         original_manifest = manifest.read_bytes()
         value = json.loads(original_manifest)
         value["name"] = "independent-plugin"

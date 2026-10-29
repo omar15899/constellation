@@ -403,7 +403,7 @@ class NativeClient:
                 or source == cache_parent or cache_parent in source.parents):
             raise NativeError("Source exclusion does not accept a bundle or plugin cache")
         try:
-            manifest = json.loads(_regular(source, "ecosystem/plugin.json").read_text(encoding="utf-8"))
+            manifest = json.loads(_regular(source, "ecosystem/manifests/codex-plugin.json").read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise NativeError("The source plugin manifest is invalid") from exc
         if (not isinstance(manifest, dict) or manifest.get("name") != "constellation"

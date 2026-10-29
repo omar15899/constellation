@@ -24,7 +24,7 @@ from unittest.mock import patch
 from helpers import (AVAILABLE_PROFILES, CODEX_DIR, COORDINATOR, DEFAULT_PROFILE,
                      PYTHON, REVIEWERS, SOURCE_DIR, WORKER,
                      Scenario, check_definition, finish_request, requirement, start_request)
-from ecosystem.core import Engine, default_state_dir, gate
+from ecosystem.core import Engine, RevisionConflict, default_state_dir, gate
 from ecosystem.storage import Error
 
 
@@ -62,12 +62,12 @@ class FixtureCase(unittest.TestCase):
         package.mkdir(parents=True)
         for source in SOURCE_DIR.glob("*.py"):
             shutil.copyfile(source, package / source.name)
-        manifest = SOURCE_DIR / "plugin.json"
-        destination = package / "plugin.json"
+        manifest = SOURCE_DIR / "manifests/codex-plugin.json"
+        destination = package / "manifests/codex-plugin.json"
         if not manifest.is_file():
             manifest = CODEX_DIR / ".codex-plugin/plugin.json"
             destination = runtime / ".codex-plugin/plugin.json"
-            destination.parent.mkdir(parents=True)
+        destination.parent.mkdir(parents=True)
         shutil.copyfile(manifest, destination)
         for directory in ("references", "agents", "runtime"):
             shutil.copytree(SOURCE_DIR / directory, package / directory)
@@ -713,6 +713,17 @@ class CoreTests(FixtureCase):
         with self.assertRaises(Error):
             scenario.plan()
         self.assertIn("boundary", {row["id"] for row in scenario.call("status")["contract"]["requirements"]})
+
+    def test_stale_mutations_raise_typed_conflict_without_changing_state(self):
+        scenario = self.scenario()
+        scenario.plan()
+        stale = scenario.payload(registered_agent_id="fixture-stale", role="worker")
+        scenario.call("register-agent", registered_agent_id="fixture-current", role="worker")
+        before = scenario.call("status")
+        with self.assertRaises(RevisionConflict):
+            scenario.engine.execute("register-agent", stale)
+        self.assertEqual(scenario.call("status"), before)
+        self.assertNotIn("fixture-stale", before["agents"])
 
     def test_request_id_replay_is_exact_and_does_not_consume_another_revision(self):
         scenario = self.scenario()

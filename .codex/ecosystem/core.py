@@ -44,6 +44,10 @@ _FIELDS = {
 }
 
 
+class RevisionConflict(Error):
+    """A stale optimistic revision; callers may retry only safe operations."""
+
+
 def digest(value: Any) -> str:
     """Canonical JSON digest, also used for check definitions."""
     return hashlib.sha256(encode(value).encode()).hexdigest()
@@ -146,7 +150,7 @@ class Engine:
                  _POLICY, _SOURCE / "core.py", _SOURCE / "storage.py",
                  _SOURCE / "cli.py", _SOURCE / "hooks.py", _SOURCE / "hook_entry.py",
                  _SOURCE / "build.py", _SOURCE / "references/protocol.md"]
-        manifest = _SOURCE / "plugin.json"
+        manifest = _SOURCE / "manifests" / "codex-plugin.json"
         paths.append(manifest if manifest.exists() else _BASE / ".codex-plugin/plugin.json")
         paths.extend(_SOURCE / "agents" / (name + ".toml") for name in ("researcher", "reviewer", "security-reviewer", "verifier"))
         profiles = {p for item in contract["deliverables"] for p in item["profiles"]}
@@ -420,7 +424,7 @@ class Engine:
             elif not hook and actor not in state["agents"]:
                 raise Error("Agent is not registered for this task.")
             if not read and state["revision"] != payload["expected_revision"]:
-                raise Error("Revision conflict; read status and retry explicitly.")
+                raise RevisionConflict("Revision conflict; read status and retry explicitly.")
             if operation == "plan":
                 self._coordinator(state, actor)
                 contract = self._contract(payload)

@@ -19,7 +19,7 @@ las revisiones de aprobación y la confianza de hooks del cliente.
 
 Codex ejecuta modelos, herramientas, sesiones, permisos, skills y agentes.
 Constellation coordina contratos, dependencias, evidencia y publicación mediante
-su [runtime compartido](.codex/ecosystem/ARCHITECTURE.md). No reconstruyas esas
+su [runtime compartido](.codex/ecosystem/docs/architecture.md). No reconstruyas esas
 capacidades nativas. Usa el catálogo de la sesión para seleccionar skills por
 su pertinencia y lee sus instrucciones sólo cuando hagan falta; el usuario no
 necesita recordar sus nombres. Una definición o consulta breve no abre un ciclo
