@@ -10,17 +10,18 @@ import argparse
 import copy
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
+import stat
 import subprocess
 import sys
 from typing import Any, Iterator
 
 from . import progress as journal
+from .. import platform_support as ps
 
 
 class Blocked(RuntimeError):
@@ -36,7 +37,7 @@ def review_engine():
 def run(root: Path, *args: str, timeout: int = 25, extra_env: dict[str, str] | None = None) -> str:
     operation = f"git {args[1]}" if args[0] == "git" and len(args) > 1 else "command"
     try:
-        result = subprocess.run(args, cwd=root, capture_output=True, text=True,
+        result = subprocess.run(args, cwd=root, capture_output=True, text=True, encoding="utf-8",
                                 timeout=timeout, env={**os.environ, **(extra_env or {}), "GIT_TERMINAL_PROMPT": "0"})
     except subprocess.TimeoutExpired:
         raise Blocked(f"{operation} timed out after {timeout}s.") from None
@@ -56,6 +57,23 @@ def now() -> str:
 
 def digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _read_private_text(path: Path) -> str:
+    """Read owned state through a checked, non-inheritable handle."""
+    descriptor = ps.open_regular(path, os.O_RDONLY, private=ps.IS_WINDOWS)
+    with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+        return stream.read()
+
+
+def _write_private(path: Path, content: bytes, *, append: bool = False) -> None:
+    """Write private state without following aliases or publishing partial JSON."""
+    flags = os.O_CREAT | os.O_WRONLY | (os.O_APPEND if append else os.O_TRUNC)
+    descriptor = ps.open_regular(path, flags, 0o600, private=ps.IS_WINDOWS)
+    with os.fdopen(descriptor, "ab" if append else "wb") as stream:
+        stream.write(content)
+        stream.flush()
+        ps.sync_file(stream.fileno())
 
 
 def stop_replay(state: dict[str, Any], request_id: str | None) -> dict[str, Any] | None:
@@ -106,20 +124,138 @@ def owner_root(path: Path) -> Path:
     return Path(git(directory, "rev-parse", "--show-toplevel")).resolve()
 
 
+def _windows_case_path(root: Path, name: str) -> None:
+    """Reject existing relative aliases, including NTFS short names.
+
+    The trusted root may itself use a system-provided short spelling. Only
+    scoped relative components are compared with their actual directory entries.
+    A genuinely missing component remains a permitted prospective path.
+    """
+    current = root
+    for part in Path(name).parts:
+        try:
+            parent = current.stat()
+        except FileNotFoundError:
+            return
+        except OSError:
+            raise Blocked("Cannot establish the existing Windows path components.") from None
+        if not stat.S_ISDIR(parent.st_mode):
+            raise Blocked("A Windows path parent is not a directory.")
+        try:
+            entries = {entry.name for entry in current.iterdir()}
+        except OSError:
+            raise Blocked("Cannot establish the existing Windows directory entries.") from None
+        candidate = current / part
+        if part not in entries:
+            if any(value.casefold() == part.casefold() for value in entries):
+                raise Blocked("Windows paths must use actual directory-entry spelling.")
+            try:
+                candidate.lstat()
+            except FileNotFoundError:
+                current = candidate
+                continue
+            except OSError:
+                raise Blocked("Cannot establish the proposed Windows path identity.") from None
+            raise Blocked("Windows paths must use actual directory-entry spelling.")
+        current = candidate
+
+
+def artifact_mode(root: Path, name: str, path: Path) -> int:
+    """Return executable metadata without mistaking Windows chmod for Git mode.
+
+    Args:
+        root: Owning repository or portable artifact directory.
+        name: Exact relative artifact name, already validated by the caller.
+        path: Corresponding existing regular file.
+
+    Returns:
+        The POSIX filesystem mode, or Windows logical 0644/0755 bound to an
+        exact stage-zero Git index entry. An untracked portable file uses 0644.
+
+    Raises:
+        Blocked: An existing repository's index cannot establish an exact,
+            unmerged regular-file mode.
+        ps.PlatformError: The filesystem cannot satisfy the mode contract.
+    """
+    if not ps.IS_WINDOWS:
+        return ps.logical_mode(path)
+    result = subprocess.run(["git", "--literal-pathspecs", "ls-files", "--stage", "-z", "--", name],
+                            cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=25)
+    if result.returncode:
+        if (root / ".git").exists():
+            raise Blocked("Cannot establish the current Git artifact mode.")
+        return ps.logical_mode(path, 0o644)
+    rows = [row for row in result.stdout.split("\0") if row]
+    if not rows:
+        return ps.logical_mode(path, 0o644)
+    if len(rows) != 1:
+        raise Blocked("Unmerged artifact modes cannot be reviewed.")
+    fields, actual = rows[0].split("\t", 1)
+    mode, _, stage = fields.split()
+    if actual != name or stage != "0" or mode not in {"100644", "100755"}:
+        raise Blocked("Artifact mode or exact path identity is unsupported.")
+    return ps.logical_mode(path, 0o755 if mode == "100755" else 0o644)
+
+
 def safe_path(root: Path, name: str, *, deletion: bool = False) -> str:
+    if ps.IS_WINDOWS:
+        try:
+            ps.validate_windows_relative(name)
+        except (ps.PlatformError, TypeError):
+            raise Blocked("Expected a safe Windows repository-relative file.") from None
     path = Path(name)
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise Blocked(f"Expected a repository-relative file: {name}")
     target = root / path
+    components = path.parents if deletion else (path, *path.parents)
+    if any(ps.is_reparse(root / part) for part in components):
+        raise Blocked(f"Declare individual regular files: {name}")
+    if ps.IS_WINDOWS:
+        _windows_case_path(root, name)
     resolved = target.parent.resolve() if deletion and target.is_symlink() else target.resolve()
     if private_path(name) or not resolved.is_relative_to(root.resolve()):
         raise Blocked(f"Private or external path: {name}")
     components = path.parents if deletion else (path, *path.parents)
-    if (target.is_dir() and not (deletion and target.is_symlink())) or any((root / part).is_symlink() for part in components):
+    if (target.is_dir() and not (deletion and target.is_symlink())) or any(ps.is_reparse(root / part) for part in components):
         raise Blocked(f"Declare individual regular files: {name}")
     if owner_root(target.parent) != root.resolve():
         raise Blocked(f"Path belongs to a nested repository: {name}. Route it to its owning repository.")
     return path.as_posix()
+
+
+def git_state_home(root: Path) -> Path:
+    """Locate private Git state without resolving away a forbidden alias.
+
+    Args:
+        root: The actual owning Git root, with its original Windows lookup
+            checked before resolution.
+
+    Returns:
+        An absolute state directory. Git may place it outside a linked
+        worktree; the original components are checked before normalization.
+
+    Raises:
+        Blocked: Git fails or its original state path traverses a link/reparse
+            point or contains an ambiguous Windows drive/namespace.
+        ps.PlatformError: The normalized Windows lookup violates platform rules.
+    """
+    raw = git(root, "rev-parse", "--git-path", "constellation")
+    if ps.IS_WINDOWS:
+        lookup = PureWindowsPath(raw)
+        if ((lookup.drive and not lookup.root) or (lookup.root and not lookup.drive)
+                or lookup.drive.startswith(chr(92) * 2)):
+            raise Blocked("Git state has an ambiguous Windows lookup.")
+    supplied = Path(raw)
+    supplied = supplied if supplied.is_absolute() else root / supplied
+    # Walk the original components before normalizing any parent traversal that
+    # Git itself returned for a linked worktree's administrative directory.
+    for component in (*reversed(supplied.parents), supplied):
+        if ps.is_reparse(component):
+            raise Blocked("Git state cannot traverse a symbolic link or reparse point.")
+    normalized = Path(os.path.abspath(supplied))
+    if ps.IS_WINDOWS:
+        ps.validate_lookup(normalized)
+    return normalized
 
 
 def changed(root: Path) -> set[str]:
@@ -129,15 +265,31 @@ def changed(root: Path) -> set[str]:
 
 
 def snapshot(root: Path, paths: list[str], deletions: list[str] = ()) -> dict[str, str | None]:
+    if ps.IS_WINDOWS:
+        ps.validate_lookup(root)
+    # A project-root alias is legitimate on POSIX. Git state paths retain their
+    # separate original-lookup guard in git_state_home.
+    root = root.resolve()
     result = {}
+    try:
+        ps.ensure_distinct_paths(root, [name for name in paths if name not in deletions])
+    except ps.PlatformError as exc:
+        raise Blocked(str(exc)) from None
+    if ps.IS_WINDOWS and len({name.casefold() for name in paths}) != len(paths):
+        raise Blocked("Windows paths cannot declare case aliases of the same file.")
     for p in sorted(paths):
         safe_path(root, p, deletion=p in deletions)
         target = root / p
         if target.is_symlink():
             result[p] = "symlink:" + digest(os.readlink(target).encode())
         else:
-            mode = "100755:" if target.is_file() and target.stat().st_mode & 0o100 else "100644:"
-            result[p] = mode + digest(target.read_bytes()) if target.is_file() else None
+            mode = "100755:" if target.is_file() and artifact_mode(root, p, target) & 0o100 else "100644:"
+            if ps.IS_WINDOWS and target.is_file():
+                descriptor = ps.open_regular(target, os.O_RDONLY)
+                with os.fdopen(descriptor, "rb") as stream:
+                    result[p] = mode + digest(stream.read()) + ":" + ps.access_fingerprint(target)
+            else:
+                result[p] = mode + digest(target.read_bytes()) if target.is_file() else None
     return result
 
 
@@ -226,6 +378,42 @@ def stored_snapshot(root: Path, paths: list[str], revision: str | None = None) -
     return result
 
 
+def git_representable_snapshot(version: dict[str, str | None]) -> dict[str, str | None]:
+    """Project known filesystem evidence onto Git's mode-and-byte representation.
+
+    Args:
+        version: A reviewed snapshot: absent entries, symlink byte hashes, or
+            regular 100644/100755 byte hashes optionally followed by the
+            recognized Windows ACL fingerprint.
+
+    Returns:
+        A new mapping containing exactly the modes and byte SHA-256 values
+        representable by Git. The original filesystem/ACL evidence is unchanged.
+
+    Raises:
+        Blocked: A snapshot uses an unknown mode, malformed hash, arbitrary tail
+            or unsupported value. This projection never authorizes publication:
+            reviewed() must still validate the complete filesystem evidence.
+    """
+    if not isinstance(version, dict) or any(not isinstance(name, str) for name in version):
+        raise Blocked("A reviewed snapshot must map artifact names to known versions.")
+    result = {}
+    for name, value in version.items():
+        if value is None:
+            result[name] = None
+            continue
+        if not isinstance(value, str):
+            raise Blocked("Reviewed artifact snapshot has an unsupported value.")
+        regular = re.fullmatch(r"(100644|100755):([0-9a-f]{64})(?::([0-9a-f]{64}))?", value)
+        if regular is not None:
+            result[name] = regular.group(1) + ":" + regular.group(2)
+        elif re.fullmatch(r"symlink:[0-9a-f]{64}", value):
+            result[name] = value
+        else:
+            raise Blocked("Reviewed artifact snapshot has an unsupported format.")
+    return result
+
+
 def outgoing_gate(root: Path, local: str, remote_sha: str) -> None:
     if set(local) == {"0"}:
         return
@@ -246,41 +434,54 @@ def outgoing_gate(root: Path, local: str, remote_sha: str) -> None:
 
 class Workflow:
     def __init__(self, root: Path, session: str, *, create_state: bool = True):
+        if ps.IS_WINDOWS:
+            ps.validate_lookup(root)
         self.root = root.resolve()
         self.session = session
-        self.home = Path(git(root, "rev-parse", "--path-format=absolute", "--git-path", "constellation"))
+        self.home = git_state_home(self.root)
         if create_state:
-            self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
+            ps.secure_mkdir(self.home, mode=0o700, parents=True, exist_ok=True)
         self.key = digest(session.encode())[:24]
         self.path = self.home / f"{self.key}.json"
 
     @contextmanager
     def lock(self) -> Iterator[None]:
-        self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with (self.home / "workflow.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            yield
+        ps.secure_mkdir(self.home, mode=0o700, parents=True, exist_ok=True)
+        descriptor = ps.open_regular(self.home / "workflow.lock", os.O_CREAT | os.O_RDWR,
+                                     0o600, private=ps.IS_WINDOWS)
+        try:
+            with ps.file_lock(descriptor, exclusive=True):
+                yield
+        finally:
+            os.close(descriptor)
 
     def log(self, event: str, **fields: Any) -> None:
-        with (self.home / "events.jsonl").open("a") as stream:
-            stream.write(json.dumps({"at": now(), "session": self.key, "event": event, **fields}) + "\n")
+        content = (json.dumps({"at": now(), "session": self.key, "event": event, **fields},
+                              ensure_ascii=False) + "\n").encode("utf-8")
+        _write_private(self.home / "events.jsonl", content, append=True)
 
     def load(self) -> dict[str, Any]:
         if not self.path.exists():
             raise Blocked("No active task contract. Run workflow.py begin, then plan.")
-        return json.loads(self.path.read_text())
+        return json.loads(_read_private_text(self.path))
 
     def save(self, state: dict[str, Any]) -> None:
         temp = self.path.with_suffix(".tmp")
-        temp.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
+        if ps.is_reparse(self.path):
+            raise Blocked("Operational state cannot be a link or reparse point.")
+        if self.path.exists():
+            descriptor = ps.open_regular(self.path, os.O_RDONLY, private=ps.IS_WINDOWS)
+            os.close(descriptor)
+        _write_private(temp, (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
         temp.replace(self.path)
+        ps.sync_directory(self.home)
 
     def begin(self, turn: str) -> dict[str, Any]:
         if self.path.exists():
             history = self.home / "history"
-            history.mkdir(exist_ok=True, mode=0o700)
-            old = self.path.read_bytes()
-            (history / f"{self.key}-{digest(old)[:16]}.json").write_bytes(old)
+            ps.secure_mkdir(history, mode=0o700, exist_ok=True)
+            old = _read_private_text(self.path).encode("utf-8")
+            _write_private(history / f"{self.key}-{digest(old)[:16]}.json", old)
         state: dict[str, Any] = {"turn": turn, "started": now(), "initial_head": git(self.root, "rev-parse", "HEAD"),
                                  "baseline_dirty": sorted(changed(self.root)), "requirements": [],
                                  "paths": [], "checks": [], "commits": [], "stop_attempts": 0,
@@ -356,6 +557,12 @@ class Workflow:
             raise Blocked("Some files were already modified. Inspect ownership and supply an adopt_existing justification per file.")
         if len(set(requirements)) != len(requirements) or len(set(paths)) != len(paths):
             raise Blocked("Requirements and paths must be unique.")
+        if ps.IS_WINDOWS and len({name.casefold() for name in paths}) != len(paths):
+            raise Blocked("Windows paths cannot declare case aliases of the same file.")
+        try:
+            ps.ensure_distinct_paths(self.root, [name for name in paths if name not in deletions])
+        except ps.PlatformError as exc:
+            raise Blocked(str(exc)) from None
         state.update(requirements=requirements, paths=paths, deletions=deletions, review=None, finished=None,
                      adoption={p: adoption[p] for p in existing},
                      unrelated=spec.get("unrelated", {}))
@@ -440,7 +647,7 @@ class Workflow:
     def progress_policy(policy_path: Path | None = None) -> dict[str, Any]:
         """Read explicit local policy before entering a source transaction."""
         policy_path = policy_path or Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "progress-journal.json"
-        return json.loads(policy_path.read_text())
+        return json.loads(policy_path.read_text(encoding="utf-8"))
 
     def _progress_finished(self, state: dict[str, Any]) -> bool:
         if not state.get("finished"):
@@ -496,6 +703,122 @@ class Workflow:
             raise Blocked("Check failed or modified a declared artifact; correct and rerun it.")
         return record
 
+    def _check_resolution(self, state: dict[str, Any], payload: dict[str, Any],
+                          context: dict[str, Any]) -> dict[str, Any]:
+        fields = {"token", "failed_check", "replacement_check", "verifier", "reason", "evidence"}
+        if not isinstance(payload, dict) or set(payload) != fields:
+            raise Blocked("Check resolution has missing or unknown fields.")
+        if not context.get("enabled") or payload["token"] != context["token"]:
+            raise Blocked("Check resolution needs the current independent review token.")
+        normalized = {"token": context["token"]}
+        for field, limit in (("verifier", 128), ("reason", 1000), ("evidence", 12000)):
+            value = payload[field]
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                raise Blocked(f"Check resolution {field} must be nonempty text of at most {limit} characters.")
+            normalized[field] = value.strip()
+        verifier = normalized["verifier"]
+        scope = set(context["paths"])
+        if (verifier == context["author"]
+                or scope.intersection(context.get("artifact_authors", context["review_authors"]).get(verifier, []))):
+            raise Blocked("Check resolution needs an independent verifier without known or unresolved contribution conflicts in scope.")
+        rounds = state.get("review_gate", {}).get("rounds", [])
+        report = rounds[-1]["reports"].get(verifier) if rounds and rounds[-1]["token"] == context["token"] else None
+        if (not report or report.get("reviewer") != verifier or report.get("token") != context["token"]
+                or "correctness" not in report.get("focus", []) or set(report.get("paths", [])) != scope):
+            raise Blocked("Check resolution needs a current correctness report by its verifier covering the entire scope.")
+        checks = state["checks"]
+        for field in ("failed_check", "replacement_check"):
+            index = payload[field]
+            if type(index) is not int or not 0 <= index < len(checks):
+                raise Blocked("Check resolution indices must identify recorded checks (zero based).")
+            record = checks[index]
+            command_hash = record.get("command_sha256")
+            if (not isinstance(command_hash, str) or re.fullmatch(r"[0-9a-f]{64}", command_hash) is None
+                    or any(item.get("command_sha256") == command_hash for item in checks[index + 1:])):
+                raise Blocked("Check resolution must use the latest attempt of each recorded command.")
+            normalized[field] = index
+            normalized[field + "_sha256"] = digest(json.dumps(record, sort_keys=True).encode())
+        failed, replacement = checks[payload["failed_check"]], checks[payload["replacement_check"]]
+        if (payload["replacement_check"] <= payload["failed_check"]
+                or failed.get("completed") is not True or type(failed.get("exit_code")) is not int
+                or failed["exit_code"] <= 0
+                or failed.get("changed_during_check") is not False):
+            raise Blocked("Check resolution needs a completed failed attempt without artifact changes, followed by its replacement.")
+        if (replacement.get("completed") is not True or type(replacement.get("exit_code")) is not int
+                or replacement["exit_code"] != 0
+                or replacement.get("changed_during_check") is not False
+                or replacement.get("snapshot") != snapshot(self.root, state["paths"], state.get("deletions", []))):
+            raise Blocked("Replacement check must have completed successfully without changing any current artifact.")
+        return normalized
+
+    def check_resolve(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Retain a mistaken invocation and attest to a verified replacement.
+
+        Args:
+            payload: Exact fields token, failed_check, replacement_check,
+                verifier, reason and evidence. Indices are zero-based latest
+                attempts. The verifier must have a current whole-scope
+                correctness report and must be independent of all contributors.
+
+        Returns:
+            The resolved failed-check index and an idempotent unchanged flag.
+
+        Raises:
+            Blocked: Review, destination, independence, completed-attempt,
+                replacement snapshot or append-only receipt invariants fail.
+        """
+        state = self.load()
+        self.ensure_target(state)
+        self.independent_reviewed(state)
+        resolution = self._check_resolution(state, payload, self.independent_context(state))
+        receipts = state.setdefault("check_resolutions", [])
+        for existing in receipts:
+            if (existing.get("token"), existing.get("failed_check")) == (resolution["token"], resolution["failed_check"]):
+                if existing == resolution:
+                    return {"resolved": resolution["failed_check"], "unchanged": True}
+                raise Blocked("This check already has a different resolution for the current revision.")
+        receipts.append(resolution)
+        state["review"] = None
+        state["finished"] = None
+        self.save(state)
+        self.log("check_resolved", failed_check=resolution["failed_check"],
+                 replacement_check=resolution["replacement_check"], token=resolution["token"])
+        return {"resolved": resolution["failed_check"], "unchanged": False}
+
+    def resolved_checks(self, state: dict[str, Any]) -> set[int]:
+        if not state.get("check_resolutions"):
+            return set()
+        self.ensure_target(state)
+        context = self.independent_context(state)
+        resolved = set()
+        for receipt in state["check_resolutions"]:
+            if not isinstance(receipt, dict):
+                continue
+            payload = {name: receipt.get(name) for name in (
+                "token", "failed_check", "replacement_check", "verifier", "reason", "evidence")}
+            try:
+                expected = self._check_resolution(state, payload, context)
+            except Blocked:
+                continue
+            if receipt == expected:
+                resolved.add(receipt["failed_check"])
+        return resolved
+
+    def validate_checks(self, state: dict[str, Any]) -> None:
+        latest = {c.get("command_sha256", digest(json.dumps(c.get("command", [])).encode())): index
+                  for index, c in enumerate(state["checks"])}
+        resolved = self.resolved_checks(state)
+        if any(index not in resolved and (state["checks"][index]["exit_code"] != 0
+                   or state["checks"][index]["changed_during_check"]) for index in latest.values()):
+            raise Blocked("A check is still failing; rerun that check successfully before review.")
+        required = [p for p in state["paths"] if not p.endswith((".md", ".rst", ".txt"))]
+        version = snapshot(self.root, state["paths"], state.get("deletions", []))
+        passing = [c for index in latest.values() for c in [state["checks"][index]]
+                   if c["exit_code"] == 0 and not c["changed_during_check"]
+                   and all(p in c["snapshot"] and c["snapshot"][p] == version[p] for p in required)]
+        if required and not passing:
+            raise Blocked("Code changes need a passing check recorded against the current artifacts.")
+
     def review_operation(self, operation: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         if operation not in {"prepare", "start", "report", "resolve", "author", "budget"}:
             raise Blocked("Unknown independent review operation.")
@@ -504,6 +827,7 @@ class Workflow:
         state = self.load()
         self.identify_author(state)
         self.ensure_target(state)
+        self.review_context(state)
         if operation == "budget" and state.get("author") != self.session:
             raise Blocked("Review budget requires the frozen coordinator identity.")
         engine = review_engine()
@@ -536,7 +860,24 @@ class Workflow:
         if not state.get("review_gate") and not state.get("review_budget") and state.get("author") in {None, self.key}:
             state["author"] = self.session
 
+    def review_context(self, state: dict[str, Any]) -> None:
+        """Bind review and replacement attestations to checks and destination."""
+        state["review_context_sha256"] = digest(json.dumps({
+            "checks": state.get("checks", []), "deletions": state.get("deletions", []),
+            "target": state.get("target"),
+        }, sort_keys=True).encode())
+
+    def independent_context(self, state: dict[str, Any]) -> dict[str, Any]:
+        self.identify_author(state)
+        self.review_context(state)
+        engine = review_engine()
+        try:
+            return engine.prepare(self.root, state)
+        except engine.ReviewError as exc:
+            raise Blocked(str(exc)) from exc
+
     def independent_reviewed(self, state: dict[str, Any]) -> None:
+        self.review_context(state)
         engine = review_engine()
         try:
             engine.validate(self.root, state)
@@ -560,18 +901,10 @@ class Workflow:
             errors = self.validate_blob(p, (self.root / p).read_bytes())
             if errors:
                 raise Blocked("\n".join(errors))
-        # Each command's latest result supersedes its older success, including
-        # a failure on identical bytes. A changed artifact requires a fresh run.
-        latest = {c["command_sha256"]: c for c in state["checks"]}
-        required = [p for p in state["paths"] if not p.endswith((".md", ".rst", ".txt"))]
-        passing = [c for c in latest.values() if c["exit_code"] == 0 and not c["changed_during_check"]
-                   and all(c["snapshot"].get(p) == current[p] for p in required)]
-        if any(c["exit_code"] != 0 or c["changed_during_check"] for c in latest.values()):
-            raise Blocked("A check is still failing; rerun that check successfully before review.")
-        if required and not passing:
-            raise Blocked("Code changes need a passing check recorded against the current artifacts.")
+        self.validate_checks(state)
         self.independent_reviewed(state)
         state["review"] = {"at": now(), "evidence": evidence, "snapshot": current,
+                           "check_resolutions_sha256": digest(json.dumps(state.get("check_resolutions", []), sort_keys=True).encode()),
                            "kind": "model_semantic_review_with_mechanical_validation"}
         state["finished"] = None
         self.save(state)
@@ -582,6 +915,10 @@ class Workflow:
         if not state.get("review") or state["review"]["snapshot"] != snapshot(self.root, state["paths"], state.get("deletions", [])):
             raise Blocked("Missing or stale review. Compare the actual result with every requirement.")
         self.independent_reviewed(state)
+        self.validate_checks(state)
+        if state["review"].get("check_resolutions_sha256", digest(b"[]")) != digest(
+                json.dumps(state.get("check_resolutions", []), sort_keys=True).encode()):
+            raise Blocked("Missing or stale review: check resolutions changed.")
 
     def guard_patch(self, payload: dict[str, Any], cwd: Path, *, active_only: bool = False) -> None:
         state = self.load()
@@ -676,7 +1013,7 @@ class Workflow:
             raise Blocked("Unrelated index entries changed concurrently. They were not committed by this workflow.")
         if not preserve_index and not staged <= set(paths):
             raise Blocked("The index changed concurrently and contains unselected work. It was preserved.")
-        expected = {path: state["review"]["snapshot"][path] for path in paths}
+        expected = git_representable_snapshot({path: state["review"]["snapshot"][path] for path in paths})
         if stored_snapshot(self.root, paths) != expected:
             raise Blocked("Staged content differs from the reviewed artifacts. Preserve and review the changes before committing.")
         self.reviewed(state)
@@ -728,7 +1065,7 @@ class Workflow:
             raise Blocked("HEAD does not match the expected recovery commit.")
         self.ensure_target(state)
         self.reviewed(state)
-        expected = state["review"]["snapshot"]
+        expected = git_representable_snapshot(state["review"]["snapshot"])
         if stored_snapshot(self.root, state["paths"], expected_head) != expected:
             raise Blocked("The recovery commit does not contain the reviewed artifacts.")
         initial = state["initial_head"]
@@ -823,6 +1160,7 @@ def main(argv: list[str] | None = None, *, workflow_factory: type[Workflow] = Wo
     sub.add_parser("begin").add_argument("--turn", default="manual")
     sub.add_parser("plan")
     sub.add_parser("review")
+    sub.add_parser("check-resolve")
     for name in ("review-context", "review-start", "review-report", "review-resolve", "review-author", "review-budget"):
         command = sub.add_parser(name)
         if name == "review-start":
@@ -858,7 +1196,7 @@ def main(argv: list[str] | None = None, *, workflow_factory: type[Workflow] = Wo
         events = {"prompt": "UserPromptSubmit", "pre-tool": "PreToolUse",
                   "stop": "Stop", "subagent-start": "SubagentStart"}
         return hooks_main([events[args.event]])
-    payload = json.load(sys.stdin) if args.command in {"plan", "review", "review-report", "review-resolve", "review-author", "review-budget", "progress-update", "progress-ack"} else {}
+    payload = json.load(sys.stdin) if args.command in {"plan", "review", "check-resolve", "review-report", "review-resolve", "review-author", "review-budget", "progress-update", "progress-ack"} else {}
     if not isinstance(payload, dict):
         raise Blocked("Expected a JSON request object.")
     cwd = Path(payload.get("cwd", args.root)).absolute()
@@ -875,6 +1213,8 @@ def main(argv: list[str] | None = None, *, workflow_factory: type[Workflow] = Wo
             result = workflow.plan(payload)
         elif args.command == "review":
             result = workflow.review(payload)
+        elif args.command == "check-resolve":
+            result = workflow.check_resolve(payload)
         elif args.command.startswith("review-"):
             operation = args.command.removeprefix("review-")
             if operation == "start":

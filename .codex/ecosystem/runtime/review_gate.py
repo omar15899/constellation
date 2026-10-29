@@ -20,6 +20,7 @@ import subprocess
 from typing import Any, Callable
 
 from . import DEFAULT_POLICY
+from .. import platform_support as ps
 
 
 class ReviewError(ValueError):
@@ -71,7 +72,7 @@ def _read_json(path: Path, label: str) -> Any:
     if path.is_symlink() or not path.is_file():
         raise ReviewError(f"{label} must exist as a regular local file: {path}")
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ReviewError(f"Cannot read {label}: {type(exc).__name__}.") from None
 
@@ -215,6 +216,8 @@ def policy_for(root: Path, *, policy_path: Path | None = None) -> dict[str, Any]
     workspaces may add their own restrictions.
     Explicit injection remains a separate contract for embedding and tests.
     """
+    if ps.IS_WINDOWS:
+        ps.validate_lookup(root)
     root = root.resolve()
     if policy_path is not None:
         return _validated_policy(_read_json(Path(policy_path), "review policy"))
@@ -244,7 +247,7 @@ def policy_for(root: Path, *, policy_path: Path | None = None) -> dict[str, Any]
     if registered_native:
         try:
             actual = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root,
-                                    capture_output=True, text=True, timeout=25, check=True)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=25, check=True)
         except (OSError, subprocess.SubprocessError):
             raise ReviewError("Cannot verify the registered native repository owner.") from None
         if Path(actual.stdout.strip()).resolve() != root:
@@ -258,6 +261,11 @@ def policy_for(root: Path, *, policy_path: Path | None = None) -> dict[str, Any]
 
 
 def _path(root: Path, name: str) -> Path:
+    if ps.IS_WINDOWS:
+        try:
+            ps.validate_windows_relative(name)
+        except (ps.PlatformError, TypeError):
+            raise ReviewError("Invalid Windows review path.") from None
     path = Path(name)
     parts = path.parts
     lower = name.lower()
@@ -285,13 +293,27 @@ def _path(root: Path, name: str) -> Path:
             or lower.endswith((".pem", ".key", ".p12", ".pfx", ".jsonl"))):
         raise ReviewError(f"Invalid or private review path: {name}")
     target = root / path
-    if any((root / parent).is_symlink() for parent in path.parents) or not target.parent.resolve().is_relative_to(root):
+    if any(ps.is_reparse(root / parent) for parent in path.parents) or not target.parent.resolve().is_relative_to(root):
         raise ReviewError(f"Review path traverses a symlink or escapes its repository: {name}")
+    if ps.IS_WINDOWS:
+        from .workflow import Blocked, _windows_case_path
+        try:
+            _windows_case_path(root, name)
+        except Blocked as exc:
+            raise ReviewError(str(exc)) from None
     return target
 
 
 def _artifacts(root: Path, paths: list[str], deletions: list[str]) -> dict[str, Any]:
     result = {}
+    for name in paths:
+        _path(root, name)
+    try:
+        ps.ensure_distinct_paths(root, [name for name in paths if name not in deletions])
+    except ps.PlatformError as exc:
+        raise ReviewError(str(exc)) from None
+    if ps.IS_WINDOWS and len({name.casefold() for name in paths}) != len(paths):
+        raise ReviewError("Windows review paths cannot alias the same prospective artifact.")
     for name in sorted(paths):
         target = _path(root, name)
         try:
@@ -304,10 +326,120 @@ def _artifacts(root: Path, paths: list[str], deletions: list[str]) -> dict[str, 
                 raise ReviewError(f"Review artifact is a symlink: {name}")
             result[name] = {"sha256": hashlib.sha256(os.readlink(target).encode()).hexdigest(), "mode": "120000"}
         elif stat.S_ISREG(info.st_mode):
-            result[name] = {"sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
-                            "mode": "100755" if info.st_mode & 0o100 else "100644"}
+            if ps.IS_WINDOWS:
+                from .workflow import artifact_mode
+                descriptor = ps.open_regular(target, os.O_RDONLY)
+                with os.fdopen(descriptor, "rb") as stream:
+                    result[name] = {"sha256": hashlib.sha256(stream.read()).hexdigest(),
+                                    "mode": "100755" if artifact_mode(root, name, target) & 0o100 else "100644",
+                                    "permissions_sha256": ps.access_fingerprint(target)}
+            else:
+                result[name] = {"sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                                "mode": "100755" if info.st_mode & 0o100 else "100644"}
         else:
             raise ReviewError(f"Review artifact must be a regular file: {name}")
+    return result
+
+
+def _author_bindings(state: dict[str, Any],
+                     authors: dict[str, list[str]]) -> dict[str, list[dict[str, Any]]]:
+    """Normalize append-only observations without inventing legacy identities."""
+    stored = state.get("review_author_bindings", {})
+    if not isinstance(stored, dict) or set(stored) - set(authors):
+        raise ReviewError("Author binding history must belong to declared contributors.")
+    result = {}
+    for identity, paths in authors.items():
+        records = stored.get(identity, [])
+        if not isinstance(records, list):
+            raise ReviewError("Author binding history must be a list of observations.")
+        normalized, seen, covered = [], set(), set()
+        for record in records:
+            _object(record, "Author binding", {"path", "identity"})
+            name, physical = record["path"], record["identity"]
+            if not isinstance(name, str) or name not in paths:
+                raise ReviewError("An author binding must retain an exactly declared path.")
+            if physical is not None:
+                _object(physical, "Author physical identity", {"device", "inode", "kind"})
+                if (type(physical["device"]) is not int or physical["device"] < 0
+                        or type(physical["inode"]) is not int or physical["inode"] <= 0
+                        or physical["kind"] != "regular"):
+                    raise ReviewError("Author physical identity must describe an observed regular file.")
+                physical = dict(physical)
+            entry = {"path": name, "identity": physical}
+            key = _hash(entry)
+            if key in seen:
+                raise ReviewError("Author binding history cannot duplicate an observation.")
+            seen.add(key)
+            covered.add(name)
+            normalized.append(entry)
+        # Missing historical observations are uncertainty, including old
+        # contracts created before this ledger existed. Never observe them now
+        # and pretend the result describes their earlier contribution.
+        normalized.extend({"path": name, "identity": None} for name in paths if name not in covered)
+        result[identity] = normalized
+    return result
+
+
+def _observe_author_path(root: Path, name: str) -> dict[str, Any] | None:
+    """Capture only the regular object actually observable during registration."""
+    target = _path(root, name)
+    try:
+        info = target.lstat()
+    except FileNotFoundError:
+        return None
+    if (not stat.S_ISREG(info.st_mode) or ps.is_reparse(target)
+            or not info.st_ino):
+        return None
+    return {"device": info.st_dev, "inode": info.st_ino, "kind": "regular"}
+
+
+def _physical_key(value: dict[str, Any]) -> tuple[int, int, str]:
+    return value["device"], value["inode"], value["kind"]
+
+
+def _artifact_authors(root: Path, authors: dict[str, list[str]], paths: list[str],
+                      bindings: dict[str, list[dict[str, Any]]],
+                      deletions: list[str]) -> dict[str, list[str]]:
+    """Conservatively derive review exclusions from declared and observed history.
+
+    Raw attribution and registration observations remain separate append-only
+    records. Historical identities indicate potential conflicts, not semantic
+    provenance: inode reuse may over-exclude and never establishes authorship.
+    Unknown history, withdrawal or an unobserved replacement excludes the author
+    from the complete current scope. No content-copy inference is performed.
+    """
+    physical: dict[tuple[int, int, str], set[str]] = {}
+    observed = {}
+    for name in paths:
+        observed[name] = _observe_author_path(root, name)
+        if observed[name] is not None:
+            physical.setdefault(_physical_key(observed[name]), set()).add(name)
+    current, absent_deletions = set(paths), set(deletions)
+    result = {}
+    for identity, entries in authors.items():
+        records = bindings[identity]
+        if not set(entries) <= current or any(record["identity"] is None for record in records):
+            result[identity] = sorted(current)
+            continue
+        by_path = {name: set() for name in entries}
+        for record in records:
+            by_path[record["path"]].add(_physical_key(record["identity"]))
+        ambiguous = False
+        for name in entries:
+            now = observed[name]
+            if now is None:
+                if (name not in absent_deletions or (root / name).exists()
+                        or ps.is_reparse(root / name)):
+                    ambiguous = True
+            elif _physical_key(now) not in by_path[name]:
+                ambiguous = True
+        if ambiguous:
+            result[identity] = sorted(current)
+            continue
+        matched = set(entries) & current
+        for record in records:
+            matched.update(physical.get(_physical_key(record["identity"]), ()))
+        result[identity] = sorted(matched)
     return result
 
 
@@ -359,8 +491,13 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
         raise ReviewError("Review risk must be quick, standard or deep.")
     mode = max((mode, risk_floor, previous_mode), key=MODES.index)
     authors = _authors(root, state)
+    bindings = _author_bindings(state, authors)
+    # This is an independence-exclusion map; cumulative declarations and
+    # immutable observations remain separately preserved.
+    artifact_authors = _artifact_authors(root, authors, paths, bindings, deletions)
     token_material = {"repository": str(root), "author": state.get("author"),
-                   "review_authors": authors,
+                   "review_authors": authors, "review_author_bindings": bindings,
+                   "artifact_authors": artifact_authors,
                    "task_started": state.get("started"), "initial_head": state.get("initial_head"),
                    "policy": policy_hash, "policy_floor": _hash(policy), "mode": mode,
                    "requirements": requirements, "paths": sorted(paths),
@@ -406,6 +543,8 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
             "required_focus": policy["modes"][mode]["focus"],
             "budget": _budget_context(state), "adaptation": adaptation,
             "requirements": requirements, "author": _author(state), "review_authors": authors,
+            "artifact_authors": artifact_authors,
+            "review_author_bindings_sha256": _hash(bindings),
             "paths": paths, "deletions": deletions, "artifacts": artifacts,
             "identity_assurance": "declared identities; not cryptographically authenticated"}
 
@@ -494,6 +633,9 @@ def author(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy
     context = prepare(root, state, policy_path=policy_path, path_validator=path_validator)
     if not context["enabled"]:
         raise ReviewError("Independent review policy is not enabled for this repository.")
+    # prepare has already checked the original Windows lookup. Observe the same
+    # canonical project root that it used, including legitimate POSIX /tmp aliases.
+    root = root.resolve()
     _object(payload, "Contributing author", {"author", "paths"})
     identity = _text(payload["author"], "Contributing author identity", 128)
     paths = _strings(payload["paths"], "Contributing author paths")
@@ -501,9 +643,24 @@ def author(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy
         raise ReviewError("Contributing author paths must belong to the declared review scope.")
     authors = context["review_authors"]
     combined = sorted(set(authors.get(identity, [])) | set(paths))
-    if combined == authors.get(identity):
+    bindings = _author_bindings(state, authors)
+    observations = bindings.setdefault(identity, [])
+    for name in paths:
+        physical = _observe_author_path(root, name)
+        known = any(record["path"] == name and record["identity"] is not None
+                    for record in observations)
+        # Retrying an already observed, explicit deletion does not create a new
+        # unknown object. Earlier unknown observations remain permanently intact.
+        if (physical is None and known and name in context["deletions"]
+                and not (root / name).exists() and not ps.is_reparse(root / name)):
+            continue
+        record = {"path": name, "identity": physical}
+        if record not in observations:
+            observations.append(record)
+    if combined == authors.get(identity) and state.get("review_author_bindings") == bindings:
         return {"registered": identity, "paths": combined, "unchanged": True}
     state["review_authors"] = dict(sorted({**authors, identity: combined}.items()))
+    state["review_author_bindings"] = bindings
     state["review"] = None
     state["finished"] = None
     return {"registered": identity, "paths": combined, "unchanged": False}
@@ -569,7 +726,7 @@ def start(root: Path, state: dict[str, Any], *, policy_path: Path | None = None,
         if finding["status"] != "open":
             resolution = finding["resolution"]
             if (resolution["artifact"] != context["artifacts"].get(finding["path"])
-                    or finding["path"] in context["review_authors"].get(resolution["verifier"], [])
+                    or finding["path"] in context["artifact_authors"].get(resolution["verifier"], [])
                     or resolution.get("review_context_sha256") != context.get("review_context_sha256")):
                 finding["status"] = "open"
                 stale_resolutions.append(finding["id"])
@@ -627,8 +784,8 @@ def report(root: Path, state: dict[str, Any], payload: dict[str, Any], *, policy
     paths = _strings(payload["paths"], "Reviewed paths", empty=not context["paths"])
     if not set(paths) <= set(context["paths"]):
         raise ReviewError("Reviewed paths must belong to this review's declared scope.")
-    if set(paths) & set(context["review_authors"].get(reviewer, [])):
-        raise ReviewError("An independent reviewer cannot review artifacts they contributed to.")
+    if set(paths) & set(context["artifact_authors"].get(reviewer, [])):
+        raise ReviewError("An independent reviewer cannot review artifacts they contributed to or whose contribution history is unresolved.")
     if not isinstance(payload["findings"], list):
         raise ReviewError("Report findings must be a list.")
     findings = [_finding(value, paths) for value in payload["findings"]]
@@ -690,8 +847,8 @@ def resolve(root: Path, state: dict[str, Any], payload: dict[str, Any], *, polic
     verifier = _text(payload["verifier"], "Verifier identity", 128)
     if verifier in finding["discoverers"] or verifier == _author(state) or ledger["author"] != _author(state):
         raise ReviewError("Resolution needs a verifier distinct from the author and every finding discoverer.")
-    if finding["path"] in context["review_authors"].get(verifier, []):
-        raise ReviewError("A contributing author cannot independently resolve a finding on their artifact.")
+    if finding["path"] in context["artifact_authors"].get(verifier, []):
+        raise ReviewError("A known or unresolved contributing author cannot independently resolve this finding.")
     if payload["disposition"] not in {"fixed", "dismissed"}:
         raise ReviewError("Resolution disposition must be fixed or dismissed.")
     evidence = _text(payload["evidence"], "Resolution evidence")
@@ -720,6 +877,9 @@ def validate(root: Path, state: dict[str, Any], *, policy_path: Path | None = No
     if ledger["author"] != _author(state):
         raise ReviewError("Task author identity changed during independent review.")
     reports = current["reports"]
+    for reviewer, item in reports.items():
+        if reviewer == _author(state) or set(item["paths"]) & set(context["artifact_authors"].get(reviewer, [])):
+            raise ReviewError("A current report has known or unresolved contribution conflicts.")
     if len(reports) < context["required_reviewers"]:
         raise ReviewError(f"Independent {context['mode']} review needs {context['required_reviewers']} distinct reviewers.")
     for focus, required in context["required_focus"].items():

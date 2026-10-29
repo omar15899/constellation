@@ -48,7 +48,8 @@ intercambio y nunca vale cero; por tanto no desciende. En cambio,
 \(G(q)=|q(2)-q(1)|\) satisface \(G(\sigma\cdot q)=G(q)\), así que
 \(\bar G([q])=G(q)\) está bien definida. Por ejemplo, las configuraciones
 con coordenadas \((1,4)\) y \((4,1)\) son distintas en \(Q\), iguales
-tras proyectarlas al cociente y dan el mismo valor \(\bar G=3\).
+tras proyectarlas al cociente. Para cualquiera de esas configuraciones \(q\),
+la imagen de su órbita es \(\bar G([q])=3\).
 La magnitud de la separación sobrevive al olvido de etiquetas; su orientación
 no lo hace.
 

@@ -29,6 +29,9 @@ _BUILD_SPEC.loader.exec_module(_BUILDER)
 
 # This fixture describes the distribution contract independently of the validator.
 CORE_RESOURCES = (
+    "ecosystem/platform_support.py", "ecosystem/docs/windows.md",
+    "ecosystem/tests/test_platform_support.py", "ecosystem/tests/test_windows_claude.py",
+    "ecosystem/tests/windows_acceptance.py",
     "ecosystem/claude.py", "ecosystem/claude_hooks.py", "ecosystem/claude-hooks.json",
     "ecosystem/tests/test_claude_install.py", "ecosystem/tests/test_claude_hooks.py",
     "ecosystem/tests/test_claude_package.py",
@@ -74,6 +77,13 @@ class PackageFixture:
                 self.write_json(relative, {})
             else:
                 self.write(relative, "A resource needed by the portable fixture.\n")
+        # Project a deliberately inert helper without ever importing candidate code.
+        helper = (self.root / "ecosystem/platform_support.py").read_bytes()
+        bootstrap = ("from __future__ import annotations\n"
+                     + _BUILDER._PLATFORM_BEGIN + "\npass\n" + _BUILDER._PLATFORM_END
+                     + "\nraise RuntimeError('Validation executed package code')\n").encode()
+        self.write("ecosystem/claude_hooks.py",
+                   _BUILDER.render_claude_bootstrap(bootstrap, helper).decode())
         self.write_json(self.manifest_path, {
             "name": "constellation", "version": "1.1.0",
             "description": "Portable fixture for package validation.",
@@ -326,6 +336,16 @@ class ValidationTests(unittest.TestCase):
                 self.package.write_json("skills/coding/agents/openai.yaml", ui)
                 self.assert_rejected("skills/coding/agents/openai.yaml")
 
+    def test_native_hook_interpreter_wrong_types_are_structural_errors(self) -> None:
+        relative = "ecosystem/claude-hooks.json"
+        original = self.package.read_json(relative)
+        for value in (None, False, 1, [], {}):
+            data = json.loads(json.dumps(original))
+            data["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = value
+            self.package.write_json(relative, data)
+            with self.subTest(value=value):
+                self.assert_rejected(self.package.resource_path(relative))
+
     def test_ui_requires_boolean_invocation_policy(self) -> None:
         ui = PackageFixture.ui()
         ui["policy"]["allow_implicit_invocation"] = "false"
@@ -460,6 +480,7 @@ class ValidationTests(unittest.TestCase):
                                   self.package.modules, source_root=self.package.root)
         self.assert_rejected(self.package.manifest_path)
 
+    @unittest.skipIf(os.name == "nt", "Physical POSIX mode corruption; native ACL rejection has dedicated tests")
     def test_bundle_rejects_changed_hash_and_permissions(self) -> None:
         for mutation in ("hash", "mode"):
             with self.subTest(mutation=mutation):
@@ -472,6 +493,7 @@ class ValidationTests(unittest.TestCase):
                     path.chmod(0o755)
                 self.assert_rejected("ecosystem/core.py", package)
 
+    @unittest.skipIf(os.name == "nt", "Physical POSIX modes are not Windows ACLs")
     def test_bundle_rejects_unsupported_modes_even_when_inventory_matches(self) -> None:
         for mode in (0o600, 0o664, 0o777):
             with self.subTest(mode=oct(mode)):

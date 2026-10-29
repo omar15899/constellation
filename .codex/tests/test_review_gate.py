@@ -72,6 +72,17 @@ class ReviewFixture(unittest.TestCase):
         self.call("report", self.payload())
         self.call("validate")
 
+    @unittest.skipIf(gate.ps.IS_WINDOWS, "Windows original project-root aliases are rejected before resolution.")
+    def test_author_observation_uses_prepares_canonical_posix_root(self):
+        alias = self.base / "project-alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        result = gate.author(alias, self.state, {"author": "contributor", "paths": ["tool.py"]},
+                             policy_path=self.policy_path)
+        self.assertFalse(result["unchanged"])
+        record = self.state["review_author_bindings"]["contributor"][0]
+        self.assertEqual(record["identity"]["inode"], (self.root / "tool.py").stat().st_ino)
+        self.assertEqual(self.call("prepare")["artifact_authors"]["contributor"], ["tool.py"])
+
     def test_standard_review_requires_fresh_independent_report(self):
         context = self.start()
         self.assertEqual(context["mode"], "standard")
@@ -957,7 +968,7 @@ class ReviewFixture(unittest.TestCase):
                     self.state["paths"] = [name]
                     before = deepcopy(self.state)
                     with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read symlink target")):
-                        with self.assertRaisesRegex(gate.ReviewError, "symlink"):
+                        with self.assertRaisesRegex(gate.ReviewError, "symlink|symbolic link|reparse"):
                             self.call(operation)
                     self.assertEqual(self.state, before)
 

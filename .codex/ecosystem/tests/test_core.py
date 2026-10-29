@@ -1,7 +1,8 @@
 """Adversarial acceptance tests for the real portable coordination engine.
 
 Fixture identities below are deliberately synthetic, not actual review claims.
-The suite requires no Git repository, server, third-party package or network.
+Portable cases require no Git repository, server, third-party package or network.
+Git lifecycle cases create disposable repositories and local bare remotes.
 """
 from __future__ import annotations
 
@@ -1192,6 +1193,857 @@ class StateBoundaryTests(FixtureCase):
         with self.assertRaises(Error):
             scenario.call("status")
 
+
+
+@unittest.skipUnless(shutil.which("git"), "Git lifecycle checks require Git.")
+class GitCheckResolutionTests(unittest.TestCase):
+    """Exercise retained failures and independent replacement evidence on real Git."""
+
+    def setUp(self):
+        import io
+        from ecosystem.runtime import workflow as runtime
+        self.runtime = runtime
+        self.output = io
+        temporary = tempfile.TemporaryDirectory(prefix="constellation-check-resolution-")
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name).resolve()
+        self.root, self.remote = self.base / "receiver", self.base / "remote.git"
+        self.root.mkdir()
+        configuration = patch.dict(os.environ, {"GIT_CONFIG_NOSYSTEM": "1",
+                                                "GIT_CONFIG_GLOBAL": os.devnull,
+                                                "GIT_TERMINAL_PROMPT": "0"})
+        configuration.start()
+        self.addCleanup(configuration.stop)
+        self.git("init", "--bare", "--initial-branch=main", str(self.remote), cwd=self.base)
+        self.git("init", "--initial-branch=main", str(self.root), cwd=self.base)
+        self.git("config", "user.name", "Synthetic Fixture")
+        self.git("config", "user.email", "fixture@example.invalid")
+        hooks = self.base / "empty-hooks"
+        hooks.mkdir()
+        self.git("config", "core.hooksPath", str(hooks))
+        self.git("config", "core.autocrlf", "false")
+        (self.root / "README.md").write_text("initial fixture\n", encoding="utf-8")
+        self.git("add", "README.md")
+        self.git("commit", "-m", "Create isolated fixture")
+        self.git("remote", "add", "origin", str(self.remote))
+        self.git("push", "-u", "origin", "main")
+        self.flow = runtime.Workflow(self.root, "test-session")
+        self.failed_command = [sys.executable, "-c", "raise SystemExit(7)", "PRIVATE_ARGUMENT"]
+        self.replacement_command = [sys.executable, ".codex/tool.py"]
+
+    def git(self, *args, cwd=None):
+        result = subprocess.run(["git", *args], cwd=cwd or self.root, check=True,
+                                capture_output=True, text=True, encoding="utf-8", timeout=25)
+        return result.stdout.rstrip("\n")
+
+    def check(self, command, **kwargs):
+        with patch("sys.stdout", new=self.output.StringIO()), patch("sys.stderr", new=self.output.StringIO()):
+            return self.flow.check(command, **kwargs)
+
+    def prepare(self):
+        self.flow.begin("repair-invocation")
+        self.flow.plan({"requirements": ["result is correct"], "paths": [".codex/tool.py", "answer.md"]})
+        (self.root / ".codex").mkdir()
+        (self.root / ".codex/tool.py").write_text("print('verified result')\n")
+        (self.root / "answer.md").write_text("verified result\n")
+        self.flow.review_operation("author", {"author": "writer", "paths": [".codex/tool.py"]})
+        with self.assertRaises(self.runtime.Blocked):
+            self.check(self.failed_command)
+        self.check(self.replacement_command)
+        return self.flow.review_operation("start")
+
+    def report(self, context, identity, focus, paths=None):
+        self.flow.review_operation("report", {
+            "token": context["token"], "reviewer": identity, "role": "reviewer",
+            "focus": focus, "paths": paths or context["paths"], "findings": [],
+            "summary": "Checked the exact artifacts and the mistaken check invocation.",
+            "evidence": "The replacement exercises the intended result using the current originals; the first invocation used the wrong arguments."})
+
+    def approve(self, context):
+        self.assertEqual(context["required_reviewers"], 5)
+        for index in range(5):
+            self.report(context, f"independent-{index}", ["correctness" if index < 3 else "security"])
+
+    def payload(self, context, **changes):
+        return {"token": context["token"], "failed_check": 0, "replacement_check": 1,
+                "verifier": "independent-0", "reason": "Correct a mistaken command invocation.",
+                "evidence": "Independently compared both check records and confirmed the successful replacement covers the intended behavior.", **changes}
+
+    def test_resolution_preserves_history_index_and_publication_and_is_idempotent(self):
+        (self.root / "README.md").write_text("unrelated staged user work\n")
+        self.runtime.git(self.root, "add", "README.md")
+        context = self.prepare()
+        with self.assertRaisesRegex(self.runtime.Blocked, "distinct reviewers"):
+            self.flow.check_resolve(self.payload(context))
+        self.approve(context)
+        with self.assertRaisesRegex(self.runtime.Blocked, "still failing"):
+            self.flow.review({"result is correct": "The replacement passed."})
+        state = self.flow.load()
+        history = json.dumps(state["checks"], sort_keys=True).encode()
+        index_path = self.root / ".git/index"
+        index = index_path.read_bytes()
+        unrelated = self.runtime.git(self.root, "diff", "--cached", "--binary", "--", "README.md")
+        head = self.runtime.git(self.root, "rev-parse", "HEAD")
+        self.assertFalse(self.flow.check_resolve(self.payload(context))["unchanged"])
+        self.assertEqual(json.dumps(self.flow.load()["checks"], sort_keys=True).encode(), history)
+        self.assertEqual(index_path.read_bytes(), index)
+        self.assertEqual(self.runtime.git(self.root, "rev-parse", "HEAD"), head)
+        self.assertEqual(self.runtime.git(self.remote, "rev-parse", "refs/heads/main"), head)
+        self.assertEqual(self.flow.review_operation("prepare")["token"], context["token"])
+        self.flow.review({"result is correct": "Read the actual result and verified the independent equivalence evidence."})
+        before = self.flow.path.read_bytes()
+        self.assertTrue(self.flow.check_resolve(self.payload(context))["unchanged"])
+        self.assertEqual(self.flow.path.read_bytes(), before)
+        self.assertNotIn("PRIVATE_ARGUMENT", self.flow.path.read_text())
+        self.flow.commit(context["paths"], "Add independently checked result", preserve_index=True)
+        self.assertEqual(self.runtime.git(self.root, "diff", "--cached", "--binary", "--", "README.md"), unrelated)
+        self.assertEqual(self.runtime.git(self.root, "diff", "--cached", "--name-only"), "README.md")
+        self.assertTrue(self.flow.finish()["completed"])
+        self.assertEqual(self.runtime.git(self.remote, "rev-parse", "refs/heads/main"), self.runtime.git(self.root, "rev-parse", "HEAD"))
+
+    def test_resolution_rejects_nonindependent_partial_or_unreported_verifiers_and_bad_indices(self):
+        context = self.prepare()
+        self.approve(context)
+        self.report(context, "partial", ["correctness"], ["answer.md"])
+        for verifier in ("test-session", "writer", "unreported", "independent-3", "partial"):
+            with self.subTest(verifier=verifier), self.assertRaises(self.runtime.Blocked):
+                self.flow.check_resolve(self.payload(context, verifier=verifier))
+        for changes in ({"failed_check": True}, {"replacement_check": False}, {"failed_check": -1},
+                        {"replacement_check": 20}, {"token": "stale"}, {"reason": " "},
+                        {"evidence": "x" * 12001}, {"extra": "unsupported"}):
+            with self.subTest(changes=tuple(changes)), self.assertRaises(self.runtime.Blocked):
+                self.flow.check_resolve(self.payload(context, **changes))
+        self.assertNotIn("check_resolutions", self.flow.load())
+
+    def test_failed_mutating_and_interrupted_attempts_cannot_replace_a_check(self):
+        self.prepare()
+        with self.assertRaises(self.runtime.Blocked):
+            self.check([sys.executable, "-c", "raise SystemExit(2)"])
+        with self.assertRaises(self.runtime.Blocked):
+            self.check([sys.executable, "-c", "from pathlib import Path; Path('answer.md').write_text('changed\\n')"])
+        context = self.flow.review_operation("start")
+        self.approve(context)
+        for index in (2, 3):
+            with self.subTest(replacement=index), self.assertRaisesRegex(self.runtime.Blocked, "Replacement check"):
+                self.flow.check_resolve(self.payload(context, replacement_check=index))
+        interrupted = [sys.executable, "-c", "pass"]
+        original_run = self.runtime.subprocess.run
+
+        def interrupt(command, **kwargs):
+            if command == interrupted:
+                raise KeyboardInterrupt
+            return original_run(command, **kwargs)
+
+        with patch.object(self.runtime.subprocess, "run", side_effect=interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.check(interrupted)
+        with self.assertRaises(self.runtime.Blocked):
+            self.check([sys.executable, "-c", "import time; time.sleep(2)"], timeout=1)
+        with self.assertRaises(self.runtime.Blocked):
+            self.check([sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)"])
+        records = self.flow.load()["checks"]
+        self.assertEqual(records[5]["exit_code"], -1)
+        self.assertLess(records[6]["exit_code"], 0)
+        self.check(self.replacement_command)
+        context = self.flow.review_operation("start")
+        self.approve(context)
+        for index in (3, 4, 5, 6):
+            with self.subTest(failed=index), self.assertRaisesRegex(self.runtime.Blocked, "completed failed"):
+                self.flow.check_resolve(self.payload(context, failed_check=index, replacement_check=7))
+        self.assertNotIn("check_resolutions", self.flow.load())
+
+    def test_new_attempt_requires_fresh_reports_and_new_append_only_receipt(self):
+        context = self.prepare()
+        self.approve(context)
+        self.flow.check_resolve(self.payload(context))
+        old = self.flow.load()["check_resolutions"][0]
+        self.flow.review({"result is correct": "Verified the current result."})
+        with self.assertRaises(self.runtime.Blocked):
+            self.check(self.failed_command)
+        self.check(self.replacement_command)
+        fresh = self.flow.review_operation("start")
+        self.approve(fresh)
+        with self.assertRaisesRegex(self.runtime.Blocked, "current independent review token"):
+            self.flow.check_resolve(self.payload(context))
+        with self.assertRaisesRegex(self.runtime.Blocked, "latest attempt"):
+            self.flow.check_resolve(self.payload(fresh))
+        with self.assertRaisesRegex(self.runtime.Blocked, "still failing"):
+            self.flow.review({"result is correct": "An old receipt must not conceal the new failure."})
+        self.flow.check_resolve(self.payload(fresh, failed_check=2, replacement_check=3))
+        self.assertEqual(self.flow.load()["check_resolutions"][0], old)
+        self.assertEqual(len(self.flow.load()["check_resolutions"]), 2)
+        self.flow.review({"result is correct": "The new failed attempt has a fresh independent resolution."})
+
+    def test_full_snapshot_and_receipts_are_revalidated_by_reviewed(self):
+        context = self.prepare()
+        self.approve(context)
+        self.flow.check_resolve(self.payload(context))
+        self.flow.review({"result is correct": "Verified current artifacts and equivalence."})
+        state = self.flow.load()
+        state["check_resolutions"][0]["replacement_check_sha256"] = "0" * 64
+        with self.assertRaisesRegex(self.runtime.Blocked, "still failing"):
+            self.flow.reviewed(state)
+        state = self.flow.load()
+        state["check_resolutions"][0]["reason"] = "A changed resolution needs semantic review again."
+        with self.assertRaisesRegex(self.runtime.Blocked, "check resolutions changed"):
+            self.flow.reviewed(state)
+        (self.root / "answer.md").write_text("a new document version\n")
+        fresh = self.flow.review_operation("start")
+        self.approve(fresh)
+        with self.assertRaisesRegex(self.runtime.Blocked, "Replacement check"):
+            self.flow.check_resolve(self.payload(fresh))
+        with self.assertRaisesRegex(self.runtime.Blocked, "still failing"):
+            self.flow.review({"result is correct": "The earlier snapshot covered code but not this document revision."})
+
+
+    def test_original_windows_root_is_checked_before_resolving_or_running_git(self):
+        from ecosystem.runtime import workspace
+        for constructor in (self.runtime.Workflow, workspace.Workspace):
+            with self.subTest(constructor=constructor.__name__), \
+                    patch.object(self.runtime.ps, "IS_WINDOWS", True), \
+                    patch.object(self.runtime.ps, "validate_lookup",
+                                 side_effect=self.runtime.ps.PlatformError("unsafe original lookup")) as validate, \
+                    patch.object(self.runtime, "git") as git:
+                with self.assertRaises(self.runtime.ps.PlatformError):
+                    constructor(Path("C:/unsafe-link"), "synthetic")
+                validate.assert_called_once()
+                git.assert_not_called()
+
+    def test_windows_unsafe_relative_names_fail_before_filesystem_lookup(self):
+        from ecosystem.runtime import workspace, review_gate
+        invalid = ["C:relative.md", "C:/absolute.md", "/root.md", "report.md:stream",
+                   "CON.txt", "aux", "LPT1.log", "trailing. ", "folder/../escape.md",
+                   "folder\\\\escape.md", "file. ", "\\\\server\\\\share\\\\x.md"]
+        with patch.object(self.runtime.ps, "IS_WINDOWS", True):
+            for name in invalid:
+                with self.subTest(name=name), self.assertRaises((self.runtime.Blocked, review_gate.ReviewError)):
+                    self.runtime.safe_path(self.root, name)
+                with self.subTest(workspace=name), self.assertRaises(self.runtime.Blocked):
+                    workspace.relative(name)
+                with self.subTest(review=name), self.assertRaises(review_gate.ReviewError):
+                    review_gate._path(self.root, name)
+
+    def test_existing_case_alias_is_rejected_without_globally_folding_linux_names(self):
+        (self.root / "Report.md").write_text("one physical artifact", encoding="utf-8")
+        with self.assertRaises(self.runtime.Blocked):
+            self.runtime._windows_case_path(self.root, "report.md")
+        self.runtime._windows_case_path(self.root, "Report.md")
+
+    @unittest.skipUnless(os.name == "nt", "Native Windows ACL acceptance is unexecuted on POSIX.")
+    def test_windows_state_is_private_utf8_and_acl_changes_invalidate_review(self):
+        self.flow.begin("native-windows-state")
+        self.flow.plan({"requirements": ["preserve Unicode"], "paths": ["Résumé.md"]})
+        artifact = self.root / "Résumé.md"
+        artifact.write_text("Synthetic café and 中文.\n", encoding="utf-8")
+        self.flow.log("synthetic_unicode", label="café 中文")
+        self.runtime.ps.verify_access(self.flow.home, private=True)
+        self.runtime.ps.verify_access(self.flow.path, private=True)
+        self.assertIn("café 中文", (self.flow.home / "events.jsonl").read_text(encoding="utf-8"))
+        before = self.flow.review_operation("prepare")["token"]
+        self.runtime.ps.set_access(artifact, 0o600)
+        after = self.flow.review_operation("prepare")["token"]
+        self.assertNotEqual(before, after)
+
+    @unittest.skipUnless(os.name == "nt", "Native Windows Git logical-mode acceptance is unexecuted on POSIX.")
+    def test_windows_git_index_mode_changes_the_artifact_snapshot(self):
+        before = self.runtime.snapshot(self.root, ["README.md"])
+        self.git("update-index", "--chmod=+x", "README.md")
+        after = self.runtime.snapshot(self.root, ["README.md"])
+        self.assertNotEqual(before, after)
+        self.assertTrue(after["README.md"].startswith("100755:"))
+
+
+
+    def test_existing_hardlink_aliases_cannot_form_two_artifacts(self):
+        from ecosystem.runtime import review_gate
+        self.flow.begin("physical-aliases")
+        first, second = self.root / "one.md", self.root / "two.md"
+        first.write_text("one physical artifact\n", encoding="utf-8")
+        os.link(first, second)
+        with self.assertRaises(self.runtime.Blocked):
+            self.flow.plan({"requirements": ["distinct outputs"], "paths": ["one.md", "two.md"]})
+        state = {"requirements": ["distinct outputs"], "paths": ["one.md", "two.md"],
+                 "author": "coordinator", "started": "2026-10-29T00:00:00Z",
+                 "initial_head": self.git("rev-parse", "HEAD")}
+        with self.assertRaises(review_gate.ReviewError):
+            review_gate.prepare(self.root, state)
+
+    def test_real_distinct_case_sensitive_artifacts_remain_allowed(self):
+        first, second = self.root / "Report.md", self.root / "report.md"
+        first.write_text("first", encoding="utf-8")
+        if second.exists():
+            self.skipTest("This filesystem aliases the two case variants.")
+        second.write_text("second", encoding="utf-8")
+        self.flow.begin("distinct-case-sensitive-artifacts")
+        self.flow.plan({"requirements": ["distinct outputs"], "paths": ["Report.md", "report.md"],
+                        "adopt_existing": {"Report.md": "Synthetic fixture input.",
+                                           "report.md": "A distinct synthetic fixture."}})
+        version = self.runtime.snapshot(self.root, ["Report.md", "report.md"])
+        self.assertEqual(set(version), {"Report.md", "report.md"})
+        self.assertNotEqual(version["Report.md"], version["report.md"])
+
+    def test_withdrawn_author_alias_cannot_self_review_or_resolve(self):
+        self.flow.begin("physical-authorship")
+        self.flow.plan({"requirements": ["correct result"], "paths": ["old.md"]})
+        (self.root / "old.md").write_text("same artifact", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        os.link(self.root / "old.md", self.root / "new.md")
+        self.flow.plan({"requirements": ["correct result"], "paths": ["new.md"]})
+        if os.name == "nt":
+            with self.assertRaises((self.runtime.Blocked, self.runtime.ps.PlatformError)):
+                self.flow.review_operation("start")
+            return
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["artifact_authors"]["writer"], ["new.md"])
+        with self.assertRaisesRegex(self.runtime.Blocked, "contributed"):
+            self.report(context, "writer", ["correctness"])
+        introduced = {"id": "physical-alias-finding", "path": "new.md", "line": 1,
+                      "severity": "low", "origin": "introduced", "scenario": "Synthetic missing case.",
+                      "consequence": "Synthetic incomplete result.", "evidence": "Fixture observation."}
+        self.flow.review_operation("report", {
+            "token": context["token"], "reviewer": "discoverer", "role": "reviewer",
+            "focus": ["correctness"], "paths": ["new.md"], "findings": [introduced],
+            "summary": "One synthetic finding.", "evidence": "Read the isolated fixture."})
+        with self.assertRaisesRegex(self.runtime.Blocked, "contributing author"):
+            self.flow.review_operation("resolve", {"token": context["token"],
+                "id": introduced["id"], "verifier": "writer", "disposition": "fixed",
+                "evidence": "This author cannot independently attest."})
+        with self.assertRaisesRegex(self.runtime.Blocked, "independent"):
+            self.flow._check_resolution(self.flow.load(), self.payload(context, verifier="writer"), context)
+
+    def test_new_author_alias_invalidates_an_older_independent_report(self):
+        self.flow.begin("late-alias")
+        self.flow.plan({"requirements": ["correct outputs"], "paths": ["old.md", "new.md"]})
+        (self.root / "old.md").write_text("earlier authored file", encoding="utf-8")
+        (self.root / "new.md").write_text("a separate output", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        context = self.flow.review_operation("start")
+        self.report(context, "writer", ["correctness"], ["new.md"])
+        (self.root / "old.md").unlink()
+        os.link(self.root / "new.md", self.root / "old.md")
+        with self.assertRaises((self.runtime.Blocked, self.runtime.ps.PlatformError)):
+            self.flow.review_operation("prepare")
+        with self.assertRaises((self.runtime.Blocked, self.runtime.ps.PlatformError)):
+            self.flow.independent_reviewed(self.flow.load())
+
+    def test_git_state_original_symlink_is_rejected_before_state_creation(self):
+        from ecosystem.runtime import workspace
+        self.flow.home.rmdir()
+        target = self.base / "foreign-empty-state"
+        target.mkdir()
+        try:
+            self.flow.home.symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            if os.name == "nt":
+                self.skipTest("Native symlink privilege unavailable: " + type(error).__name__)
+            raise
+        for constructor in (self.runtime.Workflow, workspace.Workspace):
+            with self.subTest(controller=constructor.__name__), self.assertRaises(
+                    (self.runtime.Blocked, self.runtime.ps.PlatformError)):
+                constructor(self.root, "blocked-state-alias")
+        self.assertEqual(list(target.iterdir()), [])
+        self.assertTrue(self.flow.home.is_symlink())
+
+    def test_git_state_lookup_accepts_a_real_linked_worktree(self):
+        worktree = self.base / "linked-receiver"
+        self.git("worktree", "add", "-b", "synthetic-linked", str(worktree))
+        other = self.runtime.Workflow(worktree, "linked-owner")
+        self.assertFalse(other.home.is_relative_to(worktree))
+        self.assertEqual(other.home, Path(self.git("rev-parse", "--path-format=absolute",
+                                                  "--git-path", "constellation", cwd=worktree)))
+        with other.lock():
+            self.assertTrue(other.home.is_dir())
+
+
+
+    def test_existing_case_alias_cannot_split_artifact_scope(self):
+        from ecosystem.runtime import review_gate
+        self.flow.begin("existing-case-alias")
+        (self.root / "Report.md").write_text("one artifact", encoding="utf-8")
+        if not (self.root / "report.md").exists():
+            self.skipTest("Filesystem keeps the two case variants distinct.")
+        with self.assertRaises(self.runtime.Blocked):
+            self.flow.plan({"requirements": ["one artifact"], "paths": ["Report.md", "report.md"]})
+        state = {"requirements": ["one artifact"], "paths": ["Report.md", "report.md"],
+                 "author": "coordinator", "started": "2026-10-29T00:00:00Z",
+                 "initial_head": self.git("rev-parse", "HEAD")}
+        with self.assertRaises(review_gate.ReviewError):
+            review_gate.prepare(self.root, state)
+
+    def test_existing_case_alias_preserves_cumulative_author_independence(self):
+        self.flow.begin("case-alias-authorship")
+        self.flow.plan({"requirements": ["one artifact"], "paths": ["Report.md"]})
+        (self.root / "Report.md").write_text("one artifact", encoding="utf-8")
+        if not (self.root / "report.md").exists():
+            self.skipTest("Filesystem keeps the two case variants distinct.")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["Report.md"]})
+        if os.name == "nt":
+            with self.assertRaises(self.runtime.Blocked):
+                self.flow.plan({"requirements": ["one artifact"], "paths": ["report.md"]})
+            return
+        self.flow.plan({"requirements": ["one artifact"], "paths": ["report.md"]})
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["artifact_authors"]["writer"], ["report.md"])
+        with self.assertRaisesRegex(self.runtime.Blocked, "contributed"):
+            self.report(context, "writer", ["correctness"])
+
+    @unittest.skipUnless(os.name == "nt", "Prospective native Windows case handling is unexecuted on POSIX.")
+    def test_windows_prospective_case_aliases_are_rejected_by_plan(self):
+        self.flow.begin("future-case-alias")
+        with self.assertRaises(self.runtime.Blocked):
+            self.flow.plan({"requirements": ["distinct future artifacts"],
+                            "paths": ["Future.md", "future.md"]})
+
+
+
+    def test_actual_destination_change_invalidates_a_check_resolution(self):
+        context = self.prepare()
+        self.approve(context)
+        self.flow.check_resolve(self.payload(context))
+        self.git("config", "remote.origin.url", str(self.base / "different-unowned-remote.git"))
+        with self.assertRaises(self.runtime.Blocked):
+            self.flow.review({"result is correct": "A changed destination must remain blocked."})
+        with self.assertRaises(self.runtime.Blocked):
+            self.flow.resolved_checks(self.flow.load())
+
+
+    def test_git_state_windows_namespaces_fail_before_filesystem_probe(self):
+        invalid = ["C:relative-state", chr(92) + "root-relative-state",
+                   chr(92) * 2 + "server" + chr(92) + "share" + chr(92) + "state"]
+        for value in invalid:
+            with self.subTest(value=value), patch.object(self.runtime.ps, "IS_WINDOWS", True), \
+                    patch.object(self.runtime, "git", return_value=value), \
+                    patch.object(self.runtime.ps, "is_reparse",
+                                 side_effect=AssertionError("Unsafe lookup must not be probed.")):
+                with self.assertRaises(self.runtime.Blocked):
+                    self.runtime.git_state_home(self.root)
+
+
+    def test_short_name_metadata_alias_is_rejected_without_reading_private_contents(self):
+        from ecosystem.runtime import review_gate
+        private = self.root / "conversations"
+        private.mkdir()
+        secret = private / "manifest.json"
+        secret.write_text("synthetic private fixture", encoding="utf-8")
+        alias = self.root / "CONVER~1"
+        alias_file = alias / "MANIFE~1.JSO"
+        actual_stat, actual_lstat = Path.stat, Path.lstat
+
+        def mapped(path):
+            if path == alias:
+                return private
+            if path == alias_file:
+                return secret
+            return path
+
+        def metadata_stat(path, *args, **kwargs):
+            return actual_stat(mapped(path), *args, **kwargs)
+
+        def metadata_lstat(path, *args, **kwargs):
+            return actual_lstat(mapped(path), *args, **kwargs)
+
+        name = "CONVER~1/MANIFE~1.JSO"
+        self.assertFalse(self.runtime.private_path(name))
+        with patch.object(Path, "stat", new=metadata_stat), \
+                patch.object(Path, "lstat", new=metadata_lstat), \
+                patch.object(self.runtime.ps, "IS_WINDOWS", True), \
+                patch.object(Path, "read_bytes", side_effect=AssertionError("No content read.")) as reads, \
+                patch.object(Path, "read_text", side_effect=AssertionError("No content read.")) as texts, \
+                patch.object(Path, "open", side_effect=AssertionError("No content read.")) as opens:
+            with self.assertRaises(self.runtime.Blocked):
+                self.runtime._windows_case_path(self.root, name)
+            with self.assertRaises(self.runtime.Blocked):
+                self.runtime.safe_path(self.root, name)
+            with self.assertRaises(review_gate.ReviewError):
+                review_gate._path(self.root, name)
+            self.assertEqual((reads.call_count, texts.call_count, opens.call_count), (0, 0, 0))
+
+    def test_literal_tilde_and_missing_prospective_components_remain_allowed(self):
+        from ecosystem.runtime import review_gate
+        (self.root / "literal~1.txt").write_text("public fixture", encoding="utf-8")
+        with patch.object(self.runtime.ps, "IS_WINDOWS", True):
+            self.assertEqual(self.runtime.safe_path(self.root, "literal~1.txt"), "literal~1.txt")
+            self.assertEqual(review_gate._path(self.root, "literal~1.txt"), self.root / "literal~1.txt")
+            self.assertEqual(self.runtime.safe_path(self.root, "future~1/new.md"), "future~1/new.md")
+            self.assertEqual(review_gate._path(self.root, "future~1/new.md"), self.root / "future~1/new.md")
+
+    def test_trusted_root_short_spelling_is_not_classified_as_a_scoped_component(self):
+        short_root = self.base / "TRUSTE~1"
+        actual_stat, actual_iterdir = Path.stat, Path.iterdir
+
+        def metadata_stat(path, *args, **kwargs):
+            return actual_stat(self.root if path == short_root else path, *args, **kwargs)
+
+        def directory_entries(path):
+            return actual_iterdir(self.root if path == short_root else path)
+
+        with patch.object(Path, "stat", new=metadata_stat), \
+                patch.object(Path, "iterdir", new=directory_entries):
+            self.runtime._windows_case_path(short_root, "README.md")
+
+    @unittest.skipUnless(os.name == "nt", "Native NTFS8.3 acceptance is unexecuted on POSIX.")
+    def test_native_windows_short_private_path_is_rejected_without_content_reads(self):
+        import ctypes
+        from ctypes import wintypes
+        private = self.root / "conversations"
+        private.mkdir()
+        secret = private / "manifest.json"
+        secret.write_text("synthetic private fixture", encoding="utf-8")
+        operation = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        operation.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        operation.restype = wintypes.DWORD
+
+        def short_path(path):
+            buffer = ctypes.create_unicode_buffer(32768)
+            count = operation(str(path), buffer, len(buffer))
+            if not count or count >= len(buffer):
+                self.skipTest("NTFS short-path lookup is unavailable; native8.3 proof remains pending.")
+            return Path(buffer.value)
+
+        short_root, short_file = short_path(self.root), short_path(secret)
+        relative = short_file.relative_to(short_root).as_posix()
+        if relative.casefold() == "conversations/manifest.json" or self.runtime.private_path(relative):
+            self.skipTest("The volume exposes no privacy-obscuring8.3 alias; that native case remains pending.")
+        self.runtime._windows_case_path(short_root, "README.md")
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("No private content read.")) as reads, \
+                patch.object(Path, "read_text", side_effect=AssertionError("No private content read.")) as texts:
+            with self.assertRaises(self.runtime.Blocked):
+                self.runtime.safe_path(short_root, relative)
+            self.assertEqual((reads.call_count, texts.call_count), (0, 0))
+
+    def test_renamed_then_unlinked_author_cannot_review_the_new_name(self):
+        self.flow.begin("renamed-authored-artifact")
+        self.flow.plan({"requirements": ["correct output"], "paths": ["old.md"]})
+        (self.root / "old.md").write_text("authored output", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        os.link(self.root / "old.md", self.root / "new.md")
+        (self.root / "old.md").unlink()
+        self.flow.plan({"requirements": ["correct output"], "paths": ["new.md"]})
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["review_authors"]["writer"], ["old.md"])
+        self.assertEqual(context["artifact_authors"]["writer"], ["new.md"])
+        with self.assertRaisesRegex(self.runtime.Blocked, "unresolved"):
+            self.report(context, "writer", ["correctness"])
+
+    def test_missing_withdrawn_contribution_excludes_all_current_artifacts_and_keeps_receipts(self):
+        context = self.prepare()
+        self.approve(context)
+        self.flow.check_resolve(self.payload(context))
+        previous = self.flow.load()
+        receipt = json.loads(json.dumps(previous["check_resolutions"]))
+        checks = json.loads(json.dumps(previous["checks"]))
+        tool = self.root / ".codex/tool.py"
+        new_tool = self.root / ".codex/renamed_tool.py"
+        os.link(tool, new_tool)
+        tool.unlink()
+        self.flow.plan({"requirements": ["result is correct"],
+                        "paths": [".codex/renamed_tool.py", "answer.md"]})
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["artifact_authors"]["writer"], [".codex/renamed_tool.py", "answer.md"])
+        self.assertEqual(self.flow.load()["review_authors"]["writer"], [".codex/tool.py"])
+        self.assertEqual(self.flow.load()["check_resolutions"], receipt)
+        self.assertEqual(self.flow.load()["checks"], checks)
+        with self.assertRaises(self.runtime.Blocked):
+            self.report(context, "writer", ["correctness"], ["answer.md"])
+
+    def test_current_in_scope_disjoint_contributor_can_review(self):
+        self.flow.begin("current-disjoint-contribution")
+        self.flow.plan({"requirements": ["correct outputs"], "paths": ["old.md", "new.md"]})
+        (self.root / "old.md").write_text("current contribution", encoding="utf-8")
+        (self.root / "new.md").write_text("independent current output", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["artifact_authors"]["writer"], ["old.md"])
+        self.report(context, "writer", ["correctness"], ["new.md"])
+
+    def test_planned_deletion_keeps_its_named_authorship_without_claiming_disjoint_outputs(self):
+        old = self.root / "old.md"
+        old.write_text("tracked old artifact", encoding="utf-8")
+        self.git("add", "old.md")
+        self.git("commit", "-m", "Track synthetic deletion")
+        self.git("push", "origin", "main")
+        self.flow.begin("explicit-deletion")
+        self.flow.plan({"requirements": ["delete old and create unrelated output"],
+                        "paths": ["old.md", "new.md"], "deletions": ["old.md"]})
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        (self.root / "new.md").write_text("unrelated current artifact", encoding="utf-8")
+        self.assertNotEqual(old.stat().st_ino, (self.root / "new.md").stat().st_ino)
+        old.unlink()
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["artifact_authors"]["writer"], ["old.md"])
+        self.report(context, "writer", ["correctness"], ["new.md"])
+
+    def windows_snapshot_metadata(self, permission):
+        original = self.runtime.snapshot
+
+        def version(root, paths, deletions=()):
+            actual = original(root, paths, deletions)
+            result = {}
+            for name, value in actual.items():
+                if isinstance(value, str) and value.startswith(("100644:", "100755:")):
+                    fields = value.split(":")
+                    result[name] = fields[0] + ":" + fields[1] + ":" + permission["value"]
+                else:
+                    result[name] = value
+            return result
+        return version
+
+    def test_git_projection_accepts_only_recognized_snapshot_formats(self):
+        digest, acl = "a" * 64, "b" * 64
+        version = {"plain": "100644:" + digest, "executable": "100755:" + digest + ":" + acl,
+                   "link": "symlink:" + digest, "deleted": None}
+        expected = {"plain": "100644:" + digest, "executable": "100755:" + digest,
+                    "link": "symlink:" + digest, "deleted": None}
+        before = dict(version)
+        self.assertEqual(self.runtime.git_representable_snapshot(version), expected)
+        self.assertEqual(version, before)
+        malformed = [True, 123, "", "100600:" + digest, "100644:" + digest + ":arbitrary",
+                     "100644:" + digest + ":" + acl + ":extra", "100644:" + digest + ":",
+                     "100644:" + digest[:-1], "100644:" + digest.upper(),
+                     "symlink:" + digest + ":" + acl]
+        for value in malformed:
+            with self.subTest(value=value), self.assertRaises(self.runtime.Blocked):
+                self.runtime.git_representable_snapshot({"bad": value})
+
+    def test_windows_metadata_projection_allows_real_git_commit_and_recovery_preserving_index(self):
+        permission = {"value": "b" * 64}
+        with patch.object(self.runtime, "snapshot", side_effect=self.windows_snapshot_metadata(permission)):
+            (self.root / "README.md").write_text("unrelated staged user work", encoding="utf-8")
+            self.git("add", "README.md")
+            context = self.prepare()
+            self.approve(context)
+            self.flow.check_resolve(self.payload(context))
+            self.flow.review({"result is correct": "Synthetic Windows metadata with reviewed bytes."})
+            preserved = self.git("diff", "--cached", "--binary", "--", "README.md")
+            self.flow.commit(context["paths"], "Commit reviewed fixture", preserve_index=True)
+            self.assertEqual(self.git("diff", "--cached", "--binary", "--", "README.md"), preserved)
+            state = self.flow.load()
+            state["publication_blocker"] = "Synthetic recovered-publication check."
+            self.flow.save(state)
+            head = self.git("rev-parse", "HEAD")
+            self.assertTrue(self.flow.recover(head)["recovered"])
+            self.assertEqual(self.git("diff", "--cached", "--binary", "--", "README.md"), preserved)
+
+    def test_windows_metadata_acl_drift_still_blocks_before_git_staging(self):
+        permission = {"value": "b" * 64}
+        with patch.object(self.runtime, "snapshot", side_effect=self.windows_snapshot_metadata(permission)):
+            context = self.prepare()
+            self.approve(context)
+            self.flow.check_resolve(self.payload(context))
+            self.flow.review({"result is correct": "Synthetic Windows metadata with reviewed bytes."})
+            permission["value"] = "c" * 64
+            before = (self.root / ".git/index").read_bytes()
+            with self.assertRaises(self.runtime.Blocked):
+                self.flow.commit(context["paths"], "Must remain blocked")
+            self.assertEqual((self.root / ".git/index").read_bytes(), before)
+
+    def test_windows_projection_does_not_accept_git_eol_normalization(self):
+        permission = {"value": "b" * 64}
+        with patch.object(self.runtime, "snapshot", side_effect=self.windows_snapshot_metadata(permission)):
+            self.flow.begin("strict-byte-contract")
+            self.flow.plan({"requirements": ["literal reviewed bytes"], "paths": ["answer.md"]})
+            (self.root / "answer.md").write_bytes(b"reviewed literal bytes\r\n")
+            self.git("config", "core.autocrlf", "true")
+            context = self.flow.review_operation("start")
+            self.report(context, "independent", ["correctness"])
+            self.flow.review({"literal reviewed bytes": "Literal bytes remain authoritative."})
+            head = self.git("rev-parse", "HEAD")
+            with self.assertRaisesRegex(self.runtime.Blocked, "Staged content differs"):
+                self.flow.commit(["answer.md"], "Must not normalize reviewed bytes")
+            self.assertEqual(self.git("rev-parse", "HEAD"), head)
+
+    @unittest.skipUnless(os.name == "nt", "Native Windows commit/index acceptance is unexecuted on POSIX.")
+    def test_native_windows_commit_preserves_acl_evidence_and_foreign_index(self):
+        (self.root / "README.md").write_text("unrelated staged work", encoding="utf-8")
+        self.git("add", "README.md")
+        preserved = self.git("diff", "--cached", "--binary", "--", "README.md")
+        context = self.prepare()
+        self.approve(context)
+        self.flow.check_resolve(self.payload(context))
+        self.flow.review({"result is correct": "Native Windows reviewed ACL and byte evidence."})
+        self.flow.commit(context["paths"], "Commit native Windows fixture", preserve_index=True)
+        self.assertEqual(self.git("diff", "--cached", "--binary", "--", "README.md"), preserved)
+        self.assertEqual(self.git("rev-parse", "HEAD"),
+                         self.git("rev-parse", "refs/heads/main", cwd=self.remote))
+
+
+    def test_reused_withdrawn_author_name_cannot_restore_independence(self):
+        self.flow.begin("reused-historical-name")
+        self.flow.plan({"requirements": ["correct output"], "paths": ["old.md"]})
+        old, new = self.root / "old.md", self.root / "new.md"
+        old.write_text("the writer authored these bytes", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        old.rename(new)
+        old.write_text("an independent replacement at the old name", encoding="utf-8")
+        self.assertNotEqual((old.stat().st_dev, old.stat().st_ino),
+                            (new.stat().st_dev, new.stat().st_ino))
+        self.flow.plan({"requirements": ["correct output"], "paths": ["new.md"],
+                        "unrelated": {"old.md": "Independent replacement preserved outside the output scope."}})
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["review_authors"]["writer"], ["old.md"])
+        with self.assertRaisesRegex(self.runtime.Blocked, "contributed|unresolved"):
+            self.report(context, "writer", ["correctness"])
+
+
+    def test_existing_withdrawn_name_does_not_prove_historical_independence(self):
+        self.flow.begin("existing-withdrawn-contribution")
+        self.flow.plan({"requirements": ["correct output"], "paths": ["old.md"]})
+        (self.root / "old.md").write_text("earlier contribution", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        (self.root / "new.md").write_text("different live file", encoding="utf-8")
+        self.flow.plan({"requirements": ["correct output"], "paths": ["new.md"],
+                        "unrelated": {"old.md": "Historical artifact preserved outside the current output."}})
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["review_authors"]["writer"], ["old.md"])
+        self.assertEqual(context["artifact_authors"]["writer"], ["new.md"])
+        with self.assertRaisesRegex(self.runtime.Blocked, "unresolved"):
+            self.report(context, "writer", ["correctness"])
+
+
+    def test_in_scope_old_name_reuse_cannot_hide_the_authored_original(self):
+        self.flow.begin("in-scope-name-reuse")
+        self.flow.plan({"requirements": ["correct outputs"], "paths": ["old.md", "new.md"]})
+        old, new = self.root / "old.md", self.root / "new.md"
+        old.write_text("the original authored object", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        old.rename(new)
+        old.write_text("an independent replacement", encoding="utf-8")
+        context = self.flow.review_operation("start")
+        with self.assertRaisesRegex(self.runtime.Blocked, "contributed|unresolved"):
+            self.report(context, "writer", ["correctness"], ["new.md"])
+
+    def test_planned_deletion_cannot_drop_a_renamed_original_author(self):
+        old, new = self.root / "old.md", self.root / "new.md"
+        old.write_text("the original authored object", encoding="utf-8")
+        self.git("add", "old.md")
+        self.git("commit", "-m", "Track synthetic original")
+        self.git("push", "origin", "main")
+        self.flow.begin("declared-deletion-name-reuse")
+        self.flow.plan({"requirements": ["correct outputs"], "paths": ["old.md", "new.md"],
+                        "deletions": ["old.md"]})
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        old.rename(new)
+        context = self.flow.review_operation("start")
+        with self.assertRaisesRegex(self.runtime.Blocked, "contributed|unresolved"):
+            self.report(context, "writer", ["correctness"], ["new.md"])
+
+
+    def fresh_bound_current_outputs(self):
+        self.flow.begin("bound-current-outputs")
+        self.flow.plan({"requirements": ["correct outputs"], "paths": ["one.md", "two.md"]})
+        (self.root / "one.md").write_text("current contribution", encoding="utf-8")
+        (self.root / "two.md").write_text("independent output", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["one.md"]})
+
+    def test_author_binding_registration_is_idempotent_and_appends_new_objects(self):
+        self.fresh_bound_current_outputs()
+        before = self.flow.load()["review_author_bindings"]["writer"]
+        self.assertEqual(len(before), 1)
+        self.assertIsNotNone(before[0]["identity"])
+        self.assertTrue(self.flow.review_operation("author", {"author": "writer",
+                                                            "paths": ["one.md"]})["unchanged"])
+        self.assertEqual(self.flow.load()["review_author_bindings"]["writer"], before)
+        replacement = self.root / "replacement.tmp"
+        replacement.write_text("new object contributed later", encoding="utf-8")
+        replacement.replace(self.root / "one.md")
+        uncertain = self.flow.review_operation("prepare")
+        self.assertEqual(uncertain["artifact_authors"]["writer"], ["one.md", "two.md"])
+        self.assertFalse(self.flow.review_operation("author", {"author": "writer",
+                                                             "paths": ["one.md"]})["unchanged"])
+        after = self.flow.load()["review_author_bindings"]["writer"]
+        self.assertEqual(after[:len(before)], before)
+        self.assertEqual(len(after), 2)
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["artifact_authors"]["writer"], ["one.md"])
+        self.report(context, "writer", ["correctness"], ["two.md"])
+
+    def test_legacy_unbound_authorship_remains_unknown_and_noncontributors_can_close(self):
+        self.fresh_bound_current_outputs()
+        state = self.flow.load()
+        state.pop("review_author_bindings")
+        self.flow.save(state)
+        legacy = self.flow.review_operation("prepare")
+        self.assertEqual(legacy["artifact_authors"]["writer"], ["one.md", "two.md"])
+        self.assertNotIn("review_author_bindings", self.flow.load())
+        self.flow.review_operation("author", {"author": "writer", "paths": ["one.md"]})
+        records = self.flow.load()["review_author_bindings"]["writer"]
+        self.assertIsNone(records[0]["identity"])
+        self.assertIsNotNone(records[1]["identity"])
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["artifact_authors"]["writer"], ["one.md", "two.md"])
+        with self.assertRaisesRegex(self.runtime.Blocked, "unresolved"):
+            self.report(context, "writer", ["correctness"], ["two.md"])
+        self.report(context, "fresh-independent", ["correctness"])
+        self.flow.review({"correct outputs": "Fresh noncontributor checked the exact artifacts."})
+        self.flow.commit(context["paths"], "Close synthetic legacy contract")
+        self.assertTrue(self.flow.finish()["completed"])
+
+    def test_unknown_observation_cannot_be_erased_by_later_known_registration(self):
+        self.flow.begin("unknown-observation")
+        self.flow.plan({"requirements": ["correct outputs"], "paths": ["one.md", "two.md"]})
+        self.flow.review_operation("author", {"author": "writer", "paths": ["one.md"]})
+        initial = self.flow.load()["review_author_bindings"]["writer"]
+        self.assertEqual(initial, [{"path": "one.md", "identity": None}])
+        (self.root / "one.md").write_text("now observable", encoding="utf-8")
+        (self.root / "two.md").write_text("another output", encoding="utf-8")
+        before = self.flow.review_operation("prepare")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["one.md"]})
+        records = self.flow.load()["review_author_bindings"]["writer"]
+        self.assertEqual(records[:len(initial)], initial)
+        self.assertEqual(len(records), 2)
+        after = self.flow.review_operation("prepare")
+        self.assertEqual(before["artifact_authors"], after["artifact_authors"])
+        self.assertNotEqual(before["token"], after["token"])
+        self.assertTrue(self.flow.review_operation("author", {"author": "writer",
+                                                            "paths": ["one.md"]})["unchanged"])
+        self.assertEqual(self.flow.load()["review_author_bindings"]["writer"], records)
+
+    def test_author_binding_history_rejects_malformed_or_reassigned_records(self):
+        from copy import deepcopy
+        from ecosystem.runtime import review_gate
+        self.fresh_bound_current_outputs()
+        original = self.flow.load()
+        record = original["review_author_bindings"]["writer"][0]
+        cases = []
+        for update in ({"device": True}, {"device": -1}, {"inode": 0},
+                       {"inode": False}, {"kind": "symlink"}, {"extra": "unrecognized"}):
+            state = deepcopy(original)
+            state["review_author_bindings"]["writer"][0]["identity"].update(update)
+            cases.append(state)
+        for bad in ({"path": "other.md", "identity": record["identity"]},
+                    {"path": "one.md", "identity": record["identity"], "extra": True}):
+            state = deepcopy(original)
+            state["review_author_bindings"]["writer"] = [bad]
+            cases.append(state)
+        duplicate = deepcopy(original)
+        duplicate["review_author_bindings"]["writer"].append(deepcopy(record))
+        cases.append(duplicate)
+        reassigned = deepcopy(original)
+        reassigned["review_author_bindings"]["unregistered"] = [deepcopy(record)]
+        cases.append(reassigned)
+        for state in cases:
+            with self.subTest(binding=state["review_author_bindings"]), self.assertRaises(review_gate.ReviewError):
+                review_gate.prepare(self.root, state)
+
+    def test_retrying_a_known_missing_deletion_preserves_its_observation(self):
+        old, new = self.root / "old.md", self.root / "new.md"
+        old.write_text("tracked original", encoding="utf-8")
+        self.git("add", "old.md")
+        self.git("commit", "-m", "Track fixture deletion")
+        self.git("push", "origin", "main")
+        self.flow.begin("known-deletion-retry")
+        self.flow.plan({"requirements": ["correct outputs"], "paths": ["old.md", "new.md"],
+                        "deletions": ["old.md"]})
+        new.write_text("independent current output", encoding="utf-8")
+        self.flow.review_operation("author", {"author": "writer", "paths": ["old.md"]})
+        records = self.flow.load()["review_author_bindings"]["writer"]
+        old.unlink()
+        self.assertTrue(self.flow.review_operation("author", {"author": "writer",
+                                                            "paths": ["old.md"]})["unchanged"])
+        self.assertEqual(self.flow.load()["review_author_bindings"]["writer"], records)
+        context = self.flow.review_operation("start")
+        self.assertEqual(context["artifact_authors"]["writer"], ["old.md"])
+        self.report(context, "writer", ["correctness"], ["new.md"])
 
 if __name__ == "__main__":
     unittest.main()

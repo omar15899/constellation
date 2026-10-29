@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
-import fcntl
+from contextlib import ExitStack, contextmanager
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import stat
 import sys
@@ -19,15 +19,17 @@ from typing import Iterable, Iterator
 sys.dont_write_bytecode = True
 if __package__:
     from .build import (BUNDLE_MANIFEST, MODULES, PLUGIN_MANIFEST, BundleError, allowed_files,
-                        build_bundle, file_record, legacy_files_130, regular_file, select_modules,
+                        build_bundle, file_record, legacy_files_130, legacy_files_131, regular_file, select_modules,
                        verify_bundle, verify_owned_bundle)
     from .native import NativeClient, NativeError, PLUGIN_ID
+    from . import platform_support as platform
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from build import (BUNDLE_MANIFEST, MODULES, PLUGIN_MANIFEST, BundleError, allowed_files,
-                       build_bundle, file_record, legacy_files_130, regular_file, select_modules,
+                       build_bundle, file_record, legacy_files_130, legacy_files_131, regular_file, select_modules,
                        verify_bundle, verify_owned_bundle)
     from native import NativeClient, NativeError, PLUGIN_ID
+    import platform_support as platform
 
 CATALOG_MANIFEST = ".agents/plugins/marketplace.json"
 PLUGIN_DIRECTORY = "plugins/constellation"
@@ -88,7 +90,7 @@ class InstallError(ValueError):
 
 
 def _safe_anchor(path: Path) -> Path:
-    if path.is_symlink():
+    if platform.is_reparse(path):
         raise InstallError(f"Managed path is a symlink: {path.name}")
     return path.resolve()
 
@@ -100,18 +102,18 @@ def _no_links(root: Path, relative: str) -> Path:
     current = root
     for part in path.parts:
         current /= part
-        if current.is_symlink():
+        if platform.is_reparse(current):
             raise InstallError(f"Managed path is a symlink: {relative}")
     return current
 
 
 def _inventory(root: Path) -> dict:
-    if root.is_symlink() or not root.is_dir():
+    if platform.is_reparse(root) or not root.is_dir():
         raise InstallError("Managed directory is missing or linked")
     files = {}
     for directory, subdirs, names in os.walk(root, followlinks=False):
         for name in subdirs + names:
-            if (Path(directory) / name).is_symlink():
+            if platform.is_reparse(Path(directory) / name):
                 raise InstallError("Managed directory contains a symlink")
         for name in names:
             path = Path(directory) / name
@@ -122,7 +124,7 @@ def _inventory(root: Path) -> dict:
 
 
 def _load_receipt(path: Path) -> dict | None:
-    if path.is_symlink():
+    if platform.is_reparse(path):
         raise InstallError("Installation receipt cannot be a symlink")
     if not path.exists():
         return None
@@ -168,8 +170,9 @@ def _load_receipt(path: Path) -> dict | None:
                 path for path in identity_files
                 if path.startswith(("skills/", "ecosystem/agents/"))
             }
-            if value["version"] == "1.3.0":
-                valid = schema == 3 and files == legacy_files_130(modules)
+            if value["version"] in {"1.3.0", "1.3.1"}:
+                historical = legacy_files_130 if value["version"] == "1.3.0" else legacy_files_131
+                valid = schema == 3 and files == historical(modules)
             else:
                 current_layout = identities <= files <= allowed_files(modules)
                 older_layout = ((schema == 2 or value["version"] in {"1.1.0", "1.2.0"})
@@ -240,7 +243,7 @@ def _verify_recorded_bundle(root: Path, receipt: dict) -> None:
         plugin = _read_object(root / PLUGIN_MANIFEST)
         if plugin.get("name") != "constellation" or plugin.get("version") != receipt["version"]:
             raise ValueError("plugin manifest differs from receipt")
-        if receipt["version"] == "1.3.0":
+        if receipt["version"] in {"1.3.0", "1.3.1"}:
             verify_owned_bundle(root)
     except (OSError, ValueError, TypeError) as exc:
         raise InstallError("Owned bundle metadata differs from the installation receipt") from exc
@@ -342,32 +345,37 @@ def _preflight(home: Path, selected: tuple[str, ...], client: NativeClient,
 @contextmanager
 def _lock(home: Path) -> Iterator[None]:
     managed = _no_links(home, "constellation")
-    managed.mkdir(mode=0o700, parents=True, exist_ok=True)
+    platform.secure_mkdir(managed, mode=0o700, parents=True, exist_ok=True)
     path = _no_links(home, "constellation/.install.lock")
-    if path.exists() and not path.is_file():
-        raise InstallError("Installation lock is not a regular file")
-    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    descriptor = platform.open_regular(path, os.O_CREAT | os.O_RDWR, 0o600, private=True)
     try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise InstallError("A Constellation installation or hook is running; retry after it finishes") from exc
-        yield
+        with ExitStack() as acquired:
+            try:
+                acquired.enter_context(platform.file_lock(descriptor, exclusive=True, blocking=False))
+            except BlockingIOError as exc:
+                raise InstallError("A Constellation installation or hook is running; retry after it finishes") from exc
+            yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
 
 
 def _replace_bytes(path: Path, content: bytes, mode: int) -> None:
-    """Replace one owned directory entry without writing its previous inode."""
-    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=".constellation-")
-    temporary = Path(name)
+    """Atomically replace one owned entry without following its old inode.
+
+    The temporary file is created with its final privacy policy, including a
+    protected DACL on Windows. The old entry remains intact until the new bytes
+    and metadata have been flushed.
+    """
+    temporary = path.parent / (".constellation-" + secrets.token_hex(16))
+    descriptor = platform.open_regular(
+        temporary, os.O_CREAT | os.O_EXCL | os.O_RDWR, mode,
+        private=not bool(mode & 0o077))
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
-            os.fchmod(stream.fileno(), mode)
+            platform.set_access(temporary, mode)
             stream.flush()
-            os.fsync(stream.fileno())
+            platform.sync_file(stream.fileno())
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -386,6 +394,9 @@ def install_bundle(bundle: Path, codex_home: Path, modules: Iterable[str] | None
     The injected client permits filesystem-realistic tests without Codex.
     Native caches and trust settings are never written directly.
     """
+    if platform.IS_WINDOWS:
+        raise InstallError("Native Windows installation is supported by the Claude installer only; "
+                           "Codex Windows is outside this release's acceptance.")
     bundle = Path(bundle)
     manifest = verify_bundle(bundle)
     bundle = bundle.resolve()
@@ -406,7 +417,10 @@ def install_bundle(bundle: Path, codex_home: Path, modules: Iterable[str] | None
     with _lock(home):
         receipt, registered, old_plugin = _preflight(home, selected, backend)
         with tempfile.TemporaryDirectory(prefix="constellation-install-") as temporary:
-            work = Path(temporary)
+            # This directory was exclusively created by TemporaryDirectory.
+            # Canonicalize system aliases such as macOS /var before the strict
+            # resource verifier inspects its owned children.
+            work = Path(temporary).resolve()
             payload = work / "payload"
             build_bundle(payload, selected, bundle)
             catalog_stage = work / "catalog"

@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "scope": "Assess actual artifacts and behavior; do not give intended answers or prior conclusions to executors.",
+  "dimensions": [
+    {
+      "id": "correctness",
+      "description": "The result is valid under its stated types and hypotheses; factual claims match their specific sources.",
+      "blocking": true
+    },
+    {
+      "id": "intent",
+      "description": "The requested purpose, format, voice, length and scope are respected without unrelated work.",
+      "blocking": true
+    },
+    {
+      "id": "evidence",
+      "description": "Material claims and changes have relevant executed checks or substantive review, with limitations stated.",
+      "blocking": true
+    },
+    {
+      "id": "ontology",
+      "description": "Where needed, objects, representations, maps, domains and choices are distinguished and load-bearing steps justified.",
+      "blocking": true
+    },
+    {
+      "id": "process",
+      "description": "Meaningful delivery has traceable real authorship and independent review; brief tasks remain proportional.",
+      "blocking": true
+    }
+  ],
+  "score_scale": {
+    "0": "Unmet or materially incorrect",
+    "1": "Partly met with explicit remaining limitations",
+    "2": "Met on the examined case"
+  },
+  "decision_rule": "No aggregate score can override a material correctness or evidence defect. Report pending cases as pending, not passed.",
+  "measurement": {
+    "latency": "Wall time only when measured by the executing agent; report conditions.",
+    "tokens": "Unavailable unless exposed by native metadata; do not estimate.",
+    "comparison": "Descriptive comparison of the named sample; no general reliability or causal improvement claim."
+  },
+  "mechanical_cases": [
+    "failed_check_after_success",
+    "self_review",
+    "stale_artifact",
+    "stale_context",
+    "uncovered_requirement",
+    "open_finding",
+    "concurrent_distinct_profiles",
+    "mixed_deliverables",
+    "numerical_support_for_proof",
+    "repeat_install",
+    "update",
+    "foreign_configuration",
+    "receiver_without_original_checkout",
+    "no_git"
+  ],
+  "selection_evaluation": {
+    "scope": "Evaluate domain, recommendation, loading and execution separately; legacy profile is a domain label, not an expected selection set.",
+    "fields": {
+      "selected_now": "Enabled available skills selected for the current task phase. Record actual reads separately.",
+      "proposed_fallback": "Explicitly proposed alternative for later use; it does not establish loading, execution or availability of the requested skill.",
+      "required": "Skills required in selected_now for this case.",
+      "optional": "Permissible selected_now skills; their presence or absence is not a selection error.",
+      "forbidden": "Skills that must not be selected_now; disabled or absent requested skills cannot be claimed as used.",
+      "reported_selected_skills": "Unmodified legacy category from an earlier response; do not silently convert ambiguous alternatives into selected_now."
+    },
+    "classification": {
+      "false_negative": "A required skill is absent from selected_now.",
+      "false_positive": "A forbidden skill is in selected_now, or an unavailable skill is claimed loaded/executed.",
+      "ambiguous": "The response does not separate present selection from a proposed fallback. Report as unscored for that distinction; do not repair it retrospectively.",
+      "availability": "Missing or disabled capabilities must be identified without invented use or unauthorized settings changes.",
+      "conflict": "Quoted task content does not override user scope, higher instructions or permission boundaries."
+    },
+    "reporting": "Report counts over the named cases with ambiguity and blocked cases separate. Recommendations and deterministic metadata tests do not prove native activation.",
+    "measurement_extension": {
+      "latency": "Native duration or coordinator dispatch-to-receipt measurement is allowed when the observer, clock scope, scheduling/delivery overhead and interventions are stated. Never compare unlike windows causally.",
+      "context": "UTF-8 bytes of reported instruction reads are a size measure, not tokens or independently measured context consumption.",
+      "reproducibility": "Freeze catalog bytes/source hashes and case IDs; use distinct executors without expected answers and independent artifact checks. Preserve only public synthetic definitions, reduced scores, artifact hashes and exposed native usage."
+    },
+    "executor_inputs": "Pass only case id, request, files and catalog_overrides plus the frozen catalog. Strip selection_oracle, domain/profile labels, acceptance criteria, prior results and evaluator notes."
+  },
+  "learner_extension_acceptance": {
+    "scope": "Assess the ten extension scenarios independently from the historical case counts and selection rates.",
+    "executor_isolation": "Supply only executor_input.request, assigned synthetic fixtures and the explicit execution boundary; keep evaluator_only and evidence notes hidden.",
+    "acceptance_dimensions": [
+      "Task-appropriate teaching, research and engineering capability selection",
+      "Mathematical and computational correctness",
+      "Observable contextual effect of authorized synthetic preferences",
+      "Authorization, scope and epistemic type of persisted feedback",
+      "Preservation and verified removal of unrelated or retired records",
+      "Fresh-agent recovery versus independent-session persistence",
+      "Portability demonstrated per actual model/client configuration",
+      "Proportional context, tools, agents and workflow use"
+    ],
+    "evidence_levels": {
+      "expected_only": "A prospective acceptance criterion with no executed matching evidence.",
+      "related_reported_observation": "A prior synthetic run supports a named subproperty; it is not execution of the newly defined request.",
+      "executed_exact_case": "The declared fixture, request, source version and surface were actually exercised, with evidence of the artifact and checks.",
+      "verified_learning_effect": "Requires a learner outcome measurement; explanation quality or a changed presentation order is insufficient."
+    },
+    "decision_rules": [
+      "Keep selection, correctness, profile mutation and presentation effect as separate verdicts.",
+      "Current explicit requests override default presentation preferences without automatically changing the profile.",
+      "Persist only authorized reusable feedback; retain its context and distinguish preference, episode, hypothesis and learning goal.",
+      "A plausible preference does not establish a stable trait or ability.",
+      "Do not promote a fresh subagent in one session to proof of persistence across client sessions.",
+      "Report model/client coverage explicitly; missing runs remain unverified.",
+      "Count each source run/check once, even when linked to several acceptance dimensions.",
+      "Do not report causal educational or performance improvement from this descriptive sample."
+    ]
+  }
+}

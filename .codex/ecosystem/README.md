@@ -67,14 +67,23 @@ y configuración personal quedan fuera de la distribución.
 ## Instalar y actualizar
 
 Se requiere Python 3.11+ y el cliente elegido; Git se usa para publicación.
-Los instaladores emplean bloqueo POSIX. Construye desde fuentes publicadas en
-un destino nuevo:
+El destino predeterminado conserva macOS/Linux. El candidato 1.4.0-rc.1 añade
+el destino nativo de Claude en Windows, cuya aceptación real en Windows sigue
+pendiente. Consulta [su guía](docs/windows.md); construir el paquete no acredita
+esa ejecución. Para el destino POSIX, usa fuentes publicadas y un destino nuevo:
 
 ```sh
-python3 .codex/ecosystem/build.py --output /tmp/constellation-1.3.1 \
-  --archive /tmp/constellation-1.3.1.zip
-shasum -a 256 /tmp/constellation-1.3.1.zip
+python3 .codex/ecosystem/build.py --output /tmp/constellation-1.4.0-rc.1 \
+  --archive /tmp/constellation-1.4.0-rc.1.zip
+shasum -a 256 /tmp/constellation-1.4.0-rc.1.zip
 ```
+
+La edición inglesa se construye desde la misma fuente añadiendo `--language en`.
+Traduce instrucciones, roles, guías, evaluaciones y las cadenas de presentación
+del diario; conserva módulos, políticas, lógica y los instaladores. La edición
+predeterminada sigue en español. Ambas usan el mismo identificador y versión:
+instala una edición por cliente, sin activar dos copias. Las
+reglas de `ecosystem/locales/README.md` en las fuentes describen su inventario y límites.
 
 Copia el paquete por un canal autorizado y comprueba el hash. La
 [guía de instalación](docs/migrations.md#instalar-y-actualizar) contiene los
@@ -90,8 +99,10 @@ instalación, confianza ni ejecución. Abre sesiones nuevas después de actualiz
 
 ## Trabajar y comprobar
 
-En el hub, usa `.codex/workflow.py --session ID` o
-`.codex/workspace.py --session ID`. En un paquete independiente:
+En el hub, usa `.codex/ecosystem/cli.py git --session ID` o
+`.codex/ecosystem/cli.py workspace --session ID`. Los lanzadores antiguos
+de la raíz se han retirado; las sesiones abiertas deben cargar los cambios según
+su cliente. En un paquete independiente:
 
 ```sh
 python3 /ruta/al/paquete/ecosystem/cli.py git --root /ruta/proyecto --session ID begin

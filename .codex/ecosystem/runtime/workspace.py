@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack, contextmanager
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -17,7 +16,8 @@ from typing import Any, Iterator
 sys.dont_write_bytecode = True
 
 from . import workspace_root
-from .workflow import Blocked, Workflow, changed, digest, git, now, private_path, record_stop, safe_path, staged_gate, staged_paths, stop_replay
+from .. import platform_support as ps
+from .workflow import _read_private_text, _write_private, _windows_case_path, git_state_home, Blocked, Workflow, changed, digest, git, now, private_path, record_stop, safe_path, staged_gate, staged_paths, stop_replay
 
 
 def names(value: Any, label: str) -> list[str]:
@@ -36,6 +36,11 @@ def mapping(value: Any, label: str) -> dict[str, str]:
 
 
 def relative(name: str, *, root: bool = False) -> str:
+    if ps.IS_WINDOWS and not (root and name == "."):
+        try:
+            ps.validate_windows_relative(name)
+        except (ps.PlatformError, TypeError):
+            raise Blocked("Expected a safe Windows workspace-relative path.") from None
     p = Path(name)
     if not isinstance(name, str) or p.is_absolute() or ".." in p.parts or (not p.parts and not (root and name == ".")):
         raise Blocked(f"Expected a workspace-relative path: {name}")
@@ -64,12 +69,14 @@ def topological(roots: list[str], dependencies: dict[str, list[str]]) -> list[st
 
 class Workspace:
     def __init__(self, root: Path, session: str):
+        if ps.IS_WINDOWS:
+            ps.validate_lookup(root)
         self.root = root.resolve()
         if Path(git(self.root, "rev-parse", "--show-toplevel")).resolve() != self.root:
             raise Blocked("The workspace root must itself be a Git repository root.")
         self.session = session
         self.key = digest(session.encode())[:24]
-        self.home = Path(git(self.root, "rev-parse", "--path-format=absolute", "--git-path", "constellation"))
+        self.home = git_state_home(self.root)
         self.path = self.home / f"workspace-{self.key}.json"
         self.repositories = self.read_repositories()
 
@@ -78,7 +85,7 @@ class Workspace:
         registry = self._target(".codex/repositories.json")
         if registry.is_symlink() or not registry.is_file():
             raise Blocked("A regular .codex/repositories.json registry is required.")
-        data = json.loads(registry.read_text())
+        data = json.loads(registry.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or data.get("schema_version") != 1 or not isinstance(data.get("repositories"), list):
             raise Blocked("Unsupported repositories.json schema; expected schema_version 1 and repositories.")
         repositories: dict[str, str] = {}
@@ -100,8 +107,10 @@ class Workspace:
         for component in (target, *target.parents):
             if component == self.root:
                 break
-            if component.is_symlink():
+            if ps.is_reparse(component):
                 raise Blocked(f"Symlink paths cannot be routed: {name}")
+        if ps.IS_WINDOWS and name != ".":
+            _windows_case_path(self.root, name)
         if not target.resolve().is_relative_to(self.root):
             raise Blocked(f"Path leaves workspace: {name}")
         return target
@@ -159,22 +168,32 @@ class Workspace:
     def load(self) -> dict[str, Any]:
         if not self.path.is_file():
             raise Blocked("No workspace contract; run workspace.py plan first.")
-        state = json.loads(self.path.read_text())
+        state = json.loads(_read_private_text(self.path))
         if state.get("schema_version") != 1:
             raise Blocked("Unsupported workspace state schema.")
         return state
 
     def save(self, state: dict[str, Any]) -> None:
         temp = self.path.with_suffix(".tmp")
-        temp.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
+        if ps.is_reparse(self.path):
+            raise Blocked("Workspace state cannot be a link or reparse point.")
+        if self.path.exists():
+            descriptor = ps.open_regular(self.path, os.O_RDONLY, private=ps.IS_WINDOWS)
+            os.close(descriptor)
+        _write_private(temp, (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
         temp.replace(self.path)
+        ps.sync_directory(self.home)
 
     @contextmanager
     def lock(self) -> Iterator[None]:
-        self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with (self.home / "workspace.lock").open("a") as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
-            yield
+        ps.secure_mkdir(self.home, mode=0o700, parents=True, exist_ok=True)
+        descriptor = ps.open_regular(self.home / "workspace.lock", os.O_CREAT | os.O_RDWR,
+                                     0o600, private=ps.IS_WINDOWS)
+        try:
+            with ps.file_lock(descriptor, exclusive=True):
+                yield
+        finally:
+            os.close(descriptor)
 
     @contextmanager
     def flows(self, roots: list[str]) -> Iterator[dict[str, Workflow]]:
@@ -427,6 +446,19 @@ class Workspace:
                     self.failed(state, repo, exc)
                     raise
 
+    def check_resolve(self, repo: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Forward a reviewed replacement attestation to its actual Git owner."""
+        with self.lock():
+            state = self.load()
+            if repo not in state["roots"]:
+                raise Blocked(f"Repository does not participate in the plan: {repo}")
+            with self.flows(state["roots"]) as flows:
+                self.validate(state, flows)
+                result = flows[repo].check_resolve(payload)
+                state["finished"] = None
+                self.save(state)
+                return result
+
     def review(self, evidence: dict[str, Any]) -> dict[str, Any]:
         with self.lock():
             state = self.load()
@@ -606,6 +638,8 @@ def main(argv: list[str] | None = None, *, default_root: Path | None = None) -> 
             command.add_argument("--quick-code-reason", help="Justify a trivial ordinary code change before its first review round.")
             command.add_argument("--continuation-reason", help="Explain why another review iteration is useful.")
             command.add_argument("--continuation-next-action", help="Describe the concrete next review action.")
+    resolve_check = sub.add_parser("check-resolve")
+    resolve_check.add_argument("--repo", required=True)
     check = sub.add_parser("check")
     check.add_argument("--repo", required=True)
     check.add_argument("--timeout", type=int, default=300)
@@ -637,6 +671,11 @@ def main(argv: list[str] | None = None, *, default_root: Path | None = None) -> 
         if not isinstance(payload, dict):
             raise Blocked("Expected a JSON object.")
         result = getattr(workspace, args.command)(payload)
+    elif args.command == "check-resolve":
+        payload = json.load(sys.stdin)
+        if not isinstance(payload, dict):
+            raise Blocked("Expected a JSON object.")
+        result = workspace.check_resolve(args.repo, payload)
     elif args.command == "check":
         result = workspace.check(args.repo, args.argv[1:] if args.argv[:1] == ["--"] else args.argv, timeout=args.timeout)
     elif args.command.startswith("review-"):

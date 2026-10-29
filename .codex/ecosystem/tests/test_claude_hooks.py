@@ -5,8 +5,8 @@ event dispatch. All state, repositories, remotes and event content are fixtures.
 """
 from __future__ import annotations
 
-from contextlib import redirect_stderr, redirect_stdout
-import fcntl
+from contextlib import chdir, contextmanager, redirect_stderr, redirect_stdout
+import ctypes
 import hashlib
 import io
 import json
@@ -17,12 +17,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import FunctionType
 from unittest import mock
 
 SOURCE = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(SOURCE.parent))
-from ecosystem import claude_hooks as adapter, hooks
+from ecosystem import claude_hooks as adapter, hooks, platform_support
+from ecosystem.build import source_resource
+from ecosystem.platform_support import file_lock, set_access
 from helpers import Scenario
 
 
@@ -134,7 +137,12 @@ class ClaudeAdapterTests(unittest.TestCase):
         for name in ("../result.md", "nested/../result.md", "result.md\n*** Update File: other.md", "\x00bad", " result.md"):
             with self.subTest(name=name), self.assertRaises(adapter.AdapterError):
                 self.handle("PreToolUse", tool_input={"file_path": name})
-        (self.root / "alias").symlink_to(self.base, target_is_directory=True)
+        try:
+            (self.root / "alias").symlink_to(self.base, target_is_directory=True)
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Directory symlink fixture requires Windows Developer Mode")
+            raise
         self.denied(self.handle("PreToolUse", tool_input={"file_path": "alias/result.md"}))
 
     def test_native_agent_observation_preserves_real_identity_and_private_content(self) -> None:
@@ -218,10 +226,12 @@ class ClaudeLoaderTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name).resolve()
 
-    def release(self, *, installed: bool = False) -> Path:
-        root = self.base / "home" / "skills" / "constellation" if installed else self.base / "bundle"
+    def release(self, *, installed: bool = False,
+                managed_names: tuple[str, str] = ("skills", "constellation")) -> Path:
+        root = (self.base / "home" / managed_names[0] / managed_names[1]
+                if installed else self.base / "bundle")
         resources = {
-            "ecosystem/claude_hooks.py": (SOURCE / "claude_hooks.py").read_bytes(),
+            "ecosystem/claude_hooks.py": source_resource(SOURCE.parent, "ecosystem/claude_hooks.py")[0],
             ".claude-plugin/plugin.json": json.dumps({"name": "constellation", "version": "1.3.0"}).encode(),
             ".codex-plugin/plugin.json": json.dumps({"name": "constellation", "version": "1.3.0"}).encode(),
             "ecosystem/hooks.py": b"raise RuntimeError('synthetic unimported package')\n",
@@ -231,22 +241,78 @@ class ClaudeLoaderTests(unittest.TestCase):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
-            path.chmod(0o644)
+            set_access(path, 0o644)
             records[relative] = {"sha256": hashlib.sha256(content).hexdigest(), "mode": 0o644}
         manifest = {"schema": 1, "modules": ["coding"], "files": records}
         (root / "bundle.json").write_text(json.dumps(manifest))
-        (root / "bundle.json").chmod(0o644)
+        set_access(root / "bundle.json", 0o644)
         if installed:
             receipt = {"schema": 1, "owner": "constellation-claude-skills-dir", "plugin_id": "constellation@skills-dir",
                        "version": "1.3.0", "modules": ["coding"],
                        "bundle_sha256": hashlib.sha256((root / "bundle.json").read_bytes()).hexdigest()}
             (root / adapter.MARKER).write_text(json.dumps(receipt))
-            (root / adapter.MARKER).chmod(0o600)
+            set_access(root / adapter.MARKER, 0o600)
             lock = root.parent.parent / "constellation/.install.lock"
             lock.parent.mkdir()
+            set_access(lock.parent, 0o700)
             lock.write_bytes(b"")
-            lock.chmod(0o600)
+            set_access(lock, 0o600)
         return root
+
+    def test_managed_root_classification_preserves_platform_case_rules(self) -> None:
+        for windows in (False, True):
+            classifier = FunctionType(
+                adapter._is_managed_root.__code__,
+                {**adapter._is_managed_root.__globals__, "IS_WINDOWS": windows},
+            )
+            for root, expected in (
+                    (Path("home/skills/constellation"), True),
+                    (Path("home/Skills/Constellation"), windows),
+                    (Path("home/SKILLS/CONSTELLATION"), windows),
+                    (Path("home/skill/constellation"), False),
+                    (Path("home/skills/unrelated"), False)):
+                with self.subTest(windows=windows, root=str(root)):
+                    self.assertEqual(classifier(root), expected)
+
+    def _case_variant_managed_ownership_contract(self) -> None:
+        root = self.release(installed=True, managed_names=("Skills", "Constellation"))
+        marker = root / adapter.MARKER
+        content = marker.read_bytes()
+        marker.unlink()
+        # This rejection fails with the former case-sensitive classification:
+        # that path was treated as an explicit uninstalled bundle.
+        with self.assertRaises(adapter.AdapterError):
+            with adapter.verified_release(root):
+                self.fail("case-variant managed root skipped its ownership receipt")
+        marker.write_bytes(content)
+        set_access(marker, 0o600)
+        with adapter.verified_release(root) as manifest:
+            self.assertEqual(manifest["modules"], ["coding"])
+        lock = root.parent.parent / "constellation/.install.lock"
+        with lock.open("rb") as stream:
+            with file_lock(stream.fileno(), exclusive=True, blocking=False):
+                with self.assertRaises(BlockingIOError):
+                    with adapter.verified_release(root):
+                        self.fail("case-variant managed root skipped the installer lock")
+        lock.unlink()
+        with self.assertRaises((adapter.AdapterError, OSError)):
+            with adapter.verified_release(root):
+                self.fail("case-variant managed root accepted a missing install lock")
+
+    def test_windows_case_classification_keeps_receipt_and_lock_required(self) -> None:
+        # Clone the actual classifier code, changing only its policy flag.
+        # In an exported bootstrap helpers share the adapter's globals: changing
+        # module IS_WINDOWS would incorrectly switch host filesystem primitives.
+        classifier = FunctionType(
+            adapter._is_managed_root.__code__,
+            {**adapter._is_managed_root.__globals__, "IS_WINDOWS": True},
+        )
+        with mock.patch.object(adapter, "_is_managed_root", classifier):
+            self._case_variant_managed_ownership_contract()
+
+    @unittest.skipUnless(os.name == "nt", "Managed path case behavior requires native Windows")
+    def test_native_windows_case_variant_installation_keeps_ownership_checks(self) -> None:
+        self._case_variant_managed_ownership_contract()
 
     def test_stdlib_verifier_accepts_relocated_bundle_and_installed_receipt(self) -> None:
         root = self.release()
@@ -258,6 +324,59 @@ class ClaudeLoaderTests(unittest.TestCase):
         installed = self.release(installed=True)
         with adapter.verified_release(installed) as manifest:
             self.assertEqual(manifest["modules"], ["coding"])
+
+    def _relative_release_alias(self) -> tuple[Path, Path]:
+        root = self.release()
+        alias = self.base / "junction"
+        try:
+            alias.symlink_to(self.base, target_is_directory=True)
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Directory symlink fixture requires Windows Developer Mode")
+            raise
+        return root, alias
+
+    def test_relative_release_first_component_is_checked_before_resolution(self) -> None:
+        _root, alias = self._relative_release_alias()
+        with chdir(self.base), \
+                mock.patch.object(adapter, "IS_WINDOWS", True), \
+                mock.patch.object(adapter, "_windows_lookup", return_value=None), \
+                mock.patch.object(adapter, "is_reparse", wraps=adapter.is_reparse) as inspect:
+            with self.assertRaisesRegex(adapter.AdapterError, "reparse"):
+                with adapter.verified_release(Path("junction/bundle")):
+                    self.fail("relative release skipped its first redirected component")
+        self.assertIn(mock.call(alias), inspect.call_args_list)
+
+    def test_relative_release_checks_the_original_working_directory_ancestors(self) -> None:
+        _root, alias = self._relative_release_alias()
+        # Simulate a native cwd whose original name still includes a junction.
+        # resolve() must not erase that ancestor before the guard inspects it.
+        with chdir(self.base), \
+                mock.patch.object(adapter, "IS_WINDOWS", True), \
+                mock.patch.object(adapter, "_windows_lookup", return_value=None), \
+                mock.patch.object(adapter.os, "getcwd", return_value=str(alias)), \
+                mock.patch.object(adapter, "is_reparse", wraps=adapter.is_reparse) as inspect:
+            with self.assertRaisesRegex(adapter.AdapterError, "reparse"):
+                adapter._unlinked_lookup(Path("bundle"))
+                self.fail("relative release skipped a redirected cwd ancestor")
+        self.assertIn(mock.call(alias), inspect.call_args_list)
+
+    def test_existing_relative_release_and_current_directory_remain_valid(self) -> None:
+        root = self.release()
+        with chdir(self.base):
+            with adapter.verified_release(Path("bundle")) as manifest:
+                self.assertEqual(manifest["modules"], ["coding"])
+        with chdir(root):
+            with adapter.verified_release(Path(".")) as manifest:
+                self.assertEqual(manifest["modules"], ["coding"])
+
+    @unittest.skipUnless(os.name == "nt", "Relative reparse behavior requires native Windows")
+    def test_native_windows_relative_release_rejects_first_reparse_component(self) -> None:
+        _root, _alias = self._relative_release_alias()
+        with chdir(self.base):
+            with self.assertRaisesRegex(adapter.AdapterError, "reparse"):
+                with adapter.verified_release(Path("junction/bundle")):
+                    self.fail("native relative release skipped a reparse component")
 
     def test_tamper_unexpected_files_links_and_missing_receipt_are_rejected(self) -> None:
         root = self.release(installed=True)
@@ -277,7 +396,12 @@ class ClaudeLoaderTests(unittest.TestCase):
         outside = self.base / "outside.py"
         outside.write_bytes(original)
         module.unlink()
-        module.symlink_to(outside)
+        if os.name == "nt":
+            # A hardlink needs no symlink privilege and must be refused by the
+            # same installed-resource ownership check.
+            os.link(outside, module)
+        else:
+            module.symlink_to(outside)
         with self.assertRaises(adapter.AdapterError):
             with adapter.verified_release(root):
                 self.fail("linked resource accepted")
@@ -288,13 +412,158 @@ class ClaudeLoaderTests(unittest.TestCase):
             with adapter.verified_release(root):
                 self.fail("unowned installation accepted")
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission mutation; Windows ACL primitives have native tests")
+    def test_writable_package_directories_are_rejected_before_import(self) -> None:
+        root = self.release()
+        for directory in (root, root / "ecosystem"):
+            before = directory.stat().st_mode & 0o777
+            try:
+                directory.chmod(0o777)
+                with self.subTest(directory=directory.name), self.assertRaises(adapter.AdapterError):
+                    with adapter.verified_release(root):
+                        self.fail("foreign-writable release directory accepted")
+            finally:
+                directory.chmod(before)
+        with adapter.verified_release(root):
+            pass
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission mutation; Windows ACL primitives have native tests")
+    def test_writable_installed_parent_boundaries_are_rejected(self) -> None:
+        root = self.release(installed=True)
+        home = root.parent.parent
+        for directory in (home, root.parent, home / "constellation"):
+            before = directory.stat().st_mode & 0o777
+            try:
+                directory.chmod(0o777)
+                with self.subTest(directory=directory.name), self.assertRaises(adapter.AdapterError):
+                    with adapter.verified_release(root):
+                        self.fail("foreign-writable managed parent accepted")
+            finally:
+                directory.chmod(before)
+        with adapter.verified_release(root):
+            pass
+
+    def test_unmanaged_windows_policy_checks_parent_access_and_keeps_pins_through_yield(self) -> None:
+        root = self.release()
+        events = []
+
+        @contextmanager
+        def pin_lookup(path):
+            events.append(("enter", path))
+            try:
+                yield
+            finally:
+                events.append(("exit", path))
+
+        generator = adapter.verified_release.__wrapped__
+        verify_windows_policy = contextmanager(FunctionType(
+            generator.__code__,
+            {**generator.__globals__, "IS_WINDOWS": True, "_ps_guard_parents": pin_lookup},
+        ))
+        with verify_windows_policy(root) as manifest:
+            self.assertEqual(manifest["modules"], ["coding"])
+            self.assertEqual(events, [("enter", root / "bundle.json")])
+        self.assertEqual(events[-1], ("exit", root / "bundle.json"))
+        events.clear()
+        with self.assertRaisesRegex(RuntimeError, "synthetic consumer"):
+            with verify_windows_policy(root):
+                self.assertEqual(events, [("enter", root / "bundle.json")])
+                raise RuntimeError("synthetic consumer")
+        self.assertEqual(events[-1], ("exit", root / "bundle.json"))
+        if os.name != "nt":
+            # Windows chmod does not change DACLs. Its native ACL rejection is
+            # exercised separately; the pin-lifetime positives above run there.
+            before = self.base.stat().st_mode & 0o7777
+            try:
+                self.base.chmod(0o777)
+                with self.assertRaises(adapter.AdapterError):
+                    with verify_windows_policy(root):
+                        self.fail("unmanaged Windows policy accepted a foreign-writable parent")
+                self.assertEqual(events[-1], ("exit", root / "bundle.json"))
+            finally:
+                self.base.chmod(before)
+        with verify_windows_policy(root):
+            pass
+
+    @unittest.skipIf(os.name == "nt", "POSIX sticky-directory semantics")
+    def test_posix_sticky_parent_keeps_an_owned_explicit_bundle_usable(self) -> None:
+        root = self.release()
+        before = self.base.stat().st_mode & 0o7777
+        try:
+            self.base.chmod(0o1777)
+            with adapter.verified_release(root) as manifest:
+                self.assertEqual(manifest["modules"], ["coding"])
+        finally:
+            self.base.chmod(before)
+
+    @unittest.skipUnless(os.name == "nt", "Directory handle lifetime requires native Windows")
+    def test_native_windows_unmanaged_lookup_stays_pinned_and_releases_after_errors(self) -> None:
+        root = self.release()
+        moved = self.base / "moved-bundle"
+        with adapter.verified_release(root):
+            with self.assertRaises(OSError):
+                root.rename(moved)
+            self.assertTrue(root.is_dir())
+        root.rename(moved)
+        moved.rename(root)
+        with self.assertRaisesRegex(RuntimeError, "synthetic consumer"):
+            with adapter.verified_release(root):
+                raise RuntimeError("synthetic consumer")
+        root.rename(moved)
+        moved.rename(root)
+        inventory = root / "bundle.json"
+        content = inventory.read_bytes()
+        inventory.write_bytes(b"{invalid")
+        with self.assertRaises(adapter.AdapterError):
+            with adapter.verified_release(root):
+                self.fail("invalid inventory reached dispatch")
+        inventory.write_bytes(content)
+        root.rename(moved)
+
+    @unittest.skipUnless(os.name == "nt", "Parent replacement DACL requires native Windows")
+    def test_native_windows_unmanaged_parent_replacement_rights_are_rejected(self) -> None:
+        root = self.release()
+        set_access(root, 0o700)
+        set_access(self.base, 0o700)
+        module = root / "ecosystem/claude_hooks.py"
+        before = (platform_support.access_fingerprint(root),
+                  platform_support.access_fingerprint(module))
+        kernel, security = platform_support._ps_windows_api()
+        current = platform_support._ps_current_sid()
+        descriptor, dacl = ctypes.c_void_p(), ctypes.c_void_p()
+        sddl = ("O:" + current + "D:P(A;;FA;;;" + current
+                + ")(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x00000044;;;WD)")
+        try:
+            self.assertTrue(security.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl, 1, ctypes.byref(descriptor), None))
+            present, defaulted = ctypes.c_int(), ctypes.c_int()
+            self.assertTrue(security.GetSecurityDescriptorDacl(
+                descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)))
+            self.assertEqual(security.SetNamedSecurityInfoW(
+                platform_support._ps_native_name(self.base), 1, 0x80000004,
+                None, None, dacl, None), 0)
+            self.assertEqual(before, (platform_support.access_fingerprint(root),
+                                     platform_support.access_fingerprint(module)))
+            adapter._verify_release(root, installed=False)
+            with self.assertRaises(adapter.AdapterError):
+                with adapter.verified_release(root):
+                    self.fail("this-folder-only parent replacement rights reached dispatch")
+        finally:
+            try:
+                set_access(self.base, 0o700)
+            finally:
+                if descriptor.value:
+                    kernel.LocalFree(descriptor)
+        with adapter.verified_release(root):
+            pass
+
     def test_exclusive_installer_lock_blocks_hook_without_importing_package(self) -> None:
         root = self.release(installed=True)
         with (root.parent.parent / "constellation/.install.lock").open("rb") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with self.assertRaises(BlockingIOError):
-                with adapter.verified_release(root):
-                    self.fail("installer race accepted")
+            with file_lock(stream.fileno(), exclusive=True, blocking=False):
+                with self.assertRaises(BlockingIOError):
+                    with adapter.verified_release(root):
+                        self.fail("installer race accepted")
 
     def test_malformed_native_release_identity_is_rejected(self) -> None:
         root = self.release()
@@ -366,6 +635,53 @@ class ClaudeLoaderTests(unittest.TestCase):
                 else:
                     self.assertEqual(set(response), {"systemMessage"})
                 self.assertNotIn("additionalContext", combined)
+
+    def test_distributed_bootstrap_does_not_import_an_unverified_helper(self) -> None:
+        root = self.release()
+        rendered = (root / "ecosystem/claude_hooks.py").read_text(encoding="utf-8")
+        self.assertNotIn("from platform_support import", rendered)
+        self.assertNotIn("from .platform_support import", rendered)
+        marker = self.base / "unverified-helper-imported"
+        (root / "ecosystem/platform_support.py").write_text(
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('must not run')\n"
+            "raise RuntimeError('SYNTHETIC-HELPER-LEAK')\n", encoding="utf-8")
+        result = self.invoke(root, "PreToolUse")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertFalse(marker.exists())
+        self.assertNotIn("SYNTHETIC-HELPER-LEAK", result.stdout + result.stderr)
+
+    def test_windows_native_names_reject_aliases_without_filesystem_lookup(self) -> None:
+        invalid = (
+            "C:relative.md", "\\\\server\\share\\result.md", "\\root-relative.md",
+            "\\\\?\\C:\\project\\result.md", "result.md:stream", "NUL.txt",
+            "aux", "folder./result.md", "folder /result.md", "folder/../result.md",
+        )
+        with mock.patch.object(adapter, "IS_WINDOWS", True):
+            for value in invalid:
+                with self.subTest(value=value), self.assertRaises(adapter.AdapterError):
+                    adapter._windows_lookup(value)
+            for value in ("folder/result.md", "C:\\Projects\\O'Neil\\result.md"):
+                with self.subTest(value=value):
+                    adapter._windows_lookup(value)
+
+    @unittest.skipUnless(os.name == "nt", "PowerShell argument execution requires native Windows")
+    def test_powershell_guidance_round_trips_literal_arguments(self) -> None:
+        executable = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+        if executable is None:
+            self.skipTest("Native PowerShell executable is unavailable")
+        values = ["space name", "O'Neil", "$literal", "'; throw 'SYNTHETIC-INJECTION", "Unicode-λ"]
+        command = adapter._command_line([
+            sys.executable, "-I", "-c",
+            "import json,sys;print(json.dumps(sys.argv[1:],ensure_ascii=True))", *values,
+        ])
+        result = subprocess.run(
+            [executable, "-NoProfile", "-NonInteractive", "-Command", command],
+            capture_output=True, text=True, encoding="utf-8", timeout=15, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout.strip()), values)
 
     def test_project_owned_cli_needs_no_package_import_or_manifest(self) -> None:
         root = self.release()

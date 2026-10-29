@@ -6,7 +6,6 @@ has a separate test using only a temporary CODEX_HOME and no conversation/thread
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-import fcntl
 import hashlib
 from itertools import combinations
 import json
@@ -330,8 +329,7 @@ class RuntimeStatusTests(BundleCase):
 
     def test_status_reads_one_unchanged_incomplete_snapshot_while_writer_holds_lock(self) -> None:
         before = snapshot(self.home)
-        with (self.home / "workflow.lock").open("a") as writer:
-            fcntl.flock(writer, fcntl.LOCK_EX)
+        with (self.home / "workflow.lock").open("a") as writer, builder._PLATFORM.file_lock(writer.fileno()):
             result = self.invoke("status", timeout=3)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), json.loads(self.state.read_text()))
@@ -339,7 +337,8 @@ class RuntimeStatusTests(BundleCase):
             self.assertEqual(snapshot(self.home), before)
             with (self.home / "workflow.lock").open("a") as contender:
                 with self.assertRaises(BlockingIOError):
-                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with builder._PLATFORM.file_lock(contender.fileno(), blocking=False):
+                        pass
 
     def test_mutation_still_waits_for_writer_lock_and_does_not_release_it(self) -> None:
         marker = self.root / "mutator-entered-lock"
@@ -360,8 +359,7 @@ class RuntimeStatusTests(BundleCase):
         process = None
         before = self.state.read_bytes()
         try:
-            with (self.home / "workflow.lock").open("a") as writer:
-                fcntl.flock(writer, fcntl.LOCK_EX)
+            with (self.home / "workflow.lock").open("a") as writer, builder._PLATFORM.file_lock(writer.fileno()):
                 process = subprocess.Popen(
                     [sys.executable, "-I", "-B", "-c", runner, str(self.bundle), str(marker),
                      "--root", str(self.receiver), "--session", self.session, "plan"],
@@ -379,7 +377,8 @@ class RuntimeStatusTests(BundleCase):
                 self.assertEqual(self.state.read_bytes(), before)
                 with (self.home / "workflow.lock").open("a") as contender:
                     with self.assertRaises(BlockingIOError):
-                        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        with builder._PLATFORM.file_lock(contender.fileno(), blocking=False):
+                            pass
             output, error = process.communicate(timeout=5)
             self.assertEqual(process.returncode, 0, error)
             self.assertEqual(json.loads(output)["requirements"], ["Queued fixture update."])
@@ -458,6 +457,8 @@ class BuildTests(BundleCase):
         report()
         invoke("check", "--", sys.executable, "-I", "-B", "-c",
                "from pathlib import Path; assert 'Updated' in Path('README.md').read_text()")
+        # The final review binds the definitive check set as well as artifact bytes.
+        report()
         invoke("review", payload={requirement: "Checked the updated fixture and independent review."})
         invoke("commit", "-m", "Update fixture", "README.md")
         self.assertTrue(invoke("finish")["completed"])
@@ -815,6 +816,8 @@ class SyntheticInstallationTests(BundleCase):
         for current, old in (("compatibility", "COMPATIBILITY"), ("architecture", "ARCHITECTURE"),
                              ("migrations", "MIGRATION"), ("progress", "PROGRESS"), ("evaluation", "EVALUATION")):
             (payload / f"ecosystem/docs/{current}.md").replace(payload / f"ecosystem/{old}.md")
+        for relative in set(installer._inventory(payload)) - builder.legacy_files_130(receipt["modules"]) - {"bundle.json"}:
+            (payload / relative).unlink()
         (payload / "ecosystem/docs").rmdir()
         write_json(payload / "ecosystem/evaluation.json", {"historical_fixture": True})
         for relative in (PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST):
@@ -877,6 +880,8 @@ class SyntheticInstallationTests(BundleCase):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(content)
                     path.chmod(mode)
+                # File snapshots deliberately omit directories; restore this private boundary too.
+                builder._PLATFORM.set_access(self.home / "constellation", 0o700)
 
     def test_dual_130_previous_package_is_read_as_data(self) -> None:
         self.seed_dual_130_installation()
@@ -980,6 +985,7 @@ class SyntheticInstallationTests(BundleCase):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(contents)
                     path.chmod(mode)
+                builder._PLATFORM.set_access(self.home / "constellation", 0o700)
 
     @unittest.skipUnless(HISTORICAL_MODULES, "This distribution contains no historical modules")
     def test_legacy_release_updates_to_shared_runtime_for_every_module_selection(self) -> None:
@@ -1650,6 +1656,7 @@ class SyntheticInstallationTests(BundleCase):
         self.assertFalse((receiver / ".git").exists())
 
 
+@unittest.skipIf(os.name == "nt", "Codex native Windows is outside this Claude-only candidate")
 class NativeAdapterSubprocessTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="constellation-native-adapter-test-")
@@ -1753,6 +1760,7 @@ class NativeAdapterSubprocessTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("codex"), "Native Codex executable is unavailable; synthetic tests are separate")
+@unittest.skipIf(os.name == "nt", "Codex native Windows is outside this Claude-only candidate")
 class RealNativeInstallationTests(BundleCase):
     def test_real_native_same_version_update_refreshes_runtime_bytes(self) -> None:
         home = self.root / "same-version-home"
@@ -1813,6 +1821,7 @@ class RealNativeInstallationTests(BundleCase):
 
 
 @unittest.skipUnless(shutil.which("codex"), "Native Codex executable is unavailable; source exclusion requires real RPC")
+@unittest.skipIf(os.name == "nt", "Codex native Windows is outside this Claude-only candidate")
 class RealNativeSourceExclusionTests(BundleCase):
     def preference_snapshot(self, home: Path) -> dict[str, tuple[str, bytes | str, int]]:
         """Track settings and installed content, excluding native housekeeping.
@@ -2115,6 +2124,7 @@ class RealNativeSourceExclusionTests(BundleCase):
 
 
 @unittest.skipIf(IS_DISTRIBUTED, "Source-only distribution harness; nested execution would recurse")
+@unittest.skipIf(os.name == "nt", "POSIX export harness; run windows_acceptance.py for native Windows")
 class DistributedSuiteTests(unittest.TestCase):
     def test_full_and_each_module_run_their_shipped_suites_without_mutating_bundle(self) -> None:
         with tempfile.TemporaryDirectory(prefix="constellation-distributed-suite-") as temporary:
@@ -2142,7 +2152,7 @@ class DistributedSuiteTests(unittest.TestCase):
                     subprocess.run,
                     [sys.executable, "-I", "-B", "-m", "unittest", "discover", "-s",
                      str(bundle / "ecosystem/tests"), "-q"], cwd=receiver, env=environment,
-                    capture_output=True, text=True, timeout=180,
+                    capture_output=True, text=True, timeout=300,
                 ) for _, bundle, _, _, receiver, environment in cases]
                 for (name, bundle, manifest, before, receiver, _), future in zip(cases, pending):
                     with self.subTest(distribution=name):

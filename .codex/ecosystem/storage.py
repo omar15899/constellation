@@ -9,6 +9,8 @@ import sqlite3
 import stat
 from typing import Any, Iterator
 
+from . import platform_support as platform
+
 
 class Error(ValueError):
     """Invalid, stale or incomplete coordination request."""
@@ -39,7 +41,21 @@ def decode(value: str) -> Any:
 
 class Store:
     def __init__(self, directory: Path):
-        supplied = Path(directory).absolute()
+        original = Path(directory)
+        supplied = original.absolute()
+        if platform.IS_WINDOWS:
+            # Inspect the supplied lookup before resolve can erase a junction.
+            for component in (*reversed(supplied.parents), supplied):
+                if platform.is_reparse(component):
+                    raise Error("State directory must not traverse symbolic links or reparse points.")
+            if (not original.is_absolute() or not original.drive
+                    or original.drive.startswith("\\\\")):
+                raise Error("Windows state requires a local absolute drive path.")
+            try:
+                for component in original.parts[1:]:
+                    platform.validate_windows_relative(component)
+            except platform.PlatformError as exc:
+                raise Error("Windows state path contains a reserved or ambiguous component.") from exc
         # Freeze existing ancestor aliases (for example macOS /var -> /private/var)
         # while retaining the final component so a linked state directory is rejected.
         self.directory = supplied.parent.resolve() / supplied.name
@@ -47,22 +63,36 @@ class Store:
 
     def _safe(self, create: bool) -> bool:
         for parent in (*reversed(self.directory.parents), self.directory):
-            if parent.is_symlink():
+            if platform.is_reparse(parent):
                 raise Error("State directory must not traverse symbolic links.")
         if not self.directory.exists():
             if not create:
                 return False
-            self.directory.mkdir(mode=0o700, parents=True)
+            try:
+                platform.secure_mkdir(self.directory, mode=0o700, parents=True)
+            except platform.PlatformError as exc:
+                raise Error("Cannot establish private coordination state permissions.") from exc
         if not self.directory.is_dir():
             raise Error("State directory must be a directory.")
+        if platform.IS_WINDOWS:
+            try:
+                platform.verify_access(self.directory, private=True)
+            except platform.PlatformError as exc:
+                raise Error("State directory must have a private Windows DACL.") from exc
         for suffix in ("", "-journal", "-wal", "-shm"):
             path = Path(str(self.path) + suffix)
-            if path.is_symlink():
+            if platform.is_reparse(path):
                 raise Error("State files must not be symbolic links.")
             if path.exists():
                 info = path.stat()
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                     raise Error("State files must be private regular files.")
+                if platform.IS_WINDOWS:
+                    try:
+                        platform.verify_access(path, private=True,
+                                               inherited_from=self.directory if suffix else None)
+                    except platform.PlatformError as exc:
+                        raise Error("State files must have a private Windows DACL.") from exc
         return self.path.exists() or create
 
     @contextmanager
@@ -73,9 +103,12 @@ class Store:
         created = False
         if write and not self.path.exists():
             try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                fd = platform.open_regular(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                                           0o600, private=True)
             except FileExistsError:
                 self._safe(False)
+            except platform.PlatformError as exc:
+                raise Error("Cannot create private coordination state.") from exc
             else:
                 os.close(fd)
                 created = True

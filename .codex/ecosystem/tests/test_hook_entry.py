@@ -5,7 +5,10 @@ bootstrap's behavior, not Codex hook trust or native event delivery.
 """
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Native Codex bootstrap is outside the Windows Claude target.
+    fcntl = None
 import json
 import os
 from pathlib import Path
@@ -15,6 +18,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import unittest
 from typing import Any
 
 from test_package import (
@@ -24,6 +28,7 @@ from test_package import (
 from install import InstallError
 
 
+@unittest.skipIf(os.name == "nt", "POSIX Codex bootstrap; Windows candidate targets Claude only")
 class HookEntryTests(BundleCase):
     def runtime_bundle(self, label: str, *, hold: bool = False) -> Path:
         """Ship a visible runtime through the normal bundle and receipt checks."""

@@ -30,6 +30,7 @@ sys.path.insert(0, str(SOURCE.parent))
 from ecosystem.core import Engine, Error, RevisionConflict, discover_active  # noqa: E402
 from ecosystem import hooks  # noqa: E402
 from ecosystem.build import source_resource  # noqa: E402
+from ecosystem.platform_support import verify_access  # noqa: E402
 from helpers import AVAILABLE_PROFILES, DEFAULT_PROFILE  # noqa: E402
 
 
@@ -66,6 +67,15 @@ class HookProcessTests(unittest.TestCase):
             "CODEX_HOME": str(self.directory / "codex-home"),
             "XDG_CACHE_HOME": str(self.directory / "cache"),
         }
+        if os.name == "nt":
+            # Keep account locations isolated while retaining Windows process
+            # plumbing and discovery of the installed native Git executable.
+            for name in ("SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "SystemDrive"):
+                if name in os.environ:
+                    self.env[name] = os.environ[name]
+            self.env.update(PATH=os.environ.get("PATH", os.defpath),
+                            USERPROFILE=str(self.directory / "home"),
+                            TEMP=str(self.directory), TMP=str(self.directory))
         self.engine = Engine(self.root, self.state)
         self.argv = [sys.executable, "-I", "-B", "-c", "raise SystemExit(0)"]
 
@@ -669,8 +679,8 @@ finally:
                 self.assertNotIn(PRIVATE_TEXT.encode(), path.read_bytes())
                 self.assertNotIn(str(self.private).encode(), path.read_bytes())
         database = self.state / "ecosystem.sqlite3"
-        self.assertEqual(database.stat().st_mode & 0o077, 0)
-        self.assertEqual(self.state.stat().st_mode & 0o077, 0)
+        verify_access(database, private=True)
+        verify_access(self.state, private=True)
         self.assertFalse((self.directory / "codex-home").exists())
 
     def test_payload_and_cwd_cannot_select_executable_engine(self) -> None:
@@ -1003,6 +1013,23 @@ finally:
         self.assert_denied(self.run_hook("PreToolUse", audit_git=True))
         self.assert_warning(self.run_hook("Stop", audit_git=True))
 
+    def test_redirected_git_state_directory_cannot_hide_a_missing_state_file(self) -> None:
+        flow = self.git_plan()
+        original = self.directory / "original-owned-state"
+        flow.home.rename(original)
+        empty = self.directory / "unrelated-empty-directory"
+        empty.mkdir()
+        try:
+            flow.home.symlink_to(empty, target_is_directory=True)
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Directory symlink fixture requires Windows Developer Mode")
+            raise
+        self.assert_denied(self.run_hook("PreToolUse", audit_git=True))
+        self.assert_warning(self.run_hook("Stop", audit_git=True))
+        self.assertTrue((original / flow.path.name).is_file())
+        self.assertEqual(list(empty.iterdir()), [])
+
     def test_git_project_cannot_supply_executable_hook_modules(self) -> None:
         self.git_plan()
         marker = self.root / "injected-engine-ran"
@@ -1093,6 +1120,66 @@ finally:
                 process.wait(timeout=2)
             for stream in (process.stdin, process.stdout, process.stderr):
                 stream.close()
+
+
+class WindowsPathGuardTests(unittest.TestCase):
+    """Exercise Windows alias rejection independently of the host OS."""
+
+    def test_unsafe_windows_names_fail_before_filesystem_lookup(self) -> None:
+        invalid = (
+            "C:result.md", "\\\\server\\share\\result.md", "\\root-relative.md",
+            "\\\\?\\C:\\result.md", "result.md:stream", "CON.txt", "LPT1",
+            "folder./result.md", "folder /result.md", "folder/../result.md",
+        )
+        with mock.patch.object(hooks, "IS_WINDOWS", True):
+            for name in invalid:
+                with self.subTest(name=name), self.assertRaises(hooks.HookError):
+                    hooks._windows_patch_name(name)
+            for name in ("folder/result.md", "C:\\Projects\\O'Neil\\result.md"):
+                with self.subTest(name=name):
+                    hooks._windows_patch_name(name)
+
+    def test_regular_relative_lookup_is_still_permitted(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="windows-guard-valid-") as temporary:
+            root = Path(temporary).resolve()
+            with mock.patch.object(hooks, "IS_WINDOWS", True):
+                self.assertEqual(hooks._original_patch_target(root, "new/result.md"),
+                                 root / "new/result.md")
+
+    def test_reparse_components_are_rejected_even_for_deletion(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="windows-guard-reparse-") as temporary:
+            root = Path(temporary).resolve()
+            alias = root / "alias"
+            alias.mkdir()
+            target = alias / "result.md"
+            target.write_text("synthetic\n", encoding="utf-8")
+            for flagged in (alias, target):
+                with self.subTest(flagged=flagged.name), \
+                        mock.patch.object(hooks, "IS_WINDOWS", True), \
+                        mock.patch.object(hooks, "is_reparse",
+                                          side_effect=lambda path: Path(path) == flagged):
+                    with self.assertRaises(hooks.HookError):
+                        hooks._original_patch_target(root, "alias/result.md", deleting=True)
+
+    @unittest.skipUnless(os.name == "nt", "Case-alias behavior requires native Windows")
+    def test_case_alias_does_not_expand_an_exact_registered_scope(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="windows-guard-case-") as temporary:
+            root = Path(temporary).resolve()
+            (root / "result.md").write_text("synthetic\n", encoding="utf-8")
+
+            class PathValidator:
+                def __init__(self, *_args):
+                    pass
+
+                def validate_path(self, _name):
+                    pass
+
+            tasks = [{"root": str(root), "paths": ["result.md"]}]
+            permitted = {"tool_name": "apply_patch", "tool_input": patch("result.md")}
+            aliased = {"tool_name": "apply_patch", "tool_input": patch("RESULT.MD")}
+            self.assertEqual(hooks._guard_patch(permitted, tasks, root, root / "state", PathValidator), {})
+            denied = hooks._guard_patch(aliased, tasks, root, root / "state", PathValidator)
+            self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
 
 
 if __name__ == "__main__":

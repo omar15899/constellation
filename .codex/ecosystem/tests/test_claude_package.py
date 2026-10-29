@@ -4,6 +4,8 @@ from __future__ import annotations
 from itertools import combinations
 import hashlib
 import json
+import ast
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -114,11 +116,22 @@ class ClaudePackageTests(unittest.TestCase):
     def test_canonical_role_change_regenerates_the_native_projection(self) -> None:
         source = self.source_copy()
         role = source / "ecosystem/agents/researcher.toml"
-        role.write_text(role.read_text().replace("Explicita la decisión", "Precisa la decisión"))
+        before = role.read_bytes()
+        canonical = tomllib.loads(before.decode("utf-8"))
+        instruction = "Synthetic bounded instruction: report the verified fixture result."
+        updated = {**canonical, "developer_instructions":
+                   canonical["developer_instructions"].rstrip() + "\n\n" + instruction + "\n"}
+        role.write_text("\n".join(
+            f"{field} = {json.dumps(updated[field], ensure_ascii=False)}"
+            for field in ("name", "description", "developer_instructions")) + "\n", encoding="utf-8")
+        self.assertNotEqual(role.read_bytes(), before, "Canonical mutation must not be a language-dependent no-op")
+        self.assertNotEqual(tomllib.loads(role.read_text(encoding="utf-8"))["developer_instructions"],
+                            canonical["developer_instructions"])
         rebuilt = self.root / "changed"
         builder.build_bundle(rebuilt, self.manifest["modules"], source_root=source)
         self.assertNotEqual((rebuilt / "agents/researcher.md").read_bytes(),
                             (self.bundle / "agents/researcher.md").read_bytes())
+        self.assertIn(instruction, (rebuilt / "agents/researcher.md").read_text(encoding="utf-8"))
         self.assertEqual(validate(rebuilt), [])
 
     def test_source_and_bundle_resources_have_one_comparison_mapping(self) -> None:
@@ -224,6 +237,7 @@ class ClaudePackageTests(unittest.TestCase):
         path.write_text(json.dumps(hooks))
         self.assertTrue(any("declared failure policy" in error for error in validate(source)))
 
+    @unittest.skipIf(os.name == "nt", "POSIX receipt mode mutations; actual Windows ACL tests are separate")
     def test_only_explicit_installed_metadata_is_permitted(self) -> None:
         receipt = self.bundle / builder.INSTALL_RECEIPT
         receipt.write_text("{}\n")
@@ -235,6 +249,7 @@ class ClaudePackageTests(unittest.TestCase):
         with self.assertRaises(builder.BundleError):
             builder.verify_bundle(self.bundle, installation=True)
 
+    @unittest.skipIf(os.name == "nt", "POSIX receipt mode mutations; actual Windows ACL tests are separate")
     def test_installed_receipt_must_be_regular_and_have_safe_mode(self) -> None:
         receipt = self.bundle / builder.INSTALL_RECEIPT
         receipt.write_text("{}\n")
@@ -258,6 +273,203 @@ class ClaudePackageTests(unittest.TestCase):
         manifest = builder.build_bundle(rebuilt, self.manifest["modules"], source_root=source)
         for relative in manifest["files"]:
             self.assertNotIn(sentinel, (rebuilt / relative).read_bytes())
+
+
+    def test_windows_target_has_uniform_exec_form_and_preserves_failure_policy(self) -> None:
+        source = self.source_copy()
+        windows = self.root / "Windows package with spaces"
+        builder.build_bundle(windows, self.manifest["modules"], source, target="windows-claude")
+        self.assertEqual(builder.bundle_target(windows), "windows-claude")
+        self.assertEqual(validate(windows), [])
+        hooks = json.loads((windows / "ecosystem/claude-hooks.json").read_text())
+        for event, groups in hooks["hooks"].items():
+            hook = groups[0]["hooks"][0]
+            self.assertEqual(hook["command"], "python")
+            self.assertEqual(hook["args"][0], "-I")
+            self.assertEqual(hook["args"][-1], event)
+            self.assertNotIn("shell", hook)
+            if event in {"UserPromptSubmit", "PreToolUse"}:
+                self.assertEqual(hook["onFailure"], "block")
+        # This is structural target verification, not an execution on Windows.
+        self.assertEqual(json.loads((windows / builder.CLAUDE_PLUGIN_MANIFEST).read_text())["version"],
+                         json.loads((self.bundle / builder.CLAUDE_PLUGIN_MANIFEST).read_text())["version"])
+
+    def test_windows_bundle_rebuild_and_subset_preserve_target_without_sources(self) -> None:
+        windows = self.root / "windows"
+        source = self.source_copy()
+        builder.build_bundle(windows, self.manifest["modules"], source, target="windows-claude")
+        relocated = self.root / "relocated Windows package"
+        shutil.copytree(windows, relocated)
+        rebuilt = self.root / "rebuilt-windows"
+        self.assertEqual(builder.build_bundle(rebuilt, source_root=relocated), builder.verify_bundle(windows))
+        self.assertEqual(builder.bundle_target(rebuilt), "windows-claude")
+        subset = self.root / "windows-subset"
+        builder.build_bundle(subset, (self.manifest["modules"][0],), relocated)
+        self.assertEqual(builder.bundle_target(subset), "windows-claude")
+        self.assertEqual(validate(subset), [])
+        with self.assertRaisesRegex(builder.BundleError, "preserve their target"):
+            builder.build_bundle(self.root / "conversion", source_root=relocated, target="windows-claude")
+        with self.assertRaisesRegex(builder.BundleError, "Target must"):
+            builder.build_bundle(self.root / "unknown-target", self.manifest["modules"], source, target="windows")
+        self.assertFalse((self.root / "conversion").exists())
+        self.assertFalse((self.root / "unknown-target").exists())
+
+    def test_bootstrap_embeds_one_helper_without_importing_package_code(self) -> None:
+        raw = (self.bundle / "ecosystem/claude_hooks.py").read_bytes()
+        tree = ast.parse(raw)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                self.assertNotIn("platform_support", node.module or "")
+            elif isinstance(node, ast.Import):
+                self.assertFalse(any("platform_support" in alias.name for alias in node.names))
+        marker = builder._PLATFORM_BEGIN.encode()
+        self.assertEqual(raw.count(marker), 1)
+        self.assertIn(b"class PlatformError", raw)
+        source = self.source_copy()
+        rerendered, mode = builder.source_resource(source, "ecosystem/claude_hooks.py")
+        self.assertEqual(rerendered, raw)
+        self.assertEqual(mode, 0o644)
+        with self.assertRaisesRegex(builder.BundleError, "one canonical platform block"):
+            builder.render_claude_bootstrap(b"import platform_support\n", b"pass\n")
+
+    def test_owned_131_uses_frozen_membership_without_executing_old_code(self) -> None:
+        old = self.root / "owned-131"
+        shutil.copytree(self.bundle, old)
+        expected = builder.legacy_files_131(self.manifest["modules"])
+        self.assertFalse("ecosystem/platform_support.py" in expected)
+        for relative in set(self.manifest["files"]) - expected:
+            (old / relative).unlink()
+        for relative in (builder.PLUGIN_MANIFEST, builder.CLAUDE_PLUGIN_MANIFEST):
+            path = old / relative
+            data = json.loads(path.read_text())
+            data["version"] = "1.3.1"
+            path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n")
+        # Owned source is data, even if its old builder would raise on import.
+        (old / "ecosystem/build.py").write_text("raise AssertionError('old code must not execute')\n")
+        manifest = {"schema": 1, "modules": self.manifest["modules"],
+                    "files": {relative: builder.file_record(old / relative) for relative in sorted(expected)}}
+        (old / "bundle.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+        self.assertEqual(builder.verify_owned_bundle(old), manifest)
+        with self.assertRaises(builder.BundleError):
+            builder.verify_bundle(old)
+        original = builder.COMMON_FILES
+        try:
+            builder.COMMON_FILES = (*original, "ecosystem/new-resource.py")
+            self.assertEqual(builder.legacy_files_131(self.manifest["modules"]), expected)
+        finally:
+            builder.COMMON_FILES = original
+
+    def test_mixed_or_shell_based_native_interpreters_are_rejected(self) -> None:
+        data = json.loads((self.bundle / "ecosystem/claude-hooks.json").read_text())
+        for change in ("mixed", "shell", "failure-policy"):
+            candidate = json.loads(json.dumps(data))
+            hook = candidate["hooks"]["PreToolUse"][0]["hooks"][0]
+            if change == "mixed":
+                hook["command"] = "python" if hook["command"] == "python3" else "python3"
+            elif change == "shell":
+                hook["command"] = "python -I"
+                hook.pop("args")
+            else:
+                hook.pop("onFailure")
+            with self.subTest(change=change), self.assertRaises(builder.BundleError):
+                builder.claude_hook_target(candidate)
+
+
+    def owned_131_fixture(self, name: str) -> tuple[Path, dict]:
+        """Create historical membership with synthetic inert payload bytes."""
+        old = self.root / name
+        shutil.copytree(self.bundle, old)
+        expected = builder.legacy_files_131(self.manifest["modules"])
+        for relative in set(self.manifest["files"]) - expected:
+            (old / relative).unlink()
+        for relative in (builder.PLUGIN_MANIFEST, builder.CLAUDE_PLUGIN_MANIFEST):
+            path = old / relative
+            data = json.loads(path.read_text())
+            data["version"] = "1.3.1"
+            path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n")
+        manifest = {"schema": 1, "modules": self.manifest["modules"],
+                    "files": {relative: builder.file_record(old / relative) for relative in sorted(expected)}}
+        (old / "bundle.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+        return old, manifest
+
+    @unittest.skipIf(os.name == "nt", "POSIX mutation scenario; native Windows ACL case is separate")
+    def test_package_directories_reject_foreign_replacement_for_current_and_owned_131(self) -> None:
+        old, manifest = self.owned_131_fixture("directory-access-131")
+        for root, verify, expected in (
+                (self.bundle, builder.verify_bundle, self.manifest),
+                (old, builder.verify_owned_bundle, manifest)):
+            before = {name: (root / name).read_bytes() for name in expected["files"]}
+            for relative in (".", "ecosystem"):
+                path = root / relative
+                with self.subTest(release=str(root.name), directory=relative):
+                    path.chmod(0o777)
+                    try:
+                        with self.assertRaisesRegex(builder.BundleError, "directory access"):
+                            verify(root)
+                        self.assertTrue(any("directory access" in error for error in validate(root)))
+                    finally:
+                        path.chmod(0o755)
+                    # Neither readonly nor stronger private protection grants mutation to others.
+                    for mode in (0o555, 0o700):
+                        path.chmod(mode)
+                        try:
+                            self.assertEqual(verify(root), expected)
+                        finally:
+                            path.chmod(0o755)
+            self.assertEqual(before, {name: (root / name).read_bytes() for name in expected["files"]})
+
+    @unittest.skipUnless(os.name == "nt", "Requires actual Windows DACL semantics")
+    def test_windows_package_directory_add_file_and_delete_child_acl_is_rejected(self) -> None:
+        import subprocess
+
+        old, manifest = self.owned_131_fixture("directory-acl-131")
+        executable = shutil.which("icacls")
+        self.assertIsNotNone(executable, "Native Windows acceptance requires icacls.exe")
+        for root, verify, expected in (
+                (self.bundle, builder.verify_bundle, self.manifest),
+                (old, builder.verify_owned_bundle, manifest)):
+            before = {name: (root / name).read_bytes() for name in expected["files"]}
+            for relative in (".", "ecosystem"):
+                directory = root / relative
+                with self.subTest(release=root.name, directory=relative):
+                    result = subprocess.run([executable, str(directory), "/grant",
+                                             "*S-1-1-0:(WD,DC)"], capture_output=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, "Synthetic directory ACL could not be established")
+                    try:
+                        with self.assertRaisesRegex(builder.BundleError, "directory access"):
+                            verify(root)
+                    finally:
+                        builder._PLATFORM.set_access(directory, 0o755)
+                    self.assertEqual(verify(root), expected)
+            self.assertEqual(before, {name: (root / name).read_bytes() for name in expected["files"]})
+
+
+    def test_platform_helper_drift_is_rejected_even_with_refreshed_inventory(self) -> None:
+        helper = self.bundle / "ecosystem/platform_support.py"
+        marker = self.root / "helper-must-not-execute"
+        helper.write_text(helper.read_text() + "\nfrom pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n")
+        manifest = json.loads((self.bundle / "bundle.json").read_text())
+        manifest["files"]["ecosystem/platform_support.py"] = builder.file_record(helper)
+        (self.bundle / "bundle.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+        with self.assertRaisesRegex(builder.BundleError, "canonical platform support"):
+            builder.verify_bundle(self.bundle)
+        self.assertTrue(any("canonical platform support" in error for error in validate(self.bundle)))
+        self.assertFalse(marker.exists())
+
+
+    def test_malformed_interpreter_and_owned_version_types_fail_without_traceback(self) -> None:
+        hooks = json.loads((self.bundle / "ecosystem/claude-hooks.json").read_text())
+        for value in (None, False, 1, [], {}):
+            candidate = json.loads(json.dumps(hooks))
+            candidate["hooks"]["PreToolUse"][0]["hooks"][0]["command"] = value
+            with self.subTest(field="command", value=value), self.assertRaises(builder.BundleError):
+                builder.claude_hook_target(candidate)
+        path = self.bundle / builder.PLUGIN_MANIFEST
+        original = json.loads(path.read_text())
+        for value in (None, False, 1, [], {}):
+            path.write_text(json.dumps({**original, "version": value}))
+            with self.subTest(field="version", value=value), self.assertRaises(builder.BundleError):
+                builder.verify_owned_bundle(self.bundle)
 
 
 if __name__ == "__main__":

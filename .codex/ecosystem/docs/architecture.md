@@ -22,6 +22,7 @@ un servicio de selección semántica.
 | Personalización pedagógica | Skill de enseñanza disponible y perfil explícito del usuario | Perfil local provisional, editable y ajeno al paquete | Explicaciones y feedback intencional reutilizable |
 | Eventos Codex | Entrada estable `CODEX_HOME/constellation/hook.py`, fuente `ecosystem/hook_entry.py`; adaptador `ecosystem/hooks.py` | Recibo e inventario verificados bajo lock; guía estática y controles sobre contratos activos; confianza nativa | Plugin instalado |
 | Eventos Claude | `ecosystem/claude_hooks.py`, traducción al mismo `ecosystem/hooks.py` | Identidad `claude-<session_id>`, metadata estructural y dueño de hooks explícito | Plugin Claude o adaptador receptor |
+| Primitivas de plataforma | `ecosystem/platform_support.py` | Bloqueos por SO, comprobación de acceso privado y operaciones exclusivas del filesystem | Runtime verificado y bootstrap Claude autónomo generado |
 | Distribución | `ecosystem/build.py`; instaladores `install.py` y `claude.py` | Un bundle permitido, hashes, recibos y proyecciones nativas | Codex, Claude y receptores autorizados |
 | Dominio | `AGENTS.md`, herramientas y validadores del proyecto | Archivos propios del receptor | Su trabajo especializado |
 
@@ -58,6 +59,16 @@ propiedad, integridad y recuperación necesarias para actualizar. Son datos y
 controles del instalador vigente; no mantienen otra estructura activa ni otro
 runtime. El adaptador de OmarOS y su copia derivada verificada pertenecen al
 contrato receptor actual.
+
+La candidata `1.4.0-rc.1` añade el destino `windows-claude` para Claude Code
+en Windows nativo, junto con la selección de idioma. Conserva un motor compartido
+y adapta las primitivas del sistema; no instala WSL ni concede permisos nuevos.
+El constructor incrusta mecánicamente el helper canónico de plataforma en el
+bootstrap Claude autónomo, que verifica el paquete antes de importar sus módulos.
+El resto del runtime consume ese mismo recurso desde la distribución verificada.
+La aceptación real de Windows permanece pendiente de su ejecución allí; la guía
+`docs/windows.md` distingue las pruebas locales, los replays y el despacho nativo.
+Este destino no acredita soporte de Codex en Windows ni cambia el pin de OmarOS.
 
 ## Una distribución para varios portátiles
 

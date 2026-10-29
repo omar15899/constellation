@@ -1,7 +1,6 @@
 """Exercise real portable Claude installations without model or account access."""
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -18,8 +17,10 @@ sys.dont_write_bytecode = True
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from build import BUNDLE_MANIFEST, INSTALL_RECEIPT, build_bundle, file_record, verify_bundle
+from build import (BUNDLE_MANIFEST, INSTALL_RECEIPT, build_bundle, file_record,
+                   legacy_files_131, verify_bundle)
 import claude as installer
+import platform_support as platform
 from install import InstallError
 
 
@@ -39,6 +40,7 @@ def snapshot(root: Path) -> dict:
     return result
 
 
+@unittest.skipIf(platform.IS_WINDOWS, "POSIX file-mode/predecessor fixtures; native Windows has its own acceptance cases")
 class ClaudeInstallationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -83,7 +85,11 @@ class ClaudeInstallationTests(unittest.TestCase):
             "architecture": "ARCHITECTURE", "compatibility": "COMPATIBILITY",
             "migrations": "MIGRATION", "progress": "PROGRESS", "evaluation": "EVALUATION",
         }
-        manifest = json.loads((target / BUNDLE_MANIFEST).read_text())
+        manifest = json.loads((target / BUNDLE_MANIFEST).read_text(encoding="utf-8"))
+        predecessor = legacy_files_131(manifest["modules"])
+        for relative in sorted(set(manifest["files"]) - predecessor):
+            (target / relative).unlink()
+            del manifest["files"][relative]
         for current, previous in legacy_docs.items():
             source = f"ecosystem/docs/{current}.md"
             destination = f"ecosystem/{previous}.md"
@@ -139,7 +145,8 @@ class ClaudeInstallationTests(unittest.TestCase):
                 build_bundle(incoming, modules=modules, source_root=self.bundle)
                 result = installer.install_bundle(incoming, home)
                 self.assertEqual(result["status"], "updated")
-                self.assertEqual(result["version"], "1.3.1")
+                incoming_version = json.loads((incoming / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
+                self.assertEqual(result["version"], incoming_version)
                 self.assertEqual(result["modules"], modules)
                 self.assertEqual((settings.read_bytes(), settings.stat().st_mode), settings_before)
                 self.assertFalse((target / "ecosystem/evaluation.json").exists())
@@ -180,14 +187,14 @@ class ClaudeInstallationTests(unittest.TestCase):
     def test_failed_130_upgrade_restores_exact_predecessor(self) -> None:
         self.owned_130()
         before = snapshot(self.home)
-        original = Path.rename
+        original = installer.platform.promote_directory
 
         def fail_stage(path: Path, destination: Path):
             if path.name == installer.STAGING_NAME:
                 raise OSError("synthetic upgrade promotion failure")
             return original(path, destination)
 
-        with patch.object(Path, "rename", fail_stage):
+        with patch.object(installer.platform, "promote_directory", fail_stage):
             with self.assertRaisesRegex(InstallError, "previous owned payload was restored"):
                 installer.install_bundle(self.bundle, self.home)
         self.assertEqual(snapshot(self.home), before)
@@ -325,6 +332,21 @@ class ClaudeInstallationTests(unittest.TestCase):
         with self.assertRaisesRegex(InstallError, "receipt differs"):
             installer.verify_installation(self.target)
 
+    def test_verified_read_api_rejects_unsafe_managed_parent_and_accepts_restoration(self) -> None:
+        installer.install_bundle(self.bundle, self.home)
+        skills = self.target.parent
+        original_mode = stat.S_IMODE(skills.stat().st_mode)
+        skills.chmod(0o777)
+        before = snapshot(self.home)
+        with self.assertRaisesRegex(InstallError, "directory permissions"):
+            with installer.verified_installation(self.target):
+                pass
+        self.assertEqual(snapshot(self.home), before)
+        skills.chmod(original_mode)
+        with installer.verified_installation(self.target) as manifest:
+            self.assertEqual(manifest["modules"],
+                             installer.verify_installation(self.target)["manifest"]["modules"])
+
     def test_live_hook_lock_rejects_installation_without_mutating_payload(self) -> None:
         installer.install_bundle(self.bundle, self.home)
         before = snapshot(self.home)
@@ -337,14 +359,14 @@ class ClaudeInstallationTests(unittest.TestCase):
         installer.install_bundle(self.bundle, self.home)
         before = snapshot(self.home)
         next_bundle = self.changed_bundle()
-        original = Path.rename
+        original = installer.platform.promote_directory
 
         def fail_stage(path: Path, destination: Path):
             if path.name == installer.STAGING_NAME:
                 raise OSError("synthetic second rename failure")
             return original(path, destination)
 
-        with patch.object(Path, "rename", fail_stage):
+        with patch.object(installer.platform, "promote_directory", fail_stage):
             with self.assertRaisesRegex(InstallError, "previous owned payload was restored"):
                 installer.install_bundle(next_bundle, self.home)
         self.assertEqual(snapshot(self.home), before)
@@ -354,14 +376,14 @@ class ClaudeInstallationTests(unittest.TestCase):
         installer.install_bundle(self.bundle, self.home)
         before = snapshot(self.home)
         next_bundle = self.changed_bundle()
-        original = Path.rename
+        original = installer.platform.promote_directory
 
         def fail_target(path: Path, destination: Path):
             if path == self.target:
                 raise OSError("synthetic first rename failure")
             return original(path, destination)
 
-        with patch.object(Path, "rename", fail_target):
+        with patch.object(installer.platform, "promote_directory", fail_target):
             with self.assertRaises(InstallError):
                 installer.install_bundle(next_bundle, self.home)
         self.assertEqual(snapshot(self.home), before)
@@ -417,6 +439,145 @@ class ClaudeInstallationTests(unittest.TestCase):
                     installer.install_bundle(self.bundle, self.home)
                 self.assertEqual(snapshot(self.home), before)
                 shutil.rmtree(pending)
+
+    def test_last_moment_foreign_empty_target_is_preserved_by_atomic_promotion(self) -> None:
+        original = installer.platform._ps_posix_rename_exclusive
+        foreign_identity = []
+
+        def foreign_target(source: Path, destination: Path) -> None:
+            if source.name == installer.STAGING_NAME and destination == self.target:
+                destination.mkdir()
+                metadata = destination.stat()
+                foreign_identity.append((metadata.st_dev, metadata.st_ino))
+            original(source, destination)
+
+        with patch.object(installer.platform, "_ps_posix_rename_exclusive", foreign_target):
+            with self.assertRaises(InstallError):
+                installer.install_bundle(self.bundle, self.home)
+        self.assertEqual(len(foreign_identity), 1)
+        metadata = self.target.stat()
+        self.assertEqual((metadata.st_dev, metadata.st_ino), foreign_identity[0])
+        self.assertEqual(list(self.target.iterdir()), [])
+        self.assertFalse((self.target.parent / installer.STAGING_NAME).exists())
+
+    def test_last_moment_foreign_backup_does_not_replace_either_directory(self) -> None:
+        installer.install_bundle(self.bundle, self.home)
+        before = snapshot(self.target)
+        replacement = self.changed_bundle()
+        original = installer.platform._ps_posix_rename_exclusive
+        backup = self.target.parent / installer.BACKUP_NAME
+        foreign_identity = []
+
+        def foreign_backup(source: Path, destination: Path) -> None:
+            if source == self.target and destination == backup:
+                destination.mkdir()
+                metadata = destination.stat()
+                foreign_identity.append((metadata.st_dev, metadata.st_ino))
+            original(source, destination)
+
+        with patch.object(installer.platform, "_ps_posix_rename_exclusive", foreign_backup):
+            with self.assertRaises(InstallError):
+                installer.install_bundle(replacement, self.home)
+        self.assertEqual(snapshot(self.target), before)
+        self.assertEqual(len(foreign_identity), 1)
+        metadata = backup.stat()
+        self.assertEqual((metadata.st_dev, metadata.st_ino), foreign_identity[0])
+        self.assertEqual(list(backup.iterdir()), [])
+        self.assertFalse((self.target.parent / installer.STAGING_NAME).exists())
+
+    def test_rollback_preserves_foreign_target_and_retains_both_recovery_copies(self) -> None:
+        installer.install_bundle(self.bundle, self.home)
+        previous = installer.verify_installation(self.target)["receipt"]
+        replacement = self.changed_bundle()
+        original = installer.platform._ps_posix_rename_exclusive
+        foreign_identity = []
+
+        def fail_after_foreign_target(source: Path, destination: Path) -> None:
+            if source.name == installer.STAGING_NAME and destination == self.target:
+                destination.mkdir()
+                metadata = destination.stat()
+                foreign_identity.append((metadata.st_dev, metadata.st_ino))
+                raise OSError("synthetic stage failure with a concurrent foreign target")
+            original(source, destination)
+
+        with patch.object(installer.platform, "_ps_posix_rename_exclusive", fail_after_foreign_target):
+            with self.assertRaisesRegex(InstallError, "retained"):
+                installer.install_bundle(replacement, self.home)
+        metadata = self.target.stat()
+        self.assertEqual((metadata.st_dev, metadata.st_ino), foreign_identity[0])
+        self.assertEqual(list(self.target.iterdir()), [])
+        backup = self.target.parent / installer.BACKUP_NAME
+        stage = self.target.parent / installer.STAGING_NAME
+        self.assertEqual(installer.verify_installation(backup)["receipt"], previous)
+        self.assertEqual(installer.verify_installation(stage)["receipt"]["bundle_sha256"],
+                         _manifest_hash(replacement))
+        before = snapshot(self.home)
+        with self.assertRaisesRegex(InstallError, "pending staging or backup"):
+            installer.install_bundle(replacement, self.home)
+        self.assertEqual(snapshot(self.home), before)
+
+    def test_foreign_replacement_stage_is_retained_instead_of_cleaned_by_name(self) -> None:
+        replacement = self.changed_bundle()
+        original = installer.platform._ps_posix_rename_exclusive
+        for label, content in (("empty", None), ("nonempty", "unique user work")):
+            with self.subTest(stage=label):
+                home = self.base / label
+                target = home / "skills/constellation"
+                installer.install_bundle(self.bundle, home)
+                previous = snapshot(target)
+                saved = self.base / (label + "-saved-owned-stage")
+                foreign_identity = []
+
+                def foreign_stage(source: Path, destination: Path) -> None:
+                    if source.name == installer.STAGING_NAME and destination == target:
+                        original(source, saved)
+                        source.mkdir()
+                        if content is not None:
+                            (source / "user-note.txt").write_text(content, encoding="utf-8")
+                        metadata = source.stat()
+                        foreign_identity.append((metadata.st_dev, metadata.st_ino))
+                        raise OSError("synthetic failure after another writer replaced the stage")
+                    original(source, destination)
+
+                with patch.object(installer.platform, "_ps_posix_rename_exclusive", foreign_stage):
+                    with self.assertRaisesRegex(InstallError, "retained"):
+                        installer.install_bundle(replacement, home)
+                self.assertEqual(snapshot(target), previous)
+                stage = target.parent / installer.STAGING_NAME
+                metadata = stage.stat()
+                self.assertEqual((metadata.st_dev, metadata.st_ino), foreign_identity[0])
+                if content is None:
+                    self.assertEqual(list(stage.iterdir()), [])
+                else:
+                    self.assertEqual((stage / "user-note.txt").read_text(encoding="utf-8"), content)
+                self.assertEqual(installer.verify_installation(saved)["receipt"]["bundle_sha256"],
+                                 _manifest_hash(replacement))
+                self.assertFalse((target.parent / installer.BACKUP_NAME).exists())
+                before = snapshot(home)
+                with self.assertRaisesRegex(InstallError, "pending staging or backup"):
+                    installer.install_bundle(replacement, home)
+                self.assertEqual(snapshot(home), before)
+
+    def test_partial_copy_is_retained_for_inspection_without_changing_current_payload(self) -> None:
+        installer.install_bundle(self.bundle, self.home)
+        previous = snapshot(self.target)
+        original = shutil.copytree
+        unique = "partial copy belongs to this interrupted attempt"
+
+        def partial_copy(source: Path, destination: Path, **options):
+            if destination.name == installer.STAGING_NAME:
+                (destination / "partial.txt").write_text(unique, encoding="utf-8")
+                raise OSError("synthetic partial-copy failure")
+            return original(source, destination, **options)
+
+        replacement = self.changed_bundle()
+        with patch.object(installer.shutil, "copytree", side_effect=partial_copy):
+            with self.assertRaisesRegex(InstallError, "retained"):
+                installer.install_bundle(replacement, self.home)
+        self.assertEqual(snapshot(self.target), previous)
+        stage = self.target.parent / installer.STAGING_NAME
+        self.assertEqual((stage / "partial.txt").read_text(encoding="utf-8"), unique)
+        self.assertFalse((self.target.parent / installer.BACKUP_NAME).exists())
 
     def test_distribution_and_installed_cli_work_from_a_relocated_path(self) -> None:
         relocated = self.base / "copied release" / "bundle"

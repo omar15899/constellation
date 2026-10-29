@@ -15,6 +15,7 @@ import time
 from typing import Any
 import uuid
 
+from . import platform_support as platform
 from .build import MODULE_AGENTS
 from .runtime import DEFAULT_POLICY
 from .runtime import review_gate as gate
@@ -130,7 +131,18 @@ class Engine:
     def __init__(self, root: Path, state_dir: Path):
         if sys.version_info < (3, 11):
             raise Error("The portable engine requires Python 3.11 or newer.")
-        self.root = Path(root).resolve(strict=True)
+        supplied_root = Path(root)
+        if platform.IS_WINDOWS:
+            # Never erase the original junction lookup before validating it.
+            original_lookup = supplied_root.absolute()
+            for component in (*reversed(original_lookup.parents), original_lookup):
+                if platform.is_reparse(component):
+                    raise Error("Project root must not traverse symbolic links or reparse points.")
+            try:
+                supplied_root = platform.validate_lookup(supplied_root)
+            except platform.PlatformError as exc:
+                raise Error("Windows project root contains an unsafe filesystem lookup.") from exc
+        self.root = supplied_root.resolve(strict=True)
         if not self.root.is_dir():
             raise Error("Root must be an existing directory.")
         self.store = Store(state_dir)
@@ -145,9 +157,26 @@ class Engine:
             raise Error("Artifacts and inputs cannot include symbolic links or engine state.")
         return target
 
+    def _input_record(self, path: Path) -> dict[str, Any] | None:
+        """Bind input bytes and, on Windows, its effective access descriptor."""
+        if not path.is_file():
+            return None
+        if not platform.IS_WINDOWS:
+            return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "mode": stat.S_IMODE(path.stat().st_mode)}
+        try:
+            descriptor = platform.open_regular(path, os.O_RDONLY, private=False)
+            with os.fdopen(descriptor, "rb") as stream:
+                return {"sha256": hashlib.sha256(stream.read()).hexdigest(),
+                        "mode": stat.S_IMODE(os.fstat(stream.fileno()).st_mode),
+                        "access": platform.access_fingerprint(path)}
+        except platform.PlatformError as exc:
+            raise Error("Declared input has an unsafe or changed Windows access policy.") from exc
+
     def _resources(self, contract: dict[str, Any]) -> dict[str, str]:
         paths = [_SOURCE / "runtime/__init__.py", _SOURCE / "runtime/review_gate.py",
                  _POLICY, _SOURCE / "core.py", _SOURCE / "storage.py",
+                 _SOURCE / "platform_support.py",
                  _SOURCE / "cli.py", _SOURCE / "hooks.py", _SOURCE / "hook_entry.py",
                  _SOURCE / "build.py", _SOURCE / "references/protocol.md"]
         manifest = _SOURCE / "manifests" / "codex-plugin.json"
@@ -210,7 +239,8 @@ class Engine:
         for row in _list(payload["inputs"], "inputs"):
             _object(row, {"path", "sha256"})
             path = self.validate_path(row["path"])
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != _sha(row["sha256"]):
+            current = self._input_record(path)
+            if current is None or current["sha256"] != _sha(row["sha256"]):
                 raise Error("Declared input hash differs from its local regular file.")
             inputs.append(dict(row))
         dependencies = []
@@ -229,6 +259,11 @@ class Engine:
         paths, ids = {item["path"] for item in artifacts}, {item["id"] for item in checks}
         if paths & {item["path"] for item in inputs}:
             raise Error("Inputs and deliverables must be disjoint.")
+        try:
+            platform.ensure_distinct_paths(
+                self.root, [item["path"] for item in (*artifacts, *inputs)])
+        except platform.PlatformError as exc:
+            raise Error("Contract paths must identify distinct artifacts and inputs.") from exc
         covered = set()
         for requirement in contract["requirements"]:
             if not set(requirement["deliverables"]) <= paths or not set(requirement["checks"]) <= ids:
@@ -250,8 +285,7 @@ class Engine:
         inputs = {}
         for row in contract["inputs"]:
             path = self.validate_path(row["path"])
-            inputs[row["path"]] = ({"sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-                                    "mode": stat.S_IMODE(path.stat().st_mode)} if path.is_file() else None)
+            inputs[row["path"]] = self._input_record(path)
         dependencies = []
         for row in contract["depends_on"]:
             dependency_key = (str(self.root), row["session_id"], row["task_id"])

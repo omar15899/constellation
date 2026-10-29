@@ -17,7 +17,16 @@ else:
     from .storage import decode, encode
 
 
+def _configure_utf8_streams() -> None:
+    """Keep JSON and command output independent of the Windows code page."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_utf8_streams()
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] == ["git"]:
         from ecosystem.runtime.workflow import entrypoint
@@ -51,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = decode(sys.stdin.read())
         result = Engine(options.root, options.state_dir).execute(options.operation, payload)
+    except UnicodeError:
+        print(encode({"ok": False, "error": "Portable CLI text must be valid UTF-8."}))
+        return 2
     except (Error, OSError) as exc:
         print(encode({"ok": False, "error": str(exc)}))
         return 2

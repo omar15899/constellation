@@ -244,6 +244,25 @@ class GitFixture(unittest.TestCase):
             w.git(self.root, "add", "answer.md")
             self.assertEqual(w.snapshot(self.root, ["answer.md"]), w.stored_snapshot(self.root, ["answer.md"]))
 
+    @unittest.skipIf(w.ps.IS_WINDOWS, "Windows original project-root aliases are rejected before resolution.")
+    def test_snapshot_accepts_a_legitimate_posix_project_root_alias(self):
+        path = self.root / "answer.md"
+        path.write_text("answer\n", encoding="utf-8")
+        w.git(self.root, "add", "answer.md")
+        alias = self.base / "project-alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.assertEqual(w.snapshot(alias, ["answer.md"]), w.stored_snapshot(self.root, ["answer.md"]))
+
+    def test_snapshot_validates_original_windows_root_before_resolving(self):
+        with patch.object(w.ps, "IS_WINDOWS", True), \
+                patch.object(w.ps, "validate_lookup", side_effect=w.ps.PlatformError("unsafe original lookup")) as validate, \
+                patch.object(Path, "resolve", side_effect=AssertionError("must not resolve an unchecked Windows root")), \
+                patch.object(w.ps, "ensure_distinct_paths") as inspect:
+            with self.assertRaises(w.ps.PlatformError):
+                w.snapshot(Path("C:/unsafe-root"), ["answer.md"])
+            validate.assert_called_once()
+            inspect.assert_not_called()
+
     def test_permission_change_invalidates_review(self):
         self.task()
         (self.root / "answer.md").chmod(0o755)
@@ -529,8 +548,10 @@ class GitFixture(unittest.TestCase):
         (self.base / "private.md").write_text("synthetic private fixture\n")
         (self.root / "answer.md").unlink()
         (self.root / "answer.md").symlink_to(self.base / "private.md")
-        with self.assertRaisesRegex(w.Blocked, "Private or external"):
-            self.flow.reviewed(self.flow.load())
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read symlink target")) as read:
+            with self.assertRaisesRegex(w.Blocked, "Private or external|symlink|symbolic link|reparse"):
+                self.flow.reviewed(self.flow.load())
+            read.assert_not_called()
 
     def assert_unregistered_response(self, event: str, result: dict) -> None:
         expected = ({"hookSpecificOutput": {"hookEventName": event,

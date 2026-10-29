@@ -1,5 +1,25 @@
 # Compatibilidad observada
 
+## Candidato 1.4.0-rc.1: Claude en Windows nativo
+
+El candidato añade una adaptación nativa para Claude Code en Windows, sin WSL.
+La ejecución real en Windows permanece pendiente: ni la construcción en macOS
+ni la revisión estática acreditan locks, ACL, recuperación o despacho de eventos
+en ese sistema. La [guía de Windows](windows.md) separa la aceptación aislada del
+backend, los eventos reproducidos directamente y el recorrido en un cliente real.
+Codex en Windows no forma parte de ese destino.
+
+Antes de los cambios de plataforma, la base inglesa pasó 368 pruebas y cinco
+suites exportadas de 351 pruebas cada una, con omisiones explícitas según módulo.
+También pasó instalación inglesa temporal, repetición y actualizaciones entre
+idiomas en ambos instaladores. Esa evidencia es del baseline POSIX; no se presenta
+como aceptación del candidato Windows ni como una evaluación nueva de modelos.
+
+El instalador informa si la sincronización de directorios está soportada.
+Un estado `unsupported` no equivale al `fsync` POSIX ni demuestra durabilidad
+ante pérdida de alimentación. Las pruebas Windows que no se hayan ejecutado
+permanecen pendientes.
+
 ## Aceptación de 1.3.1
 
 Evidencia registrada el 2026-10-29: **código comprobado, con límites de aceptación

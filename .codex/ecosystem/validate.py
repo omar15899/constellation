@@ -147,13 +147,19 @@ class _Validator:
                 current = current.parent
             else:
                 current = current / part
-            if current.is_symlink():
-                self.error(relative, "symlinks are forbidden")
+            if _LAYOUT._PLATFORM.is_reparse(current):
+                self.error(relative, "symlinks and reparse points are forbidden")
                 return None
         resolved = current.resolve()
         if not resolved.is_relative_to(self.root):
             self.error(relative, "resource escapes the package root")
             return None
+        if _LAYOUT._PLATFORM.IS_WINDOWS:
+            try:
+                _LAYOUT._PLATFORM.validate_windows_relative(resolved.relative_to(self.root).as_posix())
+            except _LAYOUT._PLATFORM.PlatformError:
+                self.error(relative, "Windows resource has an ambiguous or reserved path")
+                return None
         if directory_ok and resolved.is_dir():
             return resolved
         if not resolved.is_file():
@@ -193,14 +199,18 @@ class _Validator:
     def scan(self, relative: str | Path) -> None:
         """Inspect names without opening private data or following directory links."""
         base = self.root / relative
-        if base.is_symlink():
+        if _LAYOUT._PLATFORM.is_reparse(base):
             self.error(relative, "symlinks are forbidden")
             return
         for parent, directories, files in os.walk(base, followlinks=False):
+            try:
+                _LAYOUT._PLATFORM.verify_access(Path(parent), private=False)
+            except _LAYOUT._PLATFORM.PlatformError:
+                self.error(Path(parent).relative_to(self.root), "directory access permits untrusted replacement")
             for name in directories[:] + files:
                 path = Path(parent) / name
                 rel = path.relative_to(self.root)
-                if path.is_symlink() or _private(rel):
+                if _LAYOUT._PLATFORM.is_reparse(path) or _private(rel):
                     self.error(rel, "symlink or private resource is forbidden")
                     if name in directories:
                         directories.remove(name)
@@ -328,8 +338,8 @@ class _Validator:
         version = data.get("version")
         if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):
             self.error(relative, "version must be a safe non-empty release identifier")
-        elif version == "1.3.0":
-            self.error(relative, "version 1.3.0 is reserved for the historical owned layout")
+        elif version in {"1.3.0", "1.3.1"}:
+            self.error(relative, f"version {version} is reserved for the historical owned layout")
         if "description" in data and (not isinstance(data["description"], str) or not data["description"].strip()):
             self.error(relative, "description must be a non-empty string")
 
@@ -365,28 +375,10 @@ class _Validator:
         if not isinstance(events, dict) or set(events) != set(CLAUDE_EVENTS):
             self.error(relative, "Claude hooks require exactly the supported native events")
             return
-        for event in CLAUDE_EVENTS:
-            groups = events[event]
-            if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], dict):
-                self.error(relative, f"{event} requires one native hook group")
-                continue
-            group = groups[0]
-            keys = {"hooks", "matcher"} if event == "PreToolUse" else {"hooks"}
-            if set(group) != keys or (event == "PreToolUse" and group.get("matcher") != "^(Write|Edit|MultiEdit|NotebookEdit)$"):
-                self.error(relative, f"{event} has an invalid native tool matcher")
-                continue
-            hooks = group["hooks"]
-            if not isinstance(hooks, list) or len(hooks) != 1 or not isinstance(hooks[0], dict):
-                self.error(relative, f"{event} requires one native command hook")
-                continue
-            hook = hooks[0]
-            expected = {"type": "command", "command": "python3",
-                        "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/ecosystem/claude_hooks.py", event],
-                        "timeout": hook.get("timeout")}
-            if event in {"UserPromptSubmit", "PreToolUse"}:
-                expected["onFailure"] = "block"
-            if hook != expected or type(hook.get("timeout")) is not int or not 1 <= hook["timeout"] <= 60:
-                self.error(relative, f"{event} requires the isolated native command and declared failure policy")
+        try:
+            _LAYOUT.claude_hook_target(data)
+        except _LAYOUT.BundleError as exc:
+            self.error(relative, str(exc))
 
     def hooks(self, *, bundled: bool) -> None:
         relative = "ecosystem/hooks.json" if bundled else _LAYOUT.source_path("ecosystem/hooks.json")
@@ -420,8 +412,14 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
     """Return structural errors; an empty list is success. Never run candidate code."""
     if tomllib is None:
         return ["Python 3.11 or newer is required (stdlib tomllib)"]
-    root = Path(root).expanduser().absolute()
-    if root.is_symlink() or not root.is_dir():
+    root = Path(root).expanduser()
+    if _LAYOUT._PLATFORM.IS_WINDOWS:
+        try:
+            root = _LAYOUT._PLATFORM.validate_lookup(root)
+        except _LAYOUT._PLATFORM.PlatformError:
+            return ["package root must use an unambiguous local path without reparse points"]
+    root = root.absolute()
+    if _LAYOUT._PLATFORM.is_reparse(root) or not root.is_dir():
         return ["package root must be an existing directory, not a symlink"]
     root = root.resolve()
     validator = _Validator(root)
@@ -501,8 +499,21 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
                                 validator.error(relative, "inventory digest mismatch")
                             if record["mode"] not in (0o644, 0o755):
                                 validator.error(relative, "inventory permission mode must be 0644 or 0755")
-                            elif stat.S_IMODE(path.stat().st_mode) != record["mode"]:
-                                validator.error(relative, "inventory permission mode mismatch")
+                            else:
+                                try:
+                                    if _LAYOUT._PLATFORM.logical_mode(path, expected=record["mode"]) != record["mode"]:
+                                        validator.error(relative, "inventory permission mode mismatch")
+                                except _LAYOUT._PLATFORM.PlatformError:
+                                    validator.error(relative, "inventory access permissions are unsafe")
+            bootstrap_path = validator.path("ecosystem/claude_hooks.py")
+            support_path = validator.path("ecosystem/platform_support.py")
+            if bootstrap_path is not None and support_path is not None:
+                try:
+                    bootstrap = bootstrap_path.read_bytes()
+                    if _LAYOUT.render_claude_bootstrap(bootstrap, support_path.read_bytes()) != bootstrap:
+                        validator.error("ecosystem/claude_hooks.py", "bootstrap differs from canonical platform support")
+                except _LAYOUT.BundleError as exc:
+                    validator.error("ecosystem/claude_hooks.py", str(exc))
     except (OSError, ValueError, RecursionError) as exc:
         validator.error("package", f"validation could not complete ({type(exc).__name__})")
     return list(dict.fromkeys(validator.errors))

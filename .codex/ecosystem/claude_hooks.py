@@ -8,8 +8,7 @@ prompt, transcript, message or edited content crosses the adapter.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
-import fcntl
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -22,6 +21,27 @@ import sys
 from typing import Any, Iterator
 
 sys.dont_write_bytecode = True
+
+# The builder replaces this fixed-sibling source import with the complete
+# standard-library helper body. Distributed bootstraps import no package code
+# before their release and ownership metadata have been checked.
+# BEGIN CONSTELLATION PLATFORM SUPPORT
+if __package__:
+    from .platform_support import (
+        IS_WINDOWS, PlatformError, _ps_guard_parents, file_lock, is_reparse,
+        logical_mode, open_regular, validate_windows_relative, verify_access,
+    )
+else:
+    _source_directory = str(Path(__file__).resolve().parent)
+    sys.path.insert(0, _source_directory)
+    try:
+        from platform_support import (
+            IS_WINDOWS, PlatformError, _ps_guard_parents, file_lock, is_reparse,
+            logical_mode, open_regular, validate_windows_relative, verify_access,
+        )
+    finally:
+        sys.path.remove(_source_directory)
+# END CONSTELLATION PLATFORM SUPPORT
 EVENTS = frozenset({"SessionStart", "UserPromptSubmit", "PreToolUse", "SubagentStart", "SubagentStop", "Stop"})
 FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,120}\Z")
@@ -29,7 +49,7 @@ MARKER = ".constellation-install.json"
 MAX_METADATA_BYTES = 1024 * 1024
 PYTHON_REQUIREMENT = (
     "Constellation INCOMPLETE: Python 3.11 or newer is required. "
-    "Set PATH for Claude so python3 selects a supported interpreter, then restart Claude."
+    "Set PATH for Claude so its hook's Python executable selects a supported interpreter, then restart Claude."
 )
 
 
@@ -49,6 +69,7 @@ def _object(path: Path) -> dict[str, Any]:
     metadata = path.lstat()
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size > MAX_METADATA_BYTES:
         raise AdapterError("Release metadata is unavailable or unsafe.")
+    _release_access(path)
     try:
         value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
     except (ValueError, UnicodeError, RecursionError) as exc:
@@ -58,7 +79,70 @@ def _object(path: Path) -> dict[str, Any]:
     return value
 
 
+def _windows_lookup(value: str) -> None:
+    """Reject Windows aliases before any lookup can normalize them away."""
+    if not IS_WINDOWS:
+        return
+    from pathlib import PureWindowsPath
+
+    candidate = PureWindowsPath(value)
+    if (candidate.anchor.startswith(("\\\\", "//"))
+            or (candidate.drive and not candidate.is_absolute())
+            or (candidate.root and not candidate.drive)):
+        raise AdapterError("Native path has an ambiguous Windows anchor.")
+    parts = candidate.parts[1:] if candidate.is_absolute() else candidate.parts
+    if not parts:
+        if candidate.is_absolute():
+            return
+        raise AdapterError("Native path has no Windows file component.")
+    try:
+        validate_windows_relative("/".join(parts))
+    except (PlatformError, ValueError) as exc:
+        raise AdapterError("Native path has an unsafe Windows component.") from exc
+
+
+def _unlinked_lookup(path: Path) -> None:
+    """Inspect the original absolute Windows lookup before resolving aliases."""
+    if not IS_WINDOWS:
+        return
+    if path.parts:
+        _windows_lookup(str(path))
+    # absolute() anchors a relative lookup at its original cwd without resolving
+    # reparse points. Skipping this step would drop its first path component.
+    path = path.absolute()
+    _windows_lookup(str(path))
+    current = Path(path.anchor)
+    if is_reparse(current):
+        raise AdapterError("Native lookup traverses a reparse point.")
+    for component in path.parts[1:]:
+        current /= component
+        if is_reparse(current):
+            raise AdapterError("Native lookup traverses a reparse point.")
+
+
+def _release_access(path: Path, *, private: bool = False) -> None:
+    """Reject foreign mutation rights before using a release lookup."""
+    try:
+        verify_access(path, private=private)
+    except PlatformError as exc:
+        raise AdapterError("Release filesystem permissions are unsafe.") from exc
+
+
+def _release_mode(path: Path, expected: int, *, private: bool = False) -> int:
+    """Bind package modes to real permissions on each supported filesystem."""
+    _release_access(path, private=private)
+    try:
+        return logical_mode(path, expected=expected)
+    except PlatformError as exc:
+        raise AdapterError("Release filesystem permissions are unsafe.") from exc
+
+
 def _resource(root: Path, relative: str) -> Path:
+    if IS_WINDOWS:
+        try:
+            validate_windows_relative(relative)
+        except (PlatformError, ValueError) as exc:
+            raise AdapterError("Release contains an unsafe Windows path.") from exc
     path = Path(relative)
     if (not relative or path.is_absolute() or path.as_posix() != relative
             or any(part in {".", ".."} for part in path.parts)):
@@ -66,15 +150,17 @@ def _resource(root: Path, relative: str) -> Path:
     current = root
     for part in path.parts:
         current /= part
-        if current.is_symlink():
-            raise AdapterError("Release contains a symbolic link.")
+        if is_reparse(current):
+            raise AdapterError("Release contains a symbolic link or reparse point.")
     return current
 
 
 def _verify_release(root: Path, *, installed: bool) -> dict[str, Any]:
     """Bind all executable resources before the first package import."""
-    if root.is_symlink() or not root.is_dir():
+    _unlinked_lookup(root)
+    if is_reparse(root) or not root.is_dir():
         raise AdapterError("Release directory is missing or linked.")
+    _release_access(root)
     manifest = _object(_resource(root, "bundle.json"))
     if (set(manifest) != {"schema", "modules", "files"} or type(manifest["schema"]) is not int
             or manifest["schema"] != 1 or not isinstance(manifest["modules"], list)
@@ -93,14 +179,15 @@ def _verify_release(root: Path, *, installed: bool) -> dict[str, Any]:
         path = _resource(root, relative)
         metadata = path.lstat()
         if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
-                or stat.S_IMODE(metadata.st_mode) != record["mode"]
+                or _release_mode(path, record["mode"]) != record["mode"]
                 or hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]):
             raise AdapterError("Release resources are incomplete or modified.")
     actual: set[str] = set()
     for directory, subdirs, names in os.walk(root, followlinks=False):
+        _release_access(Path(directory))
         for name in subdirs + names:
-            if (Path(directory) / name).is_symlink():
-                raise AdapterError("Release contains a symbolic link.")
+            if is_reparse(Path(directory) / name):
+                raise AdapterError("Release contains a symbolic link or reparse point.")
         actual.update((Path(directory) / name).relative_to(root).as_posix() for name in names)
     expected = set(manifest["files"]) | {"bundle.json"}
     if installed:
@@ -122,38 +209,60 @@ def _verify_release(root: Path, *, installed: bool) -> dict[str, Any]:
                 or receipt["owner"] != "constellation-claude-skills-dir"
                 or receipt["plugin_id"] != "constellation@skills-dir"
                 or receipt["version"] != native.get("version") or receipt["modules"] != manifest["modules"]
-                or stat.S_IMODE(marker_path.stat().st_mode) != 0o600
+                or _release_mode(marker_path, 0o600, private=True) != 0o600
                 or receipt["bundle_sha256"] != hashlib.sha256((root / "bundle.json").read_bytes()).hexdigest()):
             raise AdapterError("Installed release ownership is invalid.")
     return manifest
 
 
+def _is_managed_root(root: Path) -> bool:
+    """Classify managed names using the host filesystem's case semantics."""
+    name, parent = root.name, root.parent.name
+    if IS_WINDOWS:
+        name, parent = name.casefold(), parent.casefold()
+    return name == "constellation" and parent == "skills"
+
+
 @contextmanager
 def verified_release(root: Path) -> Iterator[dict[str, Any]]:
-    """Pin installed resources against the installer's exclusive replacement."""
-    if root.is_symlink():
+    """Hold a real shared installation lock through verification and dispatch."""
+    _unlinked_lookup(root)
+    if is_reparse(root):
         raise AdapterError("Release directory is linked.")
     root = root.resolve(strict=True)
-    installed = root.name == "constellation" and root.parent.name == "skills"
-    descriptor: int | None = None
-    try:
+    installed = _is_managed_root(root)
+    with ExitStack() as held:
+        if IS_WINDOWS:
+            # Keep every original lookup directory, including the release root,
+            # pinned against rename until verified dispatch has completed.
+            held.enter_context(_ps_guard_parents(root / "bundle.json"))
         if installed:
             home = root.parent.parent
+            # A foreign writer on a parent could replace a verified child tree
+            # without changing the child's current hashes or file ACLs.
+            _release_access(home)
+            _release_access(root.parent)
+            _release_access(home / "constellation", private=True)
             lock = _resource(home, "constellation/.install.lock")
             metadata = lock.lstat()
             if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
-                    or stat.S_IMODE(metadata.st_mode) != 0o600):
+                    or _release_mode(lock, 0o600, private=True) != 0o600):
                 raise AdapterError("Installation lock is unsafe.")
-            descriptor = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                descriptor = open_regular(lock, os.O_RDONLY, mode=0o600, private=True)
+            except PlatformError as exc:
+                raise AdapterError("Installation lock is unsafe.") from exc
+            held.callback(os.close, descriptor)
             opened = os.fstat(descriptor)
             if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
                 raise AdapterError("Installation lock changed.")
-            fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            held.enter_context(file_lock(descriptor, exclusive=False, blocking=False))
+        elif IS_WINDOWS:
+            # DELETE_CHILD and ADD_SUBDIRECTORY on the parent can replace an
+            # otherwise protected explicit --plugin-dir release. Parent pinning
+            # and its access policy are complementary guarantees.
+            _release_access(root.parent)
         yield _verify_release(root, installed=installed)
-    finally:
-        if descriptor is not None:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-            os.close(descriptor)
 
 
 def _identity(value: Any) -> str:
@@ -166,16 +275,27 @@ def _context(event: str, message: str) -> dict[str, Any]:
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": message}}
 
 
+def _command_line(arguments: list[str]) -> str:
+    """Format guidance for the native shell without interpolating path contents."""
+    if IS_WINDOWS:
+        return "& " + " ".join("'" + value.replace("'", "''") + "'" for value in arguments)
+    return shlex.join(arguments)
+
+
+def _command_argument(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'" if IS_WINDOWS else shlex.quote(value)
+
+
 def _bootstrap(event: str, native: str, session: str, root: Path, *,
                include_method_guidance: bool = True) -> str:
     from ecosystem.hooks import METHOD_GUIDANCE
 
-    command = shlex.join([sys.executable, "-I", str(root / "ecosystem/cli.py")])
+    command = _command_line([sys.executable, "-I", str(root / "ecosystem/cli.py")])
     method = METHOD_GUIDANCE + " " if include_method_guidance else ""
     return (
         f"Constellation shared research environment. Your lifecycle identity is {session!r}; "
         f"your actual native author/reviewer identity is {native!r}. Shared CLI: {command}. "
-        f"For Git use {command} git --root PROJECT --session {shlex.quote(session)} OPERATION; "
+        f"For Git use {command} git --root PROJECT --session {_command_argument(session)} OPERATION; "
         "for non-Git research use the same CLI's portable protocol with explicit session_id. "
         f"Read {str(root / 'ecosystem/references/protocol.md')!r} for that protocol. "
         "Use a project's existing workflow and policies when supplied; do not create duplicate contracts. "
@@ -210,6 +330,7 @@ def handle_event(payload: Any, state_dir: Path | None = None,
     if (not isinstance(raw_cwd, str) or not raw_cwd or len(raw_cwd) > 4096
             or any(ord(char) < 32 for char in raw_cwd) or not Path(raw_cwd).is_absolute()):
         raise AdapterError("Expected an absolute native working directory.")
+    _unlinked_lookup(Path(raw_cwd))
     cwd = Path(raw_cwd).resolve(strict=True)
     if not cwd.is_dir():
         raise AdapterError("Native working directory is unavailable.")
@@ -227,6 +348,7 @@ def handle_event(payload: Any, state_dir: Path | None = None,
         if (not isinstance(name, str) or not name or name != name.strip()
                 or any(ord(char) < 32 for char in name) or ".." in Path(name).parts):
             raise AdapterError("Native file-tool path is invalid.")
+        _windows_lookup(name)
         target = Path(name) if Path(name).is_absolute() else cwd / name
         clean.update(tool_name="apply_patch", tool_input=(
             f"*** Begin Patch\n*** Update File: {target}\n*** End Patch"))

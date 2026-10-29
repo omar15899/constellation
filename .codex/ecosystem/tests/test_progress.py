@@ -227,7 +227,10 @@ class ProgressTests(unittest.TestCase):
         self.assertIn('status: "in_progress"', ordinary)
         finished = subject.render_note(self.envelope(state, workflow_finished=True))
         self.assertIn('status: "completed"', finished)
-        self.assertIn("no demuestra por sí solo", finished)
+        self.assertTrue(any(disclaimer in finished for disclaimer in (
+            "no demuestra por sí solo conclusiones científicas",
+            "does not by itself prove scientific conclusions",
+        )))
         self.assertEqual(self.state, subject.validate_progress(self.state))
 
     def test_exact_receipt_is_idempotent_and_never_completes_task(self) -> None:
@@ -294,7 +297,7 @@ class ProgressTests(unittest.TestCase):
         with self.assertRaises(subject.ProgressError):
             subject.render_dashboard([subject.dashboard_entry(envelope), subject.dashboard_entry(envelope)])
         with self.assertRaises(subject.ProgressError):
-            subject.render_dashboard([subject.dashboard_entry(envelope)], dashboard.replace("Progreso recibido", "Manipulated summary"))
+            subject.render_dashboard([subject.dashboard_entry(envelope)], dashboard.replace("# Constellation", "# Manipulated heading"))
 
     def test_dashboard_index_is_thin_and_cannot_mix_destinations(self) -> None:
         entry = subject.dashboard_entry(self.envelope())

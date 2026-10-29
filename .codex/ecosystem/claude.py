@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
-import fcntl
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import stat
+import subprocess
 import sys
 from typing import Iterator
 
@@ -18,10 +18,12 @@ sys.dont_write_bytecode = True
 if __package__:
     from .build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle, verify_owned_bundle
     from .install import InstallError, _read_object, _replace_bytes
+    from . import platform_support as platform
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from build import BUNDLE_MANIFEST, INSTALL_RECEIPT, BundleError, verify_bundle, verify_owned_bundle
     from install import InstallError, _read_object, _replace_bytes
+    import platform_support as platform
 
 PLUGIN_ID = "constellation@skills-dir"
 OWNER = "constellation-claude-skills-dir"
@@ -32,9 +34,23 @@ BACKUP_NAME = ".constellation-previous"
 
 def _anchor(path: Path) -> Path:
     """Inspect the original lookup before resolving away linked ancestors."""
-    path = Path(path).expanduser().absolute()
+    path = Path(path).expanduser()
+    if platform.IS_WINDOWS:
+        try:
+            path = platform.validate_lookup(path)
+        except platform.PlatformError as exc:
+            raise InstallError("Managed Windows path contains a symbolic link, reparse point or unsafe component") from exc
+    path = path.absolute()
     if ".." in path.parts:
         raise InstallError("Managed paths cannot contain parent traversal")
+    if platform.IS_WINDOWS:
+        if not path.drive or path.drive.startswith("\\\\"):
+            raise InstallError("Managed Windows paths require a local absolute drive")
+        try:
+            for part in path.parts[1:]:
+                platform.validate_windows_relative(part)
+        except platform.PlatformError as exc:
+            raise InstallError("Managed Windows path contains an unsafe component") from exc
     current = Path(path.anchor)
     for part in path.parts[1:]:
         current /= part
@@ -42,8 +58,8 @@ def _anchor(path: Path) -> Path:
             metadata = current.lstat()
         except FileNotFoundError:
             continue
-        if stat.S_ISLNK(metadata.st_mode):
-            raise InstallError("Managed path contains a symbolic link")
+        if platform.is_reparse(current):
+            raise InstallError("Managed path contains a symbolic link or reparse point")
         if not stat.S_ISDIR(metadata.st_mode):
             raise InstallError("Managed path contains a non-directory")
     return path
@@ -51,7 +67,7 @@ def _anchor(path: Path) -> Path:
 
 def _regular(path: Path) -> os.stat_result:
     metadata = path.lstat()
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+    if platform.is_reparse(path) or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
         raise InstallError("Managed resource must be a regular, singly linked file")
     return metadata
 
@@ -60,7 +76,7 @@ def _single_links(root: Path) -> None:
     for directory, subdirs, files in os.walk(root, followlinks=False):
         for name in subdirs:
             metadata = (Path(directory) / name).lstat()
-            if not stat.S_ISDIR(metadata.st_mode):
+            if platform.is_reparse(Path(directory) / name) or not stat.S_ISDIR(metadata.st_mode):
                 raise InstallError("Installation contains a linked or invalid directory")
         for name in files:
             _regular(Path(directory) / name)
@@ -85,11 +101,15 @@ def verify_installation(plugin_root: Path) -> dict:
     marker = root / INSTALL_RECEIPT
     try:
         metadata = _regular(marker)
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise InstallError("Installation receipt permissions changed")
+        try:
+            if platform.logical_mode(marker, expected=0o600) != 0o600:
+                raise InstallError("Installation receipt permissions changed")
+            platform.verify_access(marker, private=True)
+        except platform.PlatformError as exc:
+            raise InstallError("Installation receipt permissions changed") from exc
         receipt = _read_object(marker)
-        manifest = verify_owned_bundle(root, installation=True)
         _single_links(root)
+        manifest = verify_owned_bundle(root, installation=True)
         if type(receipt.get("schema")) is not int or receipt != _receipt(root, manifest):
             raise InstallError("Installation ownership receipt differs from the verified release")
         return {"manifest": manifest, "receipt": receipt}
@@ -99,45 +119,75 @@ def verify_installation(plugin_root: Path) -> dict:
         raise InstallError("Claude installation is unowned, incomplete or modified") from exc
 
 
+def _verify_managed_boundaries(home: Path) -> None:
+    """Reject mutable known parents without changing independently owned ACLs."""
+    administrative = _anchor(home / "constellation")
+    boundaries = (home, _anchor(home / "skills"),
+                  _anchor(home / "skills/constellation"), administrative)
+    for boundary in boundaries:
+        if boundary.exists():
+            try:
+                platform.verify_access(boundary, private=boundary == administrative)
+            except platform.PlatformError as exc:
+                raise InstallError("Claude managed directory permissions are unsafe; preserve its contents") from exc
+
+
 @contextmanager
 def installation_lock(claude_home: Path, *, exclusive: bool, create: bool = False) -> Iterator[None]:
-    """Coordinate payload replacement with readers without changing hook trust."""
+    """Hold a real reader/writer lock across verification and payload use."""
     home = _anchor(claude_home)
+    _verify_managed_boundaries(home)
     managed = _anchor(home / "constellation")
     path = managed / ".install.lock"
     if create:
-        managed.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if path.exists() or path.is_symlink():
+        platform.secure_mkdir(managed, mode=0o700, parents=True, exist_ok=True)
+    if path.exists() or platform.is_reparse(path):
         before = _regular(path)
+        try:
+            if platform.logical_mode(path, expected=0o600) != 0o600:
+                raise InstallError("Installation lock changed while opening")
+            platform.verify_access(path, private=True)
+        except platform.PlatformError as exc:
+            raise InstallError("Installation lock changed while opening") from exc
     elif not create:
         raise InstallError("Installation lock is missing; no package code was approved")
     else:
         before = None
-    flags = os.O_RDWR | os.O_NOFOLLOW | (os.O_CREAT if create else 0)
-    descriptor = os.open(path, flags, 0o600)
+    flags = os.O_RDWR | (os.O_CREAT if create else 0)
+    try:
+        descriptor = platform.open_regular(path, flags, 0o600, private=True)
+    except platform.PlatformError as exc:
+        raise InstallError("Installation lock changed while opening") from exc
     try:
         opened = os.fstat(descriptor)
         current = _regular(path)
         if (opened.st_nlink != 1 or not stat.S_ISREG(opened.st_mode)
-                or stat.S_IMODE(opened.st_mode) != 0o600
                 or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
                 or (before is not None and (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino))):
             raise InstallError("Installation lock changed while opening")
-        try:
-            fcntl.flock(descriptor, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise InstallError("A Constellation installation or hook is running; retry after it finishes") from exc
-        yield
+        with ExitStack() as acquired:
+            try:
+                acquired.enter_context(platform.file_lock(descriptor, exclusive=exclusive, blocking=False))
+            except BlockingIOError as exc:
+                raise InstallError("A Constellation installation or hook is running; retry after it finishes") from exc
+            yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
+
+
+def _is_managed_root(root: Path) -> bool:
+    """Keep Windows case variants inside the installed receipt/lock boundary."""
+    name, parent = root.name, root.parent.name
+    if platform.IS_WINDOWS:
+        name, parent = name.casefold(), parent.casefold()
+    return name == "constellation" and parent == "skills"
 
 
 @contextmanager
 def verified_installation(plugin_root: Path) -> Iterator[dict]:
     """Keep an installed payload stable while a trusted caller uses its engine."""
     root = _anchor(plugin_root)
-    if root.name == "constellation" and root.parent.name == "skills":
+    if _is_managed_root(root):
         with installation_lock(root.parent.parent, exclusive=False):
             yield verify_installation(root)["manifest"]
     else:
@@ -147,7 +197,7 @@ def verified_installation(plugin_root: Path) -> Iterator[dict]:
 
 def _disabled(home: Path) -> None:
     settings = home / "settings.json"
-    if not settings.exists() and not settings.is_symlink():
+    if not settings.exists() and not platform.is_reparse(settings):
         return
     try:
         _regular(settings)
@@ -167,111 +217,162 @@ def _disabled(home: Path) -> None:
 
 def _preflight(home: Path) -> tuple[Path, dict | None]:
     home = _anchor(home)
-    _disabled(home)
     skills = _anchor(home / "skills")
     target = _anchor(skills / "constellation")
+    _verify_managed_boundaries(home)
+    _disabled(home)
     for name in (STAGING_NAME, BACKUP_NAME):
         pending = skills / name
-        if pending.exists() or pending.is_symlink():
+        if pending.exists() or platform.is_reparse(pending):
             raise InstallError("A previous installation has pending staging or backup files; "
                                "preserve those copies and inspect them before retrying")
     current = verify_installation(target) if target.exists() else None
     return target, current
 
 
-def _sync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+def _require_owned_payload(path: Path, identity: tuple[int, int] | None,
+                           receipt: dict) -> dict:
+    """Verify the exact directory created by this attempt before removing it."""
+    metadata = path.lstat()
+    if (identity is None or platform.is_reparse(path) or not stat.S_ISDIR(metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != identity):
+        raise InstallError("Staged payload identity changed; preserve this directory for inspection")
+    installed = verify_installation(path)
+    if installed["receipt"] != receipt:
+        raise InstallError("Staged payload ownership changed; preserve this directory for inspection")
+    return installed
 
 
-def _sync_tree(root: Path) -> None:
+def _sync_directory(path: Path) -> bool:
+    """Flush directory metadata when the operating system supports it."""
+    return platform.sync_directory(path)
+
+
+def _sync_tree(root: Path) -> bool:
+    supported = True
     for directory, _, files in os.walk(root, topdown=False):
         for name in files:
-            descriptor = os.open(Path(directory) / name, os.O_RDONLY | os.O_NOFOLLOW)
+            flags = os.O_RDWR if platform.IS_WINDOWS else os.O_RDONLY
+            descriptor = platform.open_regular(Path(directory) / name, flags, private=False)
             try:
-                os.fsync(descriptor)
+                platform.sync_file(descriptor)
             finally:
                 os.close(descriptor)
-        _sync_directory(Path(directory))
+        supported = _sync_directory(Path(directory)) and supported
+    return supported
 
 
-def _result(status: str, target: Path, receipt: dict) -> dict:
+def _runtime_preflight(bundle: Path) -> None:
+    """Require a real native Python executable for the Windows exec-form hook.
+
+    This runs before any destination creation. It neither selects accounts nor
+    modifies PATH, settings, hook trust or the interpreter installation.
+    """
+    data = _read_object(bundle / "ecosystem/claude-hooks.json")
+    commands = {hook.get("command") for groups in data.get("hooks", {}).values()
+                for group in groups for hook in group.get("hooks", [])}
+    if not platform.IS_WINDOWS:
+        if commands != {"python3"}:
+            raise InstallError("This Windows Claude package must be installed on native Windows")
+        return
+    if commands != {"python"}:
+        raise InstallError("Native Windows requires the windows-claude package target")
+    executable = shutil.which("python")
+    if (not executable or Path(executable).suffix.lower() != ".exe"
+            or platform.is_reparse(Path(executable))):
+        raise InstallError("Native Windows needs a real Python 3.11+ executable named python on PATH")
+    code = "import json,os,sys;print(json.dumps([os.name,list(sys.version_info[:2])]))"
+    try:
+        result = subprocess.run([executable, "-I", "-B", "-c", code],
+                                capture_output=True, timeout=10, check=False)
+        identity = json.loads(result.stdout.decode("ascii"))
+    except (OSError, subprocess.TimeoutExpired, UnicodeError, ValueError) as exc:
+        raise InstallError("Cannot verify Claude's native Windows Python interpreter") from exc
+    if (result.returncode or not isinstance(identity, list) or len(identity) != 2
+            or identity[0] != "nt" or not isinstance(identity[1], list)
+            or len(identity[1]) != 2 or not all(type(v) is int for v in identity[1])
+            or tuple(identity[1]) < (3, 11)):
+        raise InstallError("Claude's python command must select native Windows Python 3.11 or newer")
+
+
+def _result(status: str, target: Path, receipt: dict, *,
+            directory_sync: bool | None = None) -> dict:
     return {"status": status, "plugin": str(target), "plugin_id": PLUGIN_ID,
             "version": receipt["version"], "modules": receipt["modules"],
             "bundle_sha256": receipt["bundle_sha256"], "integrity": "verified",
-            "activation": "requires-new-session", "live_execution": "not_verified"}
+            "activation": "requires-new-session", "live_execution": "not_verified",
+            "directory_sync": ("supported" if directory_sync else "unsupported")
+                if directory_sync is not None else "not_measured"}
 
 
 def install_bundle(bundle: Path, claude_home: Path, *, check: bool = False) -> dict:
     """Deploy verified code only, refusing unowned payloads and preserving settings."""
     source = _anchor(bundle)
     manifest = verify_bundle(source)
+    _runtime_preflight(source)
     desired = _receipt(source, manifest)
     home = _anchor(claude_home)
-    target, current = _preflight(home)
-    administrative = home / "constellation"
+    target = _anchor(home / "skills/constellation")
+    administrative = _anchor(home / "constellation")
     if any(source == managed or managed in source.parents or source in managed.parents
            for managed in (target, administrative)):
         raise InstallError("Bundle and installation directory must not overlap")
+    target, current = _preflight(home)
     if check:
         return _result("checked", target, desired)
     with installation_lock(home, exclusive=True, create=True):
         target, current = _preflight(home)
         if current is not None and current["receipt"] == desired:
             return _result("unchanged", target, desired)
-        target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        platform.secure_mkdir(target.parent, mode=0o755, parents=True, exist_ok=True)
         stage, backup = target.parent / STAGING_NAME, target.parent / BACKUP_NAME
         replaced = False
         staged = False
-        claimed = False
+        staged_identity: tuple[int, int] | None = None
         promoted = False
+        directory_sync = True
         try:
             # Stage beside the destination so every rename stays on one filesystem.
-            stage.mkdir(mode=0o755)
+            platform.secure_mkdir(stage, mode=0o755)
             staged = True
+            created = stage.lstat()
+            staged_identity = (created.st_dev, created.st_ino)
             shutil.copytree(source, stage, symlinks=True, dirs_exist_ok=True)
             marker = (json.dumps(desired, sort_keys=True, indent=2) + "\n").encode()
             _replace_bytes(stage / INSTALL_RECEIPT, marker, 0o600)
             verify_installation(stage)
-            _sync_tree(stage)
+            directory_sync = bool(_sync_tree(stage))
             if current is not None:
                 # Detect edits made after preflight before moving the owned copy.
                 if verify_installation(target)["receipt"] != current["receipt"]:
                     raise InstallError("Installed release changed while staging")
-                target.rename(backup)
+                platform.promote_directory(target, backup)
                 replaced = True
-                _sync_directory(target.parent)
-            # Refuse a destination that appeared during staging. Claiming an
-            # empty directory also prevents rename from replacing foreign data.
-            target.mkdir(mode=0o755)
-            claimed = True
-            stage.rename(target)
+                directory_sync = _sync_directory(target.parent) and directory_sync
+            # Promotion is exclusive on both platforms. Windows itself rejects
+            # an existing destination; POSIX uses an empty-directory claim.
+            platform.promote_directory(stage, target)
             staged = False
-            claimed = False
             promoted = True
-            _sync_directory(target.parent)
-            installed = verify_installation(target)
+            directory_sync = _sync_directory(target.parent) and directory_sync
+            installed = _require_owned_payload(target, staged_identity, desired)
             if installed["receipt"] != desired:
                 raise InstallError("Installed release differs from staged release")
         except Exception as failure:
             try:
                 if replaced:
                     if promoted:
-                        verify_installation(target)
+                        _require_owned_payload(target, staged_identity, desired)
                         shutil.rmtree(target)
-                    elif claimed:
-                        target.rmdir()
-                    backup.rename(target)
+                    platform.promote_directory(backup, target)
                     _sync_directory(target.parent)
                 elif promoted:
-                    verify_installation(target)
+                    _require_owned_payload(target, staged_identity, desired)
                     shutil.rmtree(target)
-                elif claimed:
-                    target.rmdir()
-                if staged and stage.exists():
+                if staged and (stage.exists() or platform.is_reparse(stage)):
+                    # Partial or externally changed copies are ambiguous user
+                    # work. Retain them instead of deleting by pathname alone.
+                    _require_owned_payload(stage, staged_identity, desired)
                     shutil.rmtree(stage)
             except (OSError, ValueError) as recovery:
                 raise InstallError("Installation failed; owned staging or previous copies were retained "
@@ -282,8 +383,9 @@ def install_bundle(bundle: Path, claude_home: Path, *, check: bool = False) -> d
             if verify_installation(backup)["receipt"] != current["receipt"]:
                 raise InstallError("Updated release is verified; preserve the modified previous copy")
             shutil.rmtree(backup)
-            _sync_directory(target.parent)
-        return _result("updated" if current else "installed", target, desired)
+            directory_sync = _sync_directory(target.parent) and directory_sync
+        return _result("updated" if current else "installed", target, desired,
+                       directory_sync=directory_sync)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -2,15 +2,18 @@
 
 Esta guía describe los comandos y las condiciones de actualización. La
 [compatibilidad observada](compatibility.md) registra por separado lo que se ha
-probado en cada versión y cliente. Los ejemplos de 1.3.1 no acreditan por sí solos
-que esa versión esté instalada, confiada o ejecutándose en una sesión existente.
+probado en cada versión y cliente. Los ejemplos no acreditan por sí solos
+que el paquete esté instalado, confiado o ejecutándose en una sesión existente.
 
 ## Instalar y actualizar
 
 Se necesita Python 3.11+, Git para publicación y el cliente elegido con sus
-interfaces compatibles. Los instaladores usan bloqueo POSIX: el objetivo es
-macOS/Linux y entornos Linux como WSL, no Windows nativo. La referencia Claude
-es 2.1.301; no se promete compatibilidad con versiones anteriores. El uso de WSL
+interfaces compatibles. Esta sección conserva el destino POSIX para macOS/Linux
+y entornos Linux como WSL. Para Claude en Windows nativo, el candidato
+1.4.0-rc.1 se construye con `--language en --target windows-claude` y tiene
+[una guía específica](windows.md); su aceptación en Windows sigue pendiente.
+La referencia Claude del baseline POSIX es 2.1.301; no acredita esa versión en
+Windows ni compatibilidad con versiones anteriores. El uso de WSL
 requiere validar allí los clientes y las pruebas pertinentes.
 
 ### Preparar otro portátil
@@ -18,9 +21,9 @@ requiere validar allí los clientes y las pruebas pertinentes.
 1. Construye una distribución en un destino nuevo desde las fuentes publicadas:
 
    ```sh
-   python3 .codex/ecosystem/build.py --output /tmp/constellation-1.3.1 \
-     --archive /tmp/constellation-1.3.1.zip
-   shasum -a 256 /tmp/constellation-1.3.1.zip
+   python3 .codex/ecosystem/build.py --output /tmp/constellation-1.4.0-rc.1 \
+     --archive /tmp/constellation-1.4.0-rc.1.zip
+   shasum -a 256 /tmp/constellation-1.4.0-rc.1.zip
    ```
 
 2. Copia el ZIP y conserva su SHA-256 por un canal autorizado. En el otro
@@ -31,25 +34,25 @@ requiere validar allí los clientes y las pruebas pertinentes.
 3. Instala los clientes que vayas a usar desde el paquete extraído. Para Claude:
 
    ```sh
-   python3 /ruta/constellation-1.3.1/ecosystem/claude.py install \
-     --bundle /ruta/constellation-1.3.1 --claude-home ~/.claude --check
-   python3 /ruta/constellation-1.3.1/ecosystem/claude.py install \
-     --bundle /ruta/constellation-1.3.1 --claude-home ~/.claude
+   python3 /ruta/constellation-1.4.0-rc.1/ecosystem/claude.py install \
+     --bundle /ruta/constellation-1.4.0-rc.1 --claude-home ~/.claude --check
+   python3 /ruta/constellation-1.4.0-rc.1/ecosystem/claude.py install \
+     --bundle /ruta/constellation-1.4.0-rc.1 --claude-home ~/.claude
    ```
 
    Para Codex, conserva el instalador nativo existente:
 
    ```sh
-   python3 /ruta/constellation-1.3.1/ecosystem/install.py \
-     --bundle /ruta/constellation-1.3.1 --codex-home ~/.codex --check
-   python3 /ruta/constellation-1.3.1/ecosystem/install.py \
-     --bundle /ruta/constellation-1.3.1 --codex-home ~/.codex
+   python3 /ruta/constellation-1.4.0-rc.1/ecosystem/install.py \
+     --bundle /ruta/constellation-1.4.0-rc.1 --codex-home ~/.codex --check
+   python3 /ruta/constellation-1.4.0-rc.1/ecosystem/install.py \
+     --bundle /ruta/constellation-1.4.0-rc.1 --codex-home ~/.codex
    ```
 
 4. Verifica la instalación y abre una sesión nueva del cliente. Para Claude:
 
    ```sh
-   python3 /ruta/constellation-1.3.1/ecosystem/claude.py verify --claude-home ~/.claude
+   python3 /ruta/constellation-1.4.0-rc.1/ecosystem/claude.py verify --claude-home ~/.claude
    claude plugin validate --strict --json ~/.claude/skills/constellation
    ```
 
@@ -79,8 +82,8 @@ aprobación; nunca se editan hashes de confianza para completarla.
 En macOS puedes añadir un ensayo nativo aislado y sin modelo remoto:
 
 ```sh
-python3 -B /ruta/constellation-1.3.1/ecosystem/tests/native_claude_probe.py \
-  --bundle /ruta/constellation-1.3.1
+python3 -B /ruta/constellation-1.4.0-rc.1/ecosystem/tests/native_claude_probe.py \
+  --bundle /ruta/constellation-1.4.0-rc.1
 ```
 
 Acepta `--claude /ruta/al/binario` para elegir el CLI. Usa un servidor HTTP
@@ -115,9 +118,11 @@ directorio. Conserva las demás skills y ajustes y respeta una desactivación
 explícita del plugin. `--check` no modifica los directorios del usuario. Repetir
 el mismo paquete devuelve `unchanged`; una actualización usa el nuevo paquete y
 el mismo comando. Los cambios ajenos, enlaces o restos de una sustitución
-interrumpida se rechazan preservando sus archivos. Un error controlado restaura
-la instalación anterior; una terminación abrupta puede requerir resolver la
-interrupción antes de reintentar. El estado de investigación queda fuera del
+interrumpida se rechazan preservando sus archivos. Ante un error controlado se
+restaura el payload anterior cuando su identidad y el destino de retorno siguen
+verificados. Los datos parciales, cambiados o ajenos y las colisiones de retorno
+se conservan para inspección explícita. Una terminación abrupta puede requerir
+resolver la interrupción antes de reintentar. El estado de investigación queda fuera del
 directorio sustituible.
 
 Los hooks instalados validan el inventario antes de cargar el motor compartido

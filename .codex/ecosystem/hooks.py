@@ -11,7 +11,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PureWindowsPath
 import re
 import signal
 import stat
@@ -23,6 +24,10 @@ from typing import Any, BinaryIO
 # directory, never the event cwd or a directory supplied through the payload.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from ecosystem.platform_support import (
+    IS_WINDOWS, PlatformError, is_reparse, open_regular, validate_windows_relative,
+)
 
 MAX_INPUT_BYTES = 1024 * 1024
 # A multi-repository contract also stores per-path evidence for each check.
@@ -67,11 +72,43 @@ def _identifier(value: Any) -> str:
     return value
 
 
+def _windows_patch_name(value: str) -> None:
+    """Reject Windows alternate names before filesystem normalization."""
+    if not IS_WINDOWS:
+        return
+    path = PureWindowsPath(value)
+    if (path.anchor.startswith(("\\\\", "//"))
+            or (path.drive and not path.is_absolute())
+            or (path.root and not path.drive)):
+        raise HookError("patch path has an ambiguous Windows anchor")
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    if not parts:
+        if path.is_absolute():
+            return
+        raise HookError("patch path has no Windows file component")
+    try:
+        validate_windows_relative("/".join(parts))
+    except (PlatformError, ValueError) as exc:
+        raise HookError("patch path has an unsafe Windows component") from exc
+
+
+def _windows_ancestors(path: Path) -> None:
+    if not IS_WINDOWS:
+        return
+    _windows_patch_name(str(path))
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        if is_reparse(current):
+            raise HookError("working directory traverses a Windows reparse point")
+
+
 def _cwd(value: Any) -> Path:
     if not isinstance(value, str) or not value or len(value) > 4096:
         raise HookError("invalid event working directory")
     if any(ord(char) < 32 for char in value) or not Path(value).is_absolute():
         raise HookError("invalid event working directory")
+    _windows_ancestors(Path(value))
     root = Path(value).resolve(strict=True)
     if not root.is_dir():
         raise HookError("event working directory is not a directory")
@@ -173,6 +210,7 @@ def _original_patch_target(cwd: Path, name: str, *, deleting: bool = False) -> P
     lexically first would hide symlinks and could authorize a different file.
     Starting at the filesystem anchor also checks every physical cwd ancestor.
     """
+    _windows_patch_name(name)
     lookup = cwd / name
     if not lookup.is_absolute() or lookup.anchor.startswith(("//", "\\\\")):
         raise HookError("patch path has an ambiguous filesystem anchor")
@@ -192,10 +230,10 @@ def _original_patch_target(cwd: Path, name: str, *, deleting: bool = False) -> P
             if ".." in remaining:
                 raise HookError("patch parent traversal crosses a missing directory") from None
             return current.joinpath(*remaining)
-        if stat.S_ISLNK(metadata.st_mode):
-            if deleting and not remaining:
+        if is_reparse(current):
+            if deleting and not remaining and not IS_WINDOWS:
                 return current
-            raise HookError("patch path traverses a symbolic link")
+            raise HookError("patch path traverses a symbolic link or reparse point")
         if remaining and not stat.S_ISDIR(metadata.st_mode):
             raise HookError("patch path traverses a non-directory")
     return current
@@ -237,13 +275,21 @@ def _guard_patch(payload: dict[str, Any], tasks: list[dict[str, Any]], cwd: Path
 
 def _git_state(path: Path) -> dict[str, Any] | None:
     """Read bounded lifecycle metadata, without following an alternate state file."""
-    if not path.exists() and not path.is_symlink():
+    # Check the lookup boundary even when the expected state file is missing:
+    # a reparse point to an empty directory must not hide an active contract.
+    if is_reparse(path.parent):
+        raise HookError("Git lifecycle state directory is linked or redirected")
+    _windows_ancestors(path.parent)
+    if not path.exists() and not is_reparse(path):
         return None
-    if path.parent.is_symlink() or not path.parent.is_dir() or path.is_symlink() or not path.is_file():
+    if not path.parent.is_dir() or is_reparse(path) or not path.is_file():
         raise HookError("Git lifecycle state is not a regular local file")
+    if IS_WINDOWS:
+        descriptor = open_regular(path, os.O_RDONLY, mode=0o600, private=True)
+        with os.fdopen(descriptor, "rb") as stream:
+            return read_payload(stream, max_bytes=MAX_GIT_STATE_BYTES, context="Git lifecycle metadata")
     with path.open("rb") as stream:
-        state = read_payload(stream, max_bytes=MAX_GIT_STATE_BYTES, context="Git lifecycle metadata")
-    return state
+        return read_payload(stream, max_bytes=MAX_GIT_STATE_BYTES, context="Git lifecycle metadata")
 
 
 def _git_contracts(cwd: Path, session: str) -> list[dict[str, Any]]:
@@ -254,17 +300,24 @@ def _git_contracts(cwd: Path, session: str) -> list[dict[str, Any]]:
     A workspace and its per-repository contracts are one lifecycle, not rivals.
     """
     roots = [root for root in (cwd, *cwd.parents)
-             if (root / ".git").exists() or (root / ".git").is_symlink()]
+             if (root / ".git").exists() or is_reparse(root / ".git")]
     if not roots:
         return []
-    from ecosystem.runtime.workflow import Workflow
+    from ecosystem.runtime.workflow import Workflow, git
 
     owner = roots[0]
     workflows: dict[Path, dict[str, Any]] = {}
     workspaces: list[dict[str, Any]] = []
     for root in roots:
-        if (root / ".git").is_symlink():
-            raise HookError("Git metadata must not be a symbolic link")
+        if is_reparse(root / ".git"):
+            raise HookError("Git metadata must not be a symbolic link or reparse point")
+        # Git's absolute-path output resolves a redirected state directory.
+        # Inspect its original lookup before that canonicalization can hide it.
+        raw_home = Path(git(root, "rev-parse", "--git-path", "constellation"))
+        state_home = raw_home if raw_home.is_absolute() else root / raw_home
+        if is_reparse(state_home):
+            raise HookError("Git lifecycle state directory is linked or redirected")
+        _windows_ancestors(state_home)
         flow = Workflow(root, session, create_state=False)
         manifest = flow.home / f"workspace-{flow.key}.json"
         state = _git_state(manifest)
