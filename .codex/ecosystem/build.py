@@ -11,13 +11,23 @@ import re
 import stat
 import sys
 import tempfile
+import tomllib
 from typing import Iterable
 import zipfile
 
 MODULES = ("coding", "mathematics", "quant-research", "writter")
 BUNDLE_MANIFEST = "bundle.json"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
+CLAUDE_PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
+INSTALL_RECEIPT = ".constellation-install.json"
+CLAUDE_FILES = (
+    "ecosystem/claude.py", "ecosystem/claude_hooks.py", "ecosystem/claude-hooks.json",
+    "ecosystem/tests/test_claude_install.py", "ecosystem/tests/test_claude_hooks.py",
+    "ecosystem/tests/test_claude_package.py",
+    "ecosystem/tests/native_claude_probe.py",
+)
 COMMON_FILES = (
+    *CLAUDE_FILES,
     *(f"ecosystem/runtime/{name}.py" for name in
       ("__init__", "workflow", "workspace", "dispatch", "review_gate", "agent_policy", "progress")),
     "ecosystem/runtime/review-policy.json",
@@ -57,7 +67,7 @@ def select_modules(modules: Iterable[str] | None = None) -> tuple[str, ...]:
 
 def allowed_files(modules: Iterable[str]) -> set[str]:
     selected = select_modules(modules)
-    paths = set(COMMON_FILES) | {PLUGIN_MANIFEST}
+    paths = set(COMMON_FILES) | {PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST}
     for module in selected:
         paths.update(f"skills/{module}/{name}" for name in
                      ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
@@ -65,7 +75,49 @@ def allowed_files(modules: Iterable[str]) -> set[str]:
     if "mathematics" in selected or "writter" in selected:
         paths.update(("ecosystem/references/ontology.md",
                       "ecosystem/references/ontology-examples.md"))
+    paths.update(f"agents/{Path(path).stem}.md" for path in tuple(paths)
+                 if path.startswith("ecosystem/agents/") and path.endswith(".toml"))
     return paths
+
+
+def source_path(relative: str) -> str:
+    """Map a distributed resource to its canonical source, without loading code."""
+    if relative == PLUGIN_MANIFEST:
+        return "ecosystem/plugin.json"
+    if relative == CLAUDE_PLUGIN_MANIFEST:
+        return "ecosystem/claude-plugin.json"
+    path = Path(relative)
+    if len(path.parts) == 2 and path.parts[0] == "agents" and path.suffix == ".md":
+        return f"ecosystem/agents/{path.stem}.toml"
+    return relative
+
+
+def render_claude_agent(content: bytes) -> bytes:
+    """Project native metadata while retaining one canonical instruction body."""
+    try:
+        agent = tomllib.loads(content.decode("utf-8"))
+    except (UnicodeError, ValueError) as exc:
+        raise BundleError("Invalid canonical agent metadata") from exc
+    if (set(agent) != {"name", "description", "developer_instructions"}
+            or not all(isinstance(agent.get(key), str) and agent[key].strip() for key in agent)
+            or not re.fullmatch(r"ecosystem_[a-z_]+", agent["name"])):
+        raise BundleError("Canonical agent must inherit runtime choices and declare its instructions")
+    name = agent["name"].replace("_", "-")
+    return ("---\nname: " + json.dumps(name) + "\ndescription: "
+            + json.dumps(agent["description"], ensure_ascii=False)
+            + '\nmodel: "inherit"\n---\n\n' + agent["developer_instructions"].strip()
+            + "\n").encode("utf-8")
+
+
+def source_resource(root: Path, relative: str) -> tuple[bytes, int]:
+    """Read or render a resource identically for build, validation and comparison."""
+    root = Path(root)
+    portable = (root / BUNDLE_MANIFEST).is_file()
+    origin = regular_file(root, relative if portable else source_path(relative))
+    content = origin.read_bytes()
+    if not portable and relative.startswith("agents/") and relative.endswith(".md"):
+        return render_claude_agent(content), 0o644
+    return content, 0o755 if origin.stat().st_mode & stat.S_IXUSR else 0o644
 
 
 def regular_file(root: Path, relative: str) -> Path:
@@ -92,14 +144,27 @@ def file_record(path: Path) -> dict[str, object]:
             "mode": stat.S_IMODE(path.stat().st_mode)}
 
 
+def _decode_object(content: str | bytes) -> dict:
+    """Give builders, installers and native loaders one unambiguous JSON meaning."""
+    def unique(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate mapping key")
+            result[key] = value
+        return result
+
+    value = json.loads(content, object_pairs_hook=unique)
+    if not isinstance(value, dict):
+        raise ValueError("expected a JSON object")
+    return value
+
+
 def _json(path: Path) -> dict:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        return _decode_object(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise BundleError(f"Invalid JSON: {path.name}") from exc
-    if not isinstance(value, dict):
-        raise BundleError(f"Expected a JSON object: {path.name}")
-    return value
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -108,7 +173,7 @@ def _write_json(path: Path, value: dict) -> None:
 
 
 def _check_plugin(value: dict) -> None:
-    if (set(value) != {"name", "version", "description", "skills", "hooks"}
+    if (not isinstance(value, dict) or set(value) != {"name", "version", "description", "skills", "hooks"}
             or value.get("name") != "constellation" or not isinstance(value.get("version"), str)
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value["version"])
             or not isinstance(value.get("description"), str) or not value["description"].strip()
@@ -117,14 +182,26 @@ def _check_plugin(value: dict) -> None:
         raise BundleError("Plugin manifest does not match the Constellation contract")
 
 
-def verify_bundle(root: Path) -> dict:
+def _check_claude_plugin(value: dict) -> None:
+    if (not isinstance(value, dict) or set(value) != {"name", "version", "description", "author", "skills", "hooks"}
+            or value.get("name") != "constellation" or not isinstance(value.get("version"), str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value["version"])
+            or not isinstance(value.get("description"), str) or not value["description"].strip()
+            or value.get("author") != {"name": "Constellation"}
+            or value.get("skills") != "./skills/"
+            or value.get("hooks") != "./ecosystem/claude-hooks.json"):
+        raise BundleError("Claude plugin manifest does not match the Constellation contract")
+
+
+def verify_bundle(root: Path, *, installation: bool = False) -> dict:
     """Verify exact file membership, hashes, modes and the compat manifest."""
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise BundleError("Bundle must be a real directory")
     root = root.resolve()
     manifest = _json(regular_file(root, BUNDLE_MANIFEST))
-    if manifest.get("schema") != 1:
+    if (set(manifest) != {"schema", "modules", "files"}
+            or type(manifest.get("schema")) is not int or manifest["schema"] != 1):
         raise BundleError("Unsupported bundle schema")
     if not isinstance(manifest.get("modules"), list):
         raise BundleError("Bundle modules must be an explicit list")
@@ -140,13 +217,28 @@ def verify_bundle(root: Path) -> dict:
                 raise BundleError("Bundle contains a symlink")
         for name in files:
             actual.add((Path(directory) / name).relative_to(root).as_posix())
-    if actual != expected | {BUNDLE_MANIFEST}:
+    metadata = {INSTALL_RECEIPT} if installation else set()
+    if actual != expected | {BUNDLE_MANIFEST} | metadata:
         raise BundleError("Bundle contains missing or non-allowlisted files")
+    if installation:
+        receipt = regular_file(root, INSTALL_RECEIPT)
+        if stat.S_IMODE(receipt.stat().st_mode) != 0o600:
+            raise BundleError("Installation receipt must have mode 0600")
     for relative in sorted(expected):
         record = file_record(regular_file(root, relative))
         if record["mode"] not in (0o644, 0o755) or record != manifest["files"][relative]:
             raise BundleError(f"Bundle integrity mismatch: {relative}")
-    _check_plugin(_json(regular_file(root, PLUGIN_MANIFEST)))
+    codex = _json(regular_file(root, PLUGIN_MANIFEST))
+    claude = _json(regular_file(root, CLAUDE_PLUGIN_MANIFEST))
+    _check_plugin(codex)
+    _check_claude_plugin(claude)
+    if codex["version"] != claude["version"]:
+        raise BundleError("Native plugin versions differ")
+    for relative in sorted(expected):
+        if relative.startswith("agents/") and relative.endswith(".md"):
+            canonical = regular_file(root, source_path(relative))
+            if (root / relative).read_bytes() != render_claude_agent(canonical.read_bytes()):
+                raise BundleError(f"Claude agent differs from its canonical source: {relative}")
     return manifest
 
 
@@ -170,20 +262,27 @@ def build_bundle(output: Path, modules: Iterable[str] | None = None,
         raise BundleError("Output and source must not overlap")
     if output.exists():
         raise BundleError("Output already exists; choose a new directory")
-    sources: dict[str, Path] = {}
+    sources: dict[str, tuple[bytes, int]] = {}
     for relative in sorted(allowed_files(selected)):
-        origin = relative if relative != PLUGIN_MANIFEST or portable else "ecosystem/plugin.json"
-        sources[relative] = regular_file(source, origin)
-    _check_plugin(_json(sources[PLUGIN_MANIFEST]))
+        sources[relative] = source_resource(source, relative)
+    try:
+        codex = _decode_object(sources[PLUGIN_MANIFEST][0])
+        claude = _decode_object(sources[CLAUDE_PLUGIN_MANIFEST][0])
+    except (UnicodeError, ValueError) as exc:
+        raise BundleError("Invalid native plugin metadata") from exc
+    _check_plugin(codex)
+    _check_claude_plugin(claude)
+    if codex["version"] != claude["version"]:
+        raise BundleError("Native plugin versions differ")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".constellation-build-", dir=output.parent) as temporary:
         staging = Path(temporary) / "bundle"
         staging.mkdir(mode=0o755)
-        for relative, origin in sources.items():
+        for relative, (content, mode) in sources.items():
             target = staging / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(origin.read_bytes())
-            target.chmod(0o755 if origin.stat().st_mode & stat.S_IXUSR else 0o644)
+            target.write_bytes(content)
+            target.chmod(mode)
         manifest = {"schema": 1, "modules": list(selected),
                     "files": {p: file_record(staging / p) for p in sorted(sources)}}
         _write_json(staging / BUNDLE_MANIFEST, manifest)

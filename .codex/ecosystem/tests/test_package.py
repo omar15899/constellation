@@ -5,6 +5,8 @@ has a separate test using only a temporary CODEX_HOME and no conversation/thread
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import fcntl
 import hashlib
 from itertools import combinations
 import json
@@ -17,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -44,6 +47,7 @@ HISTORICAL_MODULES = tuple(module for module in MODULES
                            if module in ("coding", "mathematics", "writter"))
 PLUGIN_ID = "constellation@constellation"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
+CLAUDE_PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
 CORE_FILES = {
     "ecosystem/runtime/review_gate.py", "ecosystem/runtime/review-policy.json", "ecosystem/core.py",
     "ecosystem/runtime/__init__.py", "ecosystem/runtime/workflow.py",
@@ -95,6 +99,7 @@ class SyntheticNativeClient:
         self.fail_before_once: str | None = None
         self.corrupt_cache_once = False
         self.fail_rollback = False
+        self.plugin_queries: list[str | None] = []
 
     def _rows(self, name: str) -> list[dict]:
         path = self.home / "synthetic-native" / (name + ".json")
@@ -120,8 +125,13 @@ class SyntheticNativeClient:
     def marketplaces(self) -> list[dict]:
         return self._rows("marketplaces")
 
-    def plugins(self) -> list[dict]:
-        return self._rows("plugins")
+    def plugins(self, marketplace: str | None = None) -> list[dict]:
+        self.plugin_queries.append(marketplace)
+        rows = self._rows("plugins")
+        if marketplace is not None:
+            rows = [row for row in rows if isinstance(row.get("pluginId"), str)
+                    and row["pluginId"].endswith("@" + marketplace)]
+        return rows
 
     def add_marketplace(self, path: Path) -> dict:
         self.mutations.append("add_marketplace")
@@ -161,7 +171,7 @@ class SyntheticNativeClient:
         cache.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, cache)
         self._enable(True)
-        rows = [row for row in self.plugins() if row["pluginId"] != PLUGIN_ID]
+        rows = [row for row in self._rows("plugins") if row["pluginId"] != PLUGIN_ID]
         rows.append({"pluginId": PLUGIN_ID, "version": version, "enabled": True})
         self._save("plugins", rows)
         if self.corrupt_cache_once:
@@ -177,7 +187,7 @@ class SyntheticNativeClient:
         cache = self.home / "plugins/cache/constellation/constellation"
         if cache.exists():
             shutil.rmtree(cache)
-        self._save("plugins", [row for row in self.plugins() if row["pluginId"] != PLUGIN_ID])
+        self._save("plugins", [row for row in self._rows("plugins") if row["pluginId"] != PLUGIN_ID])
         self._enable(None)
         return {}
 
@@ -195,6 +205,7 @@ class BundleCase(unittest.TestCase):
         self.module = MODULES[0]
         self.bundle = self.root / "bundle"
         self.manifest = build_bundle(self.bundle, source_root=CODEX_DIR)
+        self.current_version = json.loads((self.bundle / PLUGIN_MANIFEST).read_text())["version"]
 
     def source_copy(self, name: str = "source") -> Path:
         source = self.root / name
@@ -202,6 +213,9 @@ class BundleCase(unittest.TestCase):
         (source / "bundle.json").unlink()
         (source / PLUGIN_MANIFEST).replace(source / "ecosystem/plugin.json")
         (source / ".codex-plugin").rmdir()
+        (source / CLAUDE_PLUGIN_MANIFEST).replace(source / "ecosystem/claude-plugin.json")
+        (source / ".claude-plugin").rmdir()
+        shutil.rmtree(source / "agents")
         return source
 
     def changed_bundle(self, version: str = "1.1.1", *, change_agent: bool = False,
@@ -210,6 +224,8 @@ class BundleCase(unittest.TestCase):
         metadata = json.loads((source / "ecosystem/plugin.json").read_text())
         metadata["version"] = version
         write_json(source / "ecosystem/plugin.json", metadata)
+        claude = json.loads((source / "ecosystem/claude-plugin.json").read_text())
+        write_json(source / "ecosystem/claude-plugin.json", {**claude, "version": version})
         workflow = source / f"skills/{self.module}/references/workflow.md"
         workflow.write_text(workflow.read_text() + "\nUpdated synthetic release.\n")
         if change_agent:
@@ -260,6 +276,115 @@ class BundleCase(unittest.TestCase):
         self.assertTrue(state.is_dir())
         self.assertTrue(snapshot(state))
         return state, identity, result["revision"]
+
+
+class RuntimeStatusTests(BundleCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.receiver = self.root / "status-receiver"
+        self.receiver.mkdir()
+        self.environment = dict(os.environ)
+        self.environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
+                                GIT_CONFIG_NOSYSTEM="1", CODEX_HOME=str(self.root / "status-home"))
+        self.environment.pop("CODEX_THREAD_ID", None)
+        self.environment.pop("PYTHONPATH", None)
+        for args in (("init", "-b", "main", str(self.receiver)),
+                     ("-C", str(self.receiver), "config", "user.name", "Status Fixture"),
+                     ("-C", str(self.receiver), "config", "user.email", "status@example.invalid"),
+                     ("-C", str(self.receiver), "config", "core.hooksPath", str(self.root / "no-hooks"))):
+            subprocess.run(["git", *args], env=self.environment, capture_output=True,
+                           text=True, check=True, timeout=10)
+        (self.receiver / "README.md").write_text("Status fixture.\n")
+        for args in (("add", "README.md"), ("commit", "-m", "Create status fixture")):
+            subprocess.run(["git", *args], cwd=self.receiver, env=self.environment,
+                           capture_output=True, text=True, check=True, timeout=10)
+        self.session = "synthetic-status-reader"
+        self.command = [sys.executable, "-I", "-B", str(self.bundle / "ecosystem/cli.py"),
+                        "git", "--root", str(self.receiver), "--session", self.session]
+        begun = self.invoke("begin")
+        self.assertEqual(begun.returncode, 2, begun.stderr)
+        self.assertIn("sync_error", json.loads(begun.stdout))
+        planned = self.invoke("plan", payload={"requirements": ["Inspect the pending fixture."], "paths": []})
+        self.assertEqual(planned.returncode, 0, planned.stderr)
+        self.home = self.receiver / ".git/constellation"
+        self.state = self.home / (hashlib.sha256(self.session.encode()).hexdigest()[:24] + ".json")
+
+    def invoke(self, *arguments: str, payload: dict | None = None,
+               timeout: int = 5) -> subprocess.CompletedProcess:
+        return subprocess.run([*self.command, *arguments], cwd=self.receiver, env=self.environment,
+                              input=json.dumps(payload) if payload is not None else None,
+                              capture_output=True, text=True, timeout=timeout)
+
+    def test_checked_command_can_read_its_own_pending_status(self) -> None:
+        result = self.invoke("check", "--timeout", "3", "--", *self.command, "status", timeout=6)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        pending, completed = [json.loads(line) for line in result.stdout.splitlines() if line]
+        self.assertFalse(pending["checks"][-1]["completed"])
+        self.assertIsNone(pending.get("finished"))
+        self.assertTrue(completed["completed"])
+        self.assertEqual(completed["exit_code"], 0)
+        self.assertEqual(json.loads(self.state.read_text())["checks"][-1], completed)
+
+    def test_status_reads_one_unchanged_incomplete_snapshot_while_writer_holds_lock(self) -> None:
+        before = snapshot(self.home)
+        with (self.home / "workflow.lock").open("a") as writer:
+            fcntl.flock(writer, fcntl.LOCK_EX)
+            result = self.invoke("status", timeout=3)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), json.loads(self.state.read_text()))
+            self.assertIsNone(json.loads(result.stdout).get("finished"))
+            self.assertEqual(snapshot(self.home), before)
+            with (self.home / "workflow.lock").open("a") as contender:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_mutation_still_waits_for_writer_lock_and_does_not_release_it(self) -> None:
+        marker = self.root / "mutator-entered-lock"
+        runner = textwrap.dedent('''\
+            from contextlib import contextmanager
+            from pathlib import Path
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            from ecosystem.runtime.workflow import Workflow, entrypoint
+            class ObservedWorkflow(Workflow):
+                @contextmanager
+                def lock(self):
+                    Path(sys.argv[2]).write_text("entered")
+                    with super().lock():
+                        yield
+            raise SystemExit(entrypoint(sys.argv[3:], workflow_factory=ObservedWorkflow))
+            ''')
+        process = None
+        before = self.state.read_bytes()
+        try:
+            with (self.home / "workflow.lock").open("a") as writer:
+                fcntl.flock(writer, fcntl.LOCK_EX)
+                process = subprocess.Popen(
+                    [sys.executable, "-I", "-B", "-c", runner, str(self.bundle), str(marker),
+                     "--root", str(self.receiver), "--session", self.session, "plan"],
+                    cwd=self.receiver, env=self.environment, stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                assert process.stdin is not None
+                process.stdin.write(json.dumps({"requirements": ["Queued fixture update."], "paths": []}))
+                process.stdin.close()
+                process.stdin = None
+                deadline = time.monotonic() + 5
+                while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(marker.exists(), "Mutator did not reach the real workflow lock")
+                self.assertIsNone(process.poll())
+                self.assertEqual(self.state.read_bytes(), before)
+                with (self.home / "workflow.lock").open("a") as contender:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            output, error = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, error)
+            self.assertEqual(json.loads(output)["requirements"], ["Queued fixture update."])
+            self.assertEqual(json.loads(self.state.read_text())["requirements"], ["Queued fixture update."])
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
 
 
 class BuildTests(BundleCase):
@@ -585,6 +710,9 @@ class SyntheticInstallationTests(BundleCase):
                      "tests/test_progress.py", "tests/test_progress_core.py", "hook_entry.py",
                      "tests/test_hook_entry.py"):
             (payload / "ecosystem" / name).unlink()
+        historical = installer._legacy_receipt_files(tuple(modules))
+        for relative in set(installer._inventory(payload)) - historical - {"bundle.json"}:
+            (payload / relative).unlink()
         metadata = json.loads((payload / PLUGIN_MANIFEST).read_text())
         write_json(payload / PLUGIN_MANIFEST, {**metadata, "version": "1.0.0"})
         if executable_agent:
@@ -613,6 +741,8 @@ class SyntheticInstallationTests(BundleCase):
             "ecosystem/runtime/progress.py", "ecosystem/tests/test_progress.py",
             "ecosystem/tests/test_progress_core.py", "ecosystem/PROGRESS.md",
             "ecosystem/hook_entry.py", "ecosystem/tests/test_hook_entry.py",
+            *builder.CLAUDE_FILES, CLAUDE_PLUGIN_MANIFEST,
+            *(relative for relative in builder.allowed_files(modules) if relative.startswith("agents/")),
         ))
         receipt = self.receipt()
         receipt.pop("hook")
@@ -724,7 +854,7 @@ class SyntheticInstallationTests(BundleCase):
                 self.assertEqual(self.backend.mutations, [])
                 result = self.install(modules=modules)
                 self.assertEqual(result["status"], "updated")
-                self.assertEqual(result["version"], "1.2.0")
+                self.assertEqual(result["version"], self.current_version)
                 self.assertEqual(self.receipt()["schema"], 3)
                 self.assertFalse((self.cache() / "review_gate.py").exists())
                 self.assertTrue((self.cache() / "ecosystem/runtime/workflow.py").is_file())
@@ -740,7 +870,7 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(snapshot(self.home), before)
         self.assertEqual(self.receipt()["schema"], 1)
         self.assertEqual(self.install(check=True)["status"], "checked")
-        self.assertEqual(self.install()["version"], "1.2.0")
+        self.assertEqual(self.install()["version"], self.current_version)
 
     def test_executable_packaged_agent_keeps_normalized_projection_across_updates(self) -> None:
         source = self.source_copy()
@@ -972,6 +1102,8 @@ class SyntheticInstallationTests(BundleCase):
         )
         metadata = json.loads((source / "ecosystem/plugin.json").read_text())
         write_json(source / "ecosystem/plugin.json", {**metadata, "version": "1.2.1"})
+        metadata = json.loads((source / "ecosystem/claude-plugin.json").read_text())
+        write_json(source / "ecosystem/claude-plugin.json", {**metadata, "version": "1.2.1"})
         with patch.object(builder, "COMMON_FILES", (*builder.COMMON_FILES, relative)):
             updated = self.root / "future-agent-bundle"
             build_bundle(updated, MODULES, source_root=source)
@@ -1242,6 +1374,18 @@ class SyntheticInstallationTests(BundleCase):
                 self.assertFalse((self.home / "constellation/receipt.json").exists())
                 self.assert_unrelated_preserved()
 
+    def test_installation_and_rollback_query_only_the_managed_marketplace(self) -> None:
+        self.backend.fail_once = "add_plugin"
+        with self.assertRaises(InstallError):
+            self.install()
+        self.assertTrue(self.backend.plugin_queries)
+        self.assertEqual(set(self.backend.plugin_queries), {"constellation"})
+        self.backend.plugin_queries.clear()
+        self.install()
+        self.assertTrue(self.backend.plugin_queries)
+        self.assertEqual(set(self.backend.plugin_queries), {"constellation"})
+        self.assert_unrelated_preserved()
+
     def test_failed_update_restores_prior_receipt_catalog_agents_and_native_state(self) -> None:
         self.install()
         updated = self.changed_bundle()
@@ -1250,7 +1394,7 @@ class SyntheticInstallationTests(BundleCase):
         with self.assertRaises(InstallError):
             self.install(updated)
         self.assertEqual(snapshot(self.home), before)
-        self.assertEqual(self.receipt()["version"], "1.2.0")
+        self.assertEqual(self.receipt()["version"], self.current_version)
         self.assert_unrelated_preserved()
 
     def test_native_cache_mismatch_is_rejected_and_compensated(self) -> None:
@@ -1391,7 +1535,9 @@ class NativeAdapterSubprocessTests(unittest.TestCase):
             elif arguments[:3] == ["plugin", "marketplace", "list"]:
                 print(json.dumps({"marketplaces": []}))
             elif arguments[:2] == ["plugin", "list"]:
-                print(json.dumps({"installed": []}))
+                response = home / "plugin-response.json"
+                print(response.read_text() if response.exists()
+                      else json.dumps({"installed": [], "available": []}))
             else:
                 print("{}")
             '''))
@@ -1423,9 +1569,72 @@ class NativeAdapterSubprocessTests(unittest.TestCase):
             self.assertNotIn("synthetic private", str(raised.exception))
             (self.home / flag).unlink()
 
+    def test_marketplace_filter_is_one_structured_native_cli_argument(self) -> None:
+        self.assertEqual(self.client.plugins(marketplace="constellation"), [])
+        calls = [json.loads(line) for line in (self.home / "synthetic-calls.jsonl").read_text().splitlines()]
+        self.assertEqual([row["args"] for row in calls],
+                         [["plugin", "list", "--marketplace", "constellation", "--json"]])
+
+    def test_installed_rows_normalize_legacy_and_current_cli_envelopes(self) -> None:
+        row = {"pluginId": PLUGIN_ID, "enabled": True, "version": "1.3.0"}
+        available = {"pluginId": "candidate@constellation", "enabled": True}
+        for response in ({"plugins": [row]}, {"installed": [row]},
+                         {"installed": [row], "available": [available]}):
+            with self.subTest(envelope=list(response)):
+                write_json(self.home / "plugin-response.json", response)
+                self.assertEqual(self.client.plugins(marketplace="constellation"), [row])
+
+    def test_available_rows_never_establish_installation(self) -> None:
+        row = {"pluginId": PLUGIN_ID, "enabled": True, "version": "1.3.0"}
+        write_json(self.home / "plugin-response.json", {"installed": [], "available": [row]})
+        self.assertEqual(self.client.plugins(marketplace="constellation"), [])
+        self.assertEqual(installer._registered(self.client, self.root / "catalog"), (False, None))
+
+    def test_ambiguous_and_malformed_plugin_envelopes_are_rejected(self) -> None:
+        row = {"pluginId": PLUGIN_ID, "enabled": True}
+        responses = ([], {}, {"plugins": None}, {"plugins": [None]},
+                     {"installed": [], "plugins": []}, {"installed": [], "available": {}},
+                     {"available": [row]}, {"installed": [row], "available": [None]},
+                     {"installed": [row], "unknown": []},
+                     {"installed": [{**row, "installed": False}]},
+                     {"plugins": [{**row, "enabled": 1}]}, {"installed": [{}]})
+        for response in responses:
+            with self.subTest(response=response):
+                write_json(self.home / "plugin-response.json", response)
+                with self.assertRaises(NativeError):
+                    self.client.plugins(marketplace="constellation")
+
+    def test_general_diagnostics_keep_the_unscoped_plugin_query(self) -> None:
+        with patch.object(self.client, "plugins", wraps=self.client.plugins) as queried, \
+                patch.object(native_adapter, "_Rpc", side_effect=NativeError("Synthetic unavailable RPC")):
+            result = self.client.capabilities()
+        queried.assert_called_once_with()
+        self.assertEqual(result["checks"]["plugins"]["status"], "ok")
+        calls = [json.loads(line) for line in (self.home / "synthetic-calls.jsonl").read_text().splitlines()]
+        self.assertEqual(calls[0]["args"], ["plugin", "list", "--json"])
+
 
 @unittest.skipUnless(shutil.which("codex"), "Native Codex executable is unavailable; synthetic tests are separate")
 class RealNativeInstallationTests(BundleCase):
+    def test_real_native_same_version_update_refreshes_runtime_bytes(self) -> None:
+        home = self.root / "same-version-home"
+        home.mkdir()
+        receiver = self.root / "same-version-receiver"
+        receiver.mkdir()
+        client = NativeClient(home, shutil.which("codex") or "codex", receiver, timeout=45)
+        installed = install_bundle(self.bundle, home, client=client)
+        source = self.source_copy("same-version-source")
+        runtime = source / "ecosystem/runtime/workflow.py"
+        runtime.write_bytes(runtime.read_bytes() + b"\n# Synthetic same-version payload refresh.\n")
+        update = self.root / "same-version-bundle"
+        build_bundle(update, MODULES, source_root=source)
+        result = install_bundle(update, home, client=client)
+        self.assertEqual(result["version"], installed["version"])
+        cache = home / "plugins/cache/constellation/constellation" / installed["version"]
+        self.assertEqual((cache / "ecosystem/runtime/workflow.py").read_bytes(), runtime.read_bytes())
+        self.assertNotEqual((cache / "ecosystem/runtime/workflow.py").read_bytes(),
+                            (self.bundle / "ecosystem/runtime/workflow.py").read_bytes())
+
     def test_real_native_install_discovery_repeat_and_read_only_check(self) -> None:
         home = self.root / "native-home"
         home.mkdir()
@@ -1534,7 +1743,9 @@ class RealNativeSourceExclusionTests(BundleCase):
         agents_before = snapshot(home / "agents")
         configuration_before = tomllib.loads((home / "config.toml").read_text())
 
-        result = client.exclude_source_skills(source)
+        with patch.object(client, "plugins", wraps=client.plugins) as queried:
+            result = client.exclude_source_skills(source)
+        queried.assert_called_once_with(marketplace="constellation")
         self.assertEqual(result["status"], "excluded", result)
         self.assertEqual(result["modules"], list(MODULES))
         self.assertEqual({Path(row["path"]) for row in result["paths"]}, source_paths)
@@ -1771,33 +1982,44 @@ class DistributedSuiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="constellation-distributed-suite-") as temporary:
             root = Path(temporary).resolve()
             selections = [("full", ALL_MODULES), *((module, (module,)) for module in ALL_MODULES)]
+            cases = []
             for name, modules in selections:
-                with self.subTest(distribution=name):
-                    bundle = root / name
-                    manifest = build_bundle(bundle, modules, source_root=CODEX_DIR)
-                    before = snapshot(bundle)
-                    receiver = root / (name + "-receiver")
-                    receiver.mkdir()
-                    environment = dict(os.environ)
-                    environment["CODEX_HOME"] = str(root / (name + "-home"))
-                    environment["PYTHONDONTWRITEBYTECODE"] = "1"
-                    environment.pop("CODEX_THREAD_ID", None)
-                    environment.pop("PYTHONPATH", None)
-                    result = subprocess.run(
-                        [sys.executable, "-I", "-B", "-m", "unittest", "discover", "-s",
-                         str(bundle / "ecosystem/tests"), "-q"], cwd=receiver, env=environment,
-                        capture_output=True, text=True, timeout=180)
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    summary = re.search(r"^Ran (\d+) tests? in ([\d.]+)s$", result.stderr, re.MULTILINE)
-                    self.assertIsNotNone(summary, result.stderr)
-                    assert summary is not None
-                    self.assertGreater(int(summary[1]), 0)
-                    skips = re.search(r"OK \(skipped=(\d+)\)", result.stderr)
-                    print(f"Distributed {name}: {summary[1]} tests in {summary[2]}s; "
-                          f"{skips[1] if skips else '0'} explicit skips.")
-                    self.assertEqual(verify_bundle(bundle), manifest)
-                    self.assertEqual(snapshot(bundle), before)
-                    self.assertFalse((receiver / ".git").exists())
+                bundle = root / name
+                manifest = build_bundle(bundle, modules, source_root=CODEX_DIR)
+                before = snapshot(bundle)
+                receiver = root / (name + "-receiver")
+                receiver.mkdir()
+                environment = dict(os.environ)
+                environment["CODEX_HOME"] = str(root / (name + "-home"))
+                environment["PYTHONDONTWRITEBYTECODE"] = "1"
+                environment.pop("CODEX_THREAD_ID", None)
+                environment.pop("PYTHONPATH", None)
+                environment.pop("CONSTELLATION_STATE_DIR", None)
+                cases.append((name, bundle, manifest, before, receiver, environment))
+
+            # Each child has its own receiver, native home and default state.
+            # Run bounded independent processes; inspect every result in order.
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                pending = [executor.submit(
+                    subprocess.run,
+                    [sys.executable, "-I", "-B", "-m", "unittest", "discover", "-s",
+                     str(bundle / "ecosystem/tests"), "-q"], cwd=receiver, env=environment,
+                    capture_output=True, text=True, timeout=180,
+                ) for _, bundle, _, _, receiver, environment in cases]
+                for (name, bundle, manifest, before, receiver, _), future in zip(cases, pending):
+                    with self.subTest(distribution=name):
+                        result = future.result()
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        summary = re.search(r"^Ran (\d+) tests? in ([\d.]+)s$", result.stderr, re.MULTILINE)
+                        self.assertIsNotNone(summary, result.stderr)
+                        assert summary is not None
+                        self.assertGreater(int(summary[1]), 0)
+                        skips = re.search(r"OK \(skipped=(\d+)\)", result.stderr)
+                        print(f"Distributed {name}: {summary[1]} tests in {summary[2]}s; "
+                              f"{skips[1] if skips else '0'} explicit skips.")
+                        self.assertEqual(verify_bundle(bundle), manifest)
+                        self.assertEqual(snapshot(bundle), before)
+                        self.assertFalse((receiver / ".git").exists())
 
 
 if __name__ == "__main__":

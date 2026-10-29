@@ -46,8 +46,8 @@ usar un ejemplo pequeño para destruir una afirmación universal; sobrevivir a
 esa búsqueda no la demuestra. Si solo hay un agente disponible, describe la
 exploración como propia y la revisión independiente como pendiente.
 
-Usa los perfiles `ecosystem_mathematician`, `ecosystem_counterexample`,
-`ecosystem_researcher`, `ecosystem_reviewer` y `ecosystem_verifier` según la
+Usa los perfiles de matemáticas, contraejemplos, investigación, revisión y
+verificación con los nombres que anuncie el cliente. Elige según la
 responsabilidad, leyendo los recursos pertinentes de
 [agentes del paquete](../../../ecosystem/agents). Si la superficie no carga un
 perfil, transmite sus instrucciones al agente nativo disponible; no finjas que

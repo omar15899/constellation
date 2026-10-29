@@ -53,9 +53,9 @@ cuando ahorre tiempo o aporte contraste. Asigna un único escritor por archivo;
 si varios agentes aportan al mismo documento, el integrador incorpora sus
 resultados. Ningún agente descarta cambios ajenos ni publica por su cuenta.
 
-Usa `ecosystem_editor`, `ecosystem_researcher` y `ecosystem_reviewer` cuando estén
-disponibles. Para contenido técnico, usa los roles pertinentes disponibles,
-como `ecosystem_mathematician` o `ecosystem_coder`. Si la superficie no carga
+Usa los perfiles de edición, investigación y revisión con los nombres que
+anuncie el cliente. Para contenido técnico, añade los roles pertinentes de
+matemáticas o código. Si la superficie no carga
 esos roles, entrega sus instrucciones al agente nativo disponible desde los
 recursos de [edición](../../../ecosystem/agents/editor.toml),
 [investigación](../../../ecosystem/agents/researcher.toml),

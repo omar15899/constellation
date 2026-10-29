@@ -865,9 +865,10 @@ def main(argv: list[str] | None = None, *, workflow_factory: type[Workflow] = Wo
     root = Path(git(cwd, "rev-parse", "--show-toplevel"))
     workflow = workflow_factory(root, payload.get("session_id", args.session))
     progress_policy = workflow.progress_policy(args.policy) if args.command == "progress-ack" else None
-    # Git runs its hooks synchronously inside commit/push; reacquiring the parent
-    # workflow lock here would deadlock. JSONL append is one write per event.
-    with (nullcontext() if args.command == "git-hook" else workflow.lock()):
+    # Status reads one atomically published JSON snapshot, not completion
+    # authority; reacquiring a parent check's lock would deadlock that read.
+    # Git hooks also run synchronously inside commit/push and append one event.
+    with (nullcontext() if args.command in {"status", "git-hook"} else workflow.lock()):
         if args.command == "begin":
             result = workflow.begin(args.turn)
         elif args.command == "plan":

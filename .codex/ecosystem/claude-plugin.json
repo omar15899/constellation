@@ -1,0 +1,8 @@
+{
+  "name": "constellation",
+  "version": "1.3.0",
+  "author": {"name": "Constellation"},
+  "description": "Shared research contracts, canonical skills and native agents across independent projects.",
+  "skills": "./skills/",
+  "hooks": "./ecosystem/claude-hooks.json"
+}

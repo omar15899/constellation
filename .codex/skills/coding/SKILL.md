@@ -46,7 +46,8 @@ real y resultado comprobable. Los perfiles disponibles son
 [researcher](../../ecosystem/agents/researcher.toml),
 [reviewer](../../ecosystem/agents/reviewer.toml),
 [security_reviewer](../../ecosystem/agents/security-reviewer.toml) y
-[verifier](../../ecosystem/agents/verifier.toml), con prefijo nativo `ecosystem_`.
+[verifier](../../ecosystem/agents/verifier.toml). Usa los nombres que anuncie el
+catálogo del cliente nativo.
 Si un perfil no está cargado, transmite sus instrucciones al agente disponible;
 hereda modelo, esfuerzo y permisos sin afirmar una activación inexistente.
 

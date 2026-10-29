@@ -1,5 +1,77 @@
 # Compatibilidad observada
 
+## Distribución dual 1.3 — 2026-10-28
+
+El objetivo de esta distribución es instalar las mismas fuentes de investigación
+y el mismo núcleo de evidencia en varios portátiles, con entradas nativas para
+Codex y Claude Code. La versión del paquete, su integridad, lo cargado por un
+cliente y la ejecución de hooks son evidencias distintas. Una equivalencia de
+estructura no demuestra igualdad de resultados ni de conectores disponibles.
+
+| Superficie | Evidencia y límite |
+| --- | --- |
+| Claude Code instalado | El CLI real 2.1.301 ejecutó los ensayos aislados. Es la referencia conservadora de esta integración; no acredita versiones anteriores ni otros portátiles. |
+| Validación nativa del bundle | `claude plugin validate --strict --json` terminó con código 0, sin errores ni advertencias. Se observaron cuatro skills con namespace y ocho roles. |
+| Plugin permanente en directorio de skills | En un home aislado con espacios, la primera instalación devolvió `installed` y la repetición `unchanged`; la verificación confirmó el recibo 1.3.0. El CLI listó `constellation@skills-dir` habilitado y, sin `--plugin-dir`, cargó las cuatro skills y los ocho roles. |
+| Eventos nativos observados | El CLI despachó `SessionStart`, `UserPromptSubmit`, `PreToolUse` y `Stop`. La validación del schema y la ejecución efectiva se comprobaron por separado. |
+| Rechazo y permiso de edición | Un `Write` fuera del alcance fue denegado y su archivo quedó ausente. Un `Write` declarado fue permitido y creó el archivo. La carga permanente también rechazó la edición no declarada. |
+| Cierre incompleto portable | Un contrato pendiente produjo exactamente dos continuaciones Stop y después `INCOMPLETE`, sin aprobar su cierre. Esto no demuestra corrección de una conclusión científica. |
+| Fallo operativo de un hook | Un hook que terminó con código 17 quedó bloqueado mediante la política nativa de fallo. La protección de Stop y SubagentStop sigue siendo distinta. |
+| Eventos nativos de subagentes | `SubagentStart` y `SubagentStop` no quedaron verificados en el CLI. La carga de roles y las 17 pruebas enfocadas del adaptador no sustituyen ese despacho. |
+| Otro portátil | El ZIP y su hash permiten repetir la instalación. No se ha establecido una prueba en hardware distinto por el hecho de usar dos directorios temporales. |
+| Plataformas | Python 3.11+ y bloqueos POSIX. macOS/Linux son el ámbito de implementación; WSL requiere validación en ese entorno. Windows nativo queda fuera de la cobertura. |
+| OmarOS | Sus cuatro recursos derivados siguen fijados en 1.2.0. El actualizador receptor no admite bundles 1.3.0 sin una migración explícita. |
+
+Los ensayos nativos utilizaron una respuesta simulada por HTTP exclusivamente
+local y una credencial sintética. La red exterior, el HOME real y Keychain
+quedaron bloqueados. No hubo llamadas a un modelo remoto. Se comprobó la
+integración del cliente y el control de las operaciones, no su capacidad de
+investigación ni la calidad de sus respuestas.
+
+El intento de ejercer la herramienta Agent recibió un rechazo de la revisión
+automática de aprobación: el clasificador auto-mode no pudo evaluar la acción
+con la respuesta simulada local. No se cambiaron permisos ni se reintentó por
+otro modo. Por ello la ejecución nativa de los dos eventos de subagente permanece
+sin evidencia, aunque sus roles estén cargados y el adaptador tenga pruebas.
+
+La aceptación de portabilidad también exige construcción repetida, destinos
+aislados en rutas distintas, actualización, preservación de configuración ajena,
+alteración de archivos y una interrupción de la sustitución. Las comprobaciones
+del motor y del paquete se registran aparte del despacho nativo. Las pruebas de
+investigación añaden evidencia faltante, agentes fallidos, fuentes cambiadas y
+revisión independiente. Ninguna certifica por sí sola la verdad de una
+demostración o la validez de una conclusión empírica.
+
+La semántica documentada de `onFailure: "block"` requiere Claude 2.1.295 o
+posterior, pero no protege Stop ni SubagentStop. La implementación debe conservar
+la aceptación en comandos deterministas. Los settings, políticas administradas
+y autorizaciones personales de cada cliente pueden alterar su carga efectiva.
+La configuración local no demuestra controles de entrenamiento o retención de
+cuenta. No se copian sus datos al bundle.
+
+El [release oficial 2.1.312](https://github.com/anthropics/claude-code/releases/tag/v2.1.312)
+se publicó el 2026-10-27; el binario local observado sigue en 2.1.301. Este encargo
+no lo actualiza. Las publicaciones y la documentación actuales pueden describir
+capacidades posteriores a ese binario. En particular, la
+[recuperación de workflows dinámicos](https://code.claude.com/docs/en/workflows#which-agents-run-again)
+distingue el comportamiento anterior a 2.1.305; no se atribuyen sus garantías
+nuevas a 2.1.301.
+
+La [comparación de diseños publicados](ARCHITECTURE.md#correspondencia-con-diseños-publicados-por-anthropic)
+relaciona el método de Constellation con artículos oficiales sobre composición,
+investigación multiagente, contexto, skills, recuperación y evaluación. Es una
+comparación de mecanismos y obligaciones, no una prueba de sus resultados
+experimentales en nuestro sistema. Las evaluaciones nativas de plugins no se
+ejecutan como una comprobación inocua: requieren modelos y pueden publicar un
+informe. Un ensayo autorizado con datos locales debe conservar el informe local
+mediante `--no-publish` y límites explícitos.
+
+Referencias primarias de esta integración:
+[carga permanente de plugins Claude](https://code.claude.com/docs/en/plugins/create#make-a-plugin-load-in-every-session),
+[schema y componentes](https://code.claude.com/docs/en/plugins/manifest-reference),
+[fallos de hooks](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails)
+y [agentes nativos](https://code.claude.com/docs/en/sub-agents).
+
 ## Fase adaptativa 1.2: contrato y evidencia pendiente
 
 La entrada estable `CODEX_HOME/constellation/hook.py`, su validación bajo lock y

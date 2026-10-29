@@ -1,9 +1,18 @@
 # Constellation
 
-Describe el resultado que necesitas. Codex descubre las capacidades disponibles,
-selecciona las skills pertinentes y carga sus instrucciones cuando hacen falta.
-Constellation añade contratos, coordinación, evidencia, revisión y publicación.
-No cambia tu modelo, esfuerzo, permisos ni confianza de hooks.
+Constellation es un entorno de investigación compartido para Codex y Claude
+Code. Una distribución versionada contiene las mismas skills, instrucciones de
+agentes y controles de evidencia. Cada cliente descubre y ejecuta sus componentes
+nativos; los proyectos conservan datos, permisos, pruebas y propiedad Git.
+Describe el resultado que necesitas: el cliente selecciona las capacidades
+pertinentes y carga sus instrucciones cuando hacen falta. Constellation añade
+contratos, coordinación, evidencia, revisión y publicación sin fijar tu modelo,
+esfuerzo, permisos ni confianza de hooks.
+
+El mismo paquete se puede instalar en varios portátiles. Compartir una versión
+establece fuentes y criterios comunes, no respuestas idénticas de los modelos
+ni acceso automático a los datos o conexiones del otro ordenador. No requiere
+un servicio central, otro motor de agentes ni una copia de OmarOS.
 
 ## Uso cotidiano
 
@@ -29,7 +38,9 @@ esa enseñanza; cambiar de modelo no requiere copiarlo ni reentrenar nada.
 
 Puedes solicitar expresamente `$constellation:coding`,
 `$constellation:mathematics`, `$constellation:quant-research` o
-`$constellation:writter`. No necesitas conocer esos
+`$constellation:writter` en Codex; en Claude usa `/constellation:coding`,
+`/constellation:mathematics`, `/constellation:quant-research` o
+`/constellation:writter`. No necesitas conocer esos
 nombres para la selección ordinaria. Una skill de documentos, PDF, hojas de
 cálculo o una conexión externa sigue perteneciendo a su proveedor; Constellation
 no la copia ni presume que está disponible en cualquier cliente.
@@ -41,6 +52,13 @@ está incluido, descubre las capacidades del receptor: no instala labs,
 datos ni conectores, ni activa órdenes reales. El runner y la persistencia de
 campañas pertenecen al proyecto de integración; Constellation conserva la
 coordinación nativa y sus controles de evidencia.
+
+El método común es general: delimitar la pregunta, declarar hipótesis y fuentes,
+buscar explicaciones rivales y contraejemplos, y ligar cada conclusión a evidencia
+vigente. Una demostración, un cálculo y un experimento descargan obligaciones
+distintas. Los resultados negativos y los pendientes se conservan. La profundidad,
+los especialistas y las pruebas se eligen según el problema; una tarea breve no
+activa por defecto una cadena de agentes ni otro ciclo persistente.
 
 ## Diagnóstico
 
@@ -57,6 +75,18 @@ CLI**: el catálogo del cliente actual puede diferir. No acredita autorización,
 compatibilidad ni ejecución de lo enumerado. Conserva errores y advertencias
 sin volcar comandos, configuración sensible o contenido de conversaciones.
 
+En Claude, comprueba primero la integridad de la instalación:
+
+```sh
+python3 /ruta/al/paquete/ecosystem/claude.py verify --claude-home ~/.claude
+```
+
+El resultado informa de la instalación y su integridad. La carga, confianza y
+ejecución permanecen desconocidas mientras no se observen. En una sesión nueva usa
+`/context`, `/skills`, `/agents`, `/hooks` y `/status` para revisar los componentes
+efectivos. La configuración personal, local o administrada puede cambiar lo que
+carga el cliente. Una definición MCP tampoco prueba autenticación ni acceso real.
+
 Para explicar una selección, el agente identifica el requisito atendido, las
 instrucciones realmente consultadas y el resultado comprobado. Una dependencia
 no disponible se comunica; no se registra como usada. Esa evidencia se incorpora
@@ -64,15 +94,24 @@ al informe de la tarea, sin otro registro de skills ni base de datos.
 
 ## Entregas y agentes
 
-En el hub, siguen funcionando `python3 .codex/workspace.py` y
-`python3 .codex/workflow.py`. Son entradas al runtime compartido. En una
-distribución independiente:
+En el hub, siguen funcionando `python3 .codex/workspace.py --session SESSION_ID`
+y `python3 .codex/workflow.py --session SESSION_ID`. Son entradas al runtime
+compartido. Sustituye `SESSION_ID` por la identidad comunicada por el cliente:
+en Claude, `claude-<session_id>`; en Codex, el ID nativo de sesión. En una ejecución
+independiente usa una identidad propia y única para el trabajo, sin compartir
+`manual` entre tareas. Pasa esa misma identidad en todos sus comandos.
+
+En una distribución independiente:
 
 ```sh
-python3 /ruta/al/paquete/ecosystem/cli.py git --root /ruta/proyecto begin
-python3 /ruta/al/paquete/ecosystem/cli.py git --root /ruta/proyecto plan < contrato.json
-python3 /ruta/al/paquete/ecosystem/cli.py workspace --root /ruta/workspace route archivo
+python3 /ruta/al/paquete/ecosystem/cli.py git --root /ruta/proyecto --session SESSION_ID begin
+python3 /ruta/al/paquete/ecosystem/cli.py git --root /ruta/proyecto --session SESSION_ID plan < contrato.json
+python3 /ruta/al/paquete/ecosystem/cli.py workspace --root /ruta/workspace --session SESSION_ID route archivo
 ```
+
+`route` identifica el dueño sin iniciar un contrato. `begin` y `plan` se ejecutan
+cuando el trabajo requiere ese ciclo explícito; una consulta breve sigue siendo
+una consulta y no abre otro contrato por usar el CLI.
 
 El workflow Git conserva `plan`, `check`, `review-start`, `review-report`,
 `review`, `commit` y `finish`; consulta `--help` y la guía del receptor. El
@@ -80,9 +119,13 @@ El workflow Git conserva `plan`, `check`, `review-start`, `review-report`,
 los veredictos matemáticos, las entradas fijadas y los checks declarados.
 Las garantías de ambos adaptadores no son equivalentes.
 
+`status` lee una única instantánea JSON y permanece disponible durante checks
+largos. Esa lectura puntual no certifica el cierre de la tarea. Los comandos que
+cambian estado, revisión, publicación o progreso conservan el bloqueo exclusivo.
+
 Para compartir un estado portable aislado entre CLI y hooks, exporta
 `CONSTELLATION_STATE_DIR` con una ruta absoluta antes de iniciar sus procesos,
-incluido Codex. `--state-dir` sólo afecta a esa invocación del CLI; los defaults
+incluidos Codex o Claude. `--state-dir` sólo afecta a esa invocación del CLI; los defaults
 permanecen iguales. El [protocolo](references/protocol.md#portable-api) documenta
 precedencia y validación; el ajuste no cambia permisos ni la política personal.
 
@@ -131,12 +174,30 @@ varios repositorios necesita su registro declarativo y cada repositorio conserva
 su dueño Git. Los marcadores existentes que protegen perfiles frente a la
 proyección de Claude se conservan mientras tengan ese consumidor.
 
-El plugin tiene cinco eventos: `UserPromptSubmit`, `PreToolUse`, `SubagentStart`,
+El adaptador Codex tiene cinco eventos: `UserPromptSubmit`, `PreToolUse`, `SubagentStart`,
 `SubagentStop` y `Stop`. Actúan sobre contratos activos; un prompt no inicia
 trabajo ni hace fetch. El guard de patches no cubre todas las escrituras de
 shell/MCP. Stop es acotado e idempotente y nunca publica. Las definiciones
 antiguas del hub están retiradas; los comandos heredados delegan al mismo
 adaptador. Activación, confianza y ejecución se comprueban por separado.
+
+Claude añade `SessionStart` para comunicar la ruta del CLI compartido, la
+identidad de sesión y el protocolo de trabajo, y adapta los otros cinco eventos
+al mismo motor. Sus herramientas `Write`, `Edit`, `MultiEdit` y `NotebookEdit`
+se traducen a rutas estructurales antes de comprobar el alcance. No transmite
+prompts, transcripciones ni contenido editado al motor. Una sesión Claude usa
+siempre `--session claude-ID`, con el ID nativo comunicado por el hook; no usa
+la sesión de reserva `manual`. Los registros de autores y revisores conservan
+sus IDs nativos reales, sin ese prefijo de ciclo.
+
+Un receptor con adaptador propio, como OmarOS, declara
+`CONSTELLATION_HOOK_OWNER=project` en el entorno de su configuración Claude. El
+adaptador global cede los eventos a ese dueño sin ejecutar código del proyecto.
+Así se conserva la política especializada y se evita una segunda selección de
+ciclo. Los contratos, archivos y requisitos del receptor siguen siendo suyos.
+La política nativa `onFailure: "block"` protege los eventos de bloqueo que la
+admiten. No protege `Stop` ni convierte sus continuaciones en una garantía de
+cierre: la aceptación final depende de los comandos de evidencia y publicación.
 
 Los hooks Git del receptor siguen vigentes. La revisión de Constellation se
 exige en su workflow de publicación; los commits y pushes manuales no adquieren
@@ -145,9 +206,120 @@ mientras consume el algoritmo común de revisión.
 
 ## Instalar y actualizar
 
-Se necesita Python 3.11+ para el paquete portable, Git para publicación y Codex
-con las interfaces verificadas. El instalador usa bloqueo POSIX; la cobertura
-actual es macOS/Linux. Construye desde fuentes en un destino nuevo:
+Se necesita Python 3.11+, Git para publicación y el cliente elegido con sus
+interfaces compatibles. Los instaladores usan bloqueo POSIX: el objetivo es
+macOS/Linux y entornos Linux como WSL, no Windows nativo. La referencia Claude
+es 2.1.301; no se promete compatibilidad con versiones anteriores. El uso de WSL
+requiere validar allí los clientes y las pruebas pertinentes.
+
+### Preparar otro portátil
+
+1. Construye una distribución en un destino nuevo desde las fuentes publicadas:
+
+   ```sh
+   python3 .codex/ecosystem/build.py --output /tmp/constellation-1.3.0 \
+     --archive /tmp/constellation-1.3.0.zip
+   shasum -a 256 /tmp/constellation-1.3.0.zip
+   ```
+
+2. Copia el ZIP y conserva su SHA-256 por un canal autorizado. En el otro
+   portátil compara el hash antes de extraerlo. El inventario interno comprueba
+   después archivos, hashes y modos. Un hash recibido junto al ZIP detecta
+   diferencias, pero no autentica por sí solo a quien lo envió.
+
+3. Instala los clientes que vayas a usar desde el paquete extraído. Para Claude:
+
+   ```sh
+   python3 /ruta/constellation-1.3.0/ecosystem/claude.py install \
+     --bundle /ruta/constellation-1.3.0 --claude-home ~/.claude --check
+   python3 /ruta/constellation-1.3.0/ecosystem/claude.py install \
+     --bundle /ruta/constellation-1.3.0 --claude-home ~/.claude
+   ```
+
+   Para Codex, conserva el instalador nativo existente:
+
+   ```sh
+   python3 /ruta/constellation-1.3.0/ecosystem/install.py \
+     --bundle /ruta/constellation-1.3.0 --codex-home ~/.codex --check
+   python3 /ruta/constellation-1.3.0/ecosystem/install.py \
+     --bundle /ruta/constellation-1.3.0 --codex-home ~/.codex
+   ```
+
+4. Verifica la instalación y abre una sesión nueva del cliente. Para Claude:
+
+   ```sh
+   python3 /ruta/constellation-1.3.0/ecosystem/claude.py verify --claude-home ~/.claude
+   claude plugin validate --strict --json ~/.claude/skills/constellation
+   ```
+
+   Después comprueba el catálogo y los hooks efectivos en el cliente. En Codex
+   usa el diagnóstico `native.py --capabilities` y `/hooks`. La validación del
+   paquete o de su schema no certifica confianza ni ejecución de un evento.
+
+En macOS puedes añadir un ensayo nativo aislado y sin modelo remoto:
+
+```sh
+python3 -B /ruta/constellation-1.3.0/ecosystem/tests/native_claude_probe.py \
+  --bundle /ruta/constellation-1.3.0
+```
+
+Acepta `--claude /ruta/al/binario` para elegir el CLI. Usa un servidor HTTP
+local, autenticación sintética y restricciones que bloquean la red exterior,
+el HOME real y Keychain. Comprueba carga nativa, rutas permitidas y rechazadas,
+cierre pendiente y bloqueo ante el fallo operativo de un hook. No envía datos
+a un modelo ni acredita la calidad de su investigación. El ensayo está limitado
+a macOS; en otro sistema su indisponibilidad se informa como tal, sin aprobarlo.
+Los eventos nativos de subagentes siguen sin verificación: el intento aislado
+recibió un rechazo automático de aprobación, que se respetó. Consulta la
+[evidencia y sus límites](COMPATIBILITY.md#distribución-dual-13--2026-10-28).
+
+La distribución contiene código e instrucciones expresamente permitidos por
+el constructor. No copies `~/.codex` ni `~/.claude`: contienen autenticación,
+conversaciones y estado personal. Los perfiles privados, políticas personales,
+registros locales de proyectos, datos, proveedores y autorizaciones MCP se
+configuran por separado en cada portátil. El paquete no crea cuentas, descarga
+datos ni concede nuevos permisos.
+
+### Instalación Claude
+
+El instalador coloca el paquete en `skills/constellation` dentro del directorio
+indicado por `--claude-home`, con ambos
+manifiestos nativos. Claude descubre ese plugin como `constellation@skills-dir`
+en una sesión nueva, salvo que sus políticas lo impidan. No necesita un
+marketplace ni editar `settings.json`. Las skills siguen en `skills/`; los
+agentes Markdown se generan desde las instrucciones TOML canónicas durante la
+construcción. No se mantienen dos cuerpos independientes de cada rol.
+
+La instalación verifica la propiedad e integridad antes de sustituir su
+directorio. Conserva las demás skills y ajustes y respeta una desactivación
+explícita del plugin. `--check` no modifica los directorios del usuario. Repetir
+el mismo paquete devuelve `unchanged`; una actualización usa el nuevo paquete y
+el mismo comando. Los cambios ajenos, enlaces o restos de una sustitución
+interrumpida se rechazan preservando sus archivos. Un error controlado restaura
+la instalación anterior; una terminación abrupta puede requerir resolver la
+interrupción antes de reintentar. El estado de investigación queda fuera del
+directorio sustituible.
+
+Los hooks instalados validan el inventario antes de cargar el motor compartido
+y mantienen un lock compartido durante el despacho, incompatible con la
+sustitución de la instalación. Una distribución inmutable cargada expresamente
+mediante `--plugin-dir` también comprueba su inventario; esa carga no equivale a
+una instalación permanente ni acredita confianza del cliente.
+
+La distribución 1.3.0 no cambia el pin del núcleo derivado 1.2.0 de OmarOS. Ese
+receptor verifica sus cuatro recursos existentes y conserva su propio ciclo.
+Su actualizador antiguo sólo admite bundles 1.2.0 y rechazará uno 1.3.0; actualizar
+ese contrato receptor requiere una migración específica, no copiar el paquete
+sobre `.codex/vendor/constellation`.
+
+La carga permanente y sus límites siguen las referencias oficiales de
+[plugins Claude](https://code.claude.com/docs/en/plugins/create#make-a-plugin-load-in-every-session),
+[hooks](https://code.claude.com/docs/en/hooks) y
+[subagentes](https://code.claude.com/docs/en/sub-agents).
+
+### Instalación Codex existente
+
+Desde el checkout también puedes construir e instalar en un destino temporal:
 
 ```sh
 python3 .codex/ecosystem/build.py --output /tmp/constellation-bundle \

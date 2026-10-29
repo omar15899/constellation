@@ -49,6 +49,7 @@ MODULE_AGENTS = _LAYOUT.MODULE_AGENTS
 COMMON_FILES = _LAYOUT.COMMON_FILES
 HOOK_EVENTS = ("UserPromptSubmit", "PreToolUse", "SubagentStart", "SubagentStop", "Stop")
 PRE_TOOL_MATCHER = r"^(?:[A-Za-z0-9_]+[.:])*(?:apply_patch|Edit|Write)$"
+CLAUDE_EVENTS = ("SessionStart", *HOOK_EVENTS)
 _PRIVATE_NAMES = {
     ".git", ".env", "auth.json", "credentials.json", "secrets.json", "id_rsa",
     "id_ed25519", "sessions", "transcripts", "conversations", "archives", "logs",
@@ -115,8 +116,8 @@ def _private(path: Path) -> bool:
 
 def _required_files(modules: Iterable[str], manifest: str) -> list[str]:
     required = _LAYOUT.allowed_files(modules)
-    required.remove(_LAYOUT.PLUGIN_MANIFEST)
-    required.add(manifest)
+    if manifest != _LAYOUT.PLUGIN_MANIFEST:
+        required = {_LAYOUT.source_path(relative) for relative in required}
     return sorted(required)
 
 
@@ -330,6 +331,61 @@ class _Validator:
         if "description" in data and (not isinstance(data["description"], str) or not data["description"].strip()):
             self.error(relative, "description must be a non-empty string")
 
+    def claude(self, *, bundled: bool, modules: Iterable[str]) -> None:
+        relative = (_LAYOUT.CLAUDE_PLUGIN_MANIFEST if bundled
+                    else _LAYOUT.source_path(_LAYOUT.CLAUDE_PLUGIN_MANIFEST))
+        metadata = self.json(relative)
+        if metadata is not None:
+            try:
+                _LAYOUT._check_claude_plugin(metadata)
+            except ValueError:
+                self.error(relative, "invalid native Claude plugin manifest")
+            codex = self.json(_LAYOUT.PLUGIN_MANIFEST if bundled else "ecosystem/plugin.json")
+            if codex is not None and metadata.get("version") != codex.get("version"):
+                self.error(relative, "native plugin versions must agree")
+        for resource in sorted(_LAYOUT.allowed_files(modules)):
+            if not resource.startswith("agents/") or not resource.endswith(".md"):
+                continue
+            canonical = self.path(_LAYOUT.source_path(resource))
+            if canonical is None:
+                continue
+            try:
+                expected = _LAYOUT.render_claude_agent(canonical.read_bytes())
+                if bundled:
+                    actual = self.path(resource)
+                    if actual is not None and actual.read_bytes() != expected:
+                        self.error(resource, "Claude agent must match its canonical role and inherit runtime choices")
+            except ValueError:
+                self.error(_LAYOUT.source_path(resource), "canonical role cannot produce a native Claude agent")
+        relative = "ecosystem/claude-hooks.json"
+        data = self.json(relative)
+        events = data.get("hooks") if data is not None else None
+        if not isinstance(events, dict) or set(events) != set(CLAUDE_EVENTS):
+            self.error(relative, "Claude hooks require exactly the supported native events")
+            return
+        for event in CLAUDE_EVENTS:
+            groups = events[event]
+            if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], dict):
+                self.error(relative, f"{event} requires one native hook group")
+                continue
+            group = groups[0]
+            keys = {"hooks", "matcher"} if event == "PreToolUse" else {"hooks"}
+            if set(group) != keys or (event == "PreToolUse" and group.get("matcher") != "^(Write|Edit|MultiEdit|NotebookEdit)$"):
+                self.error(relative, f"{event} has an invalid native tool matcher")
+                continue
+            hooks = group["hooks"]
+            if not isinstance(hooks, list) or len(hooks) != 1 or not isinstance(hooks[0], dict):
+                self.error(relative, f"{event} requires one native command hook")
+                continue
+            hook = hooks[0]
+            expected = {"type": "command", "command": "python3",
+                        "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/ecosystem/claude_hooks.py", event],
+                        "timeout": hook.get("timeout")}
+            if event in {"UserPromptSubmit", "PreToolUse"}:
+                expected["onFailure"] = "block"
+            if hook != expected or type(hook.get("timeout")) is not int or not 1 <= hook["timeout"] <= 60:
+                self.error(relative, f"{event} requires the isolated native command and declared failure policy")
+
     def hooks(self) -> None:
         relative = "ecosystem/hooks.json"
         data = self.json(relative)
@@ -390,6 +446,7 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
         for relative in required:
             validator.path(relative)
         validator.manifest(manifest)
+        validator.claude(bundled=bundled, modules=selected)
         validator.hooks()
         for module in selected:
             validator.skill(module)

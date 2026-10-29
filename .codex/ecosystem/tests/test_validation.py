@@ -29,6 +29,10 @@ _BUILD_SPEC.loader.exec_module(_BUILDER)
 
 # This fixture describes the distribution contract independently of the validator.
 CORE_RESOURCES = (
+    "ecosystem/claude.py", "ecosystem/claude_hooks.py", "ecosystem/claude-hooks.json",
+    "ecosystem/tests/test_claude_install.py", "ecosystem/tests/test_claude_hooks.py",
+    "ecosystem/tests/test_claude_package.py",
+    "ecosystem/tests/native_claude_probe.py",
     "ecosystem/runtime/review_gate.py", "ecosystem/runtime/review-policy.json",
     "ecosystem/runtime/__init__.py", "ecosystem/runtime/workflow.py",
     "ecosystem/runtime/workspace.py", "ecosystem/runtime/dispatch.py",
@@ -74,6 +78,13 @@ class PackageFixture:
             "description": "Portable fixture for package validation.",
             "skills": "./skills/", "hooks": "./ecosystem/hooks.json",
         })
+        self.write_json(".claude-plugin/plugin.json" if bundled else "ecosystem/claude-plugin.json", {
+            "name": "constellation", "version": "1.1.0",
+            "author": {"name": "Constellation"},
+            "description": "Native Claude fixture for package validation.",
+            "skills": "./skills/",
+            "hooks": "./ecosystem/claude-hooks.json",
+        })
         groups = {}
         for event in LIFECYCLE_EVENTS:
             group = {"hooks": [{
@@ -87,6 +98,18 @@ class PackageFixture:
         self.write_json("ecosystem/hooks.json", {
             "description": "Optional lifecycle guards.", "hooks": groups,
         })
+        claude_groups = {}
+        for event in ("SessionStart", *LIFECYCLE_EVENTS):
+            hook = {"type": "command", "command": "python3",
+                    "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/ecosystem/claude_hooks.py", event],
+                    "timeout": 15}
+            if event in {"UserPromptSubmit", "PreToolUse"}:
+                hook["onFailure"] = "block"
+            group = {"hooks": [hook]}
+            if event == "PreToolUse":
+                group["matcher"] = "^(Write|Edit|MultiEdit|NotebookEdit)$"
+            claude_groups[event] = [group]
+        self.write_json("ecosystem/claude-hooks.json", {"hooks": claude_groups})
         roles = ["researcher", "reviewer", "security-reviewer", "verifier"]
         for module in modules:
             self.skill(module)
@@ -95,11 +118,13 @@ class PackageFixture:
             self.write(f"skills/{module}/agents/openai.yaml", self.ui_yaml(module))
             roles.extend(ROLES[module])
         for role in roles:
-            self.write(f"ecosystem/agents/{role}.toml", (
+            path = self.write(f"ecosystem/agents/{role}.toml", (
                 f'name = "ecosystem_{role.replace("-", "_")}"\n'
                 'description = "Perform the assigned role."\n'
                 'developer_instructions = "Use the assigned resources and report evidence."\n'
             ))
+            if bundled:
+                self.write(f"agents/{role}.md", _BUILDER.render_claude_agent(path.read_bytes()).decode())
         if set(modules) & {"mathematics", "writter"}:
             self.write("ecosystem/references/ontology.md", "Objects, spaces and assumptions.\n")
             self.write("ecosystem/references/ontology-examples.md", "A worked example.\n")

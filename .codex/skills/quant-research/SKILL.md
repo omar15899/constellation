@@ -32,7 +32,7 @@ aprobación. Distingue exploración, validación fuera de muestra, simulación,
 paper y ejecución real tanto en artefactos como en la interfaz.
 
 Constellation coordina contratos, dependencias y evidencia usando el
-[protocolo compartido](../../ecosystem/references/protocol.md); Codex ejecuta los
+[protocolo compartido](../../ecosystem/references/protocol.md); el cliente nativo ejecuta los
 agentes y herramientas. Una campaña usa el ejecutor y almacén del receptor, sin
 otro scheduler o registro paralelo. Delega hipótesis y refutaciones independientes
 cuando aporten evidencia útil, con un presupuesto común y archivos exclusivos.

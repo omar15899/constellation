@@ -41,7 +41,7 @@ def _regular(root: Path, relative: str) -> Path:
     return path
 
 
-def _comparison_resources(modules: list[str]) -> tuple[str, set[str]]:
+def _comparison_resources(modules: list[str]) -> tuple[str, set[str], Any]:
     """Read the canonical inventory from this running package, never the target."""
     path = _regular(Path(__file__).resolve().parent, "build.py")
     specification = importlib.util.spec_from_file_location("constellation_native_inventory", path)
@@ -49,7 +49,7 @@ def _comparison_resources(modules: list[str]) -> tuple[str, set[str]]:
         raise NativeError("The running package inventory is unavailable")
     inventory = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(inventory)
-    return inventory.PLUGIN_MANIFEST, inventory.allowed_files(modules)
+    return inventory.PLUGIN_MANIFEST, inventory.allowed_files(modules), inventory.source_resource
 
 
 def _skill_snapshot(rpc: _Rpc, cwd: Path) -> dict[str, dict]:
@@ -245,10 +245,27 @@ class NativeClient:
             raise NativeError("Invalid native marketplace list")
         return rows
 
-    def plugins(self) -> list[dict]:
-        value = self._run("plugin", "list")
-        rows = value.get("installed")
-        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+    def plugins(self, marketplace: str | None = None) -> list[dict]:
+        if marketplace is not None and (not isinstance(marketplace, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", marketplace)):
+            raise NativeError("Invalid native marketplace filter")
+        arguments = ("plugin", "list")
+        if marketplace is not None:
+            arguments += ("--marketplace", marketplace)
+        value = self._run(*arguments)
+        if set(value) == {"plugins"}:
+            rows = value["plugins"]
+        elif "installed" in value and set(value) <= {"installed", "available"}:
+            rows = value["installed"]
+            available = value.get("available", [])
+            if not isinstance(available, list) or any(not isinstance(row, dict) for row in available):
+                raise NativeError("Invalid native available plugin metadata")
+        else:
+            raise NativeError("Ambiguous or unsupported native plugin list")
+        if (not isinstance(rows, list) or any(not isinstance(row, dict)
+                or not isinstance(row.get("pluginId"), str) or not row["pluginId"].strip()
+                or type(row.get("enabled")) is not bool
+                or ("installed" in row and row["installed"] is not True) for row in rows)):
             raise NativeError("Invalid native plugin list")
         return rows
 
@@ -392,7 +409,7 @@ class NativeClient:
         if (not isinstance(manifest, dict) or manifest.get("name") != "constellation"
                 or manifest.get("skills") != "./skills/" or manifest.get("hooks") != "./ecosystem/hooks.json"):
             raise NativeError("The directory is not a Constellation source layout")
-        plugins = [item for item in self.plugins() if item.get("pluginId") == PLUGIN_ID]
+        plugins = [item for item in self.plugins(marketplace="constellation") if item.get("pluginId") == PLUGIN_ID]
         if (len(plugins) != 1 or plugins[0].get("enabled") is not True
                 or plugins[0].get("installed", True) is not True):
             raise NativeError("Source exclusion requires the installed, enabled Constellation plugin")
@@ -409,18 +426,17 @@ class NativeClient:
                 or any(module not in installed for module in selected)):
             raise NativeError("Select unique modules present in the installed plugin")
         selected = [module for module in MODULES if module in selected]
-        plugin_manifest, resources = _comparison_resources(selected)
+        _, resources, source_resource = _comparison_resources(selected)
         for relative in sorted(resources):
-            source_relative = "ecosystem/plugin.json" if relative == plugin_manifest else relative
-            origin = _regular(source, source_relative)
             destination = _regular(self.codex_home, f"{cache_relative}/{relative}")
             try:
-                source_hash = hashlib.sha256(origin.read_bytes()).digest()
+                source_bytes, _ = source_resource(source, relative)
+                source_hash = hashlib.sha256(source_bytes).digest()
                 installed_hash = hashlib.sha256(destination.read_bytes()).digest()
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 raise NativeError("Cannot read source and installed resources for comparison") from exc
             if source_hash != installed_hash:
-                raise NativeError(f"Source and installed resource differ: {source_relative}; no exclusions were written")
+                raise NativeError(f"Source and installed resource differ: {relative}; no exclusions were written")
         sources = {module: str(source / "skills" / module / "SKILL.md") for module in selected}
         rpc = _Rpc(self)
         try:

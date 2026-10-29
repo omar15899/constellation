@@ -265,7 +265,7 @@ def _registered(client: NativeClient, catalog: Path) -> tuple[bool, dict | None]
         if (origin.get("sourceType") != "local" or not isinstance(origin.get("source"), str)
                 or Path(origin["source"]).resolve() != catalog):
             raise InstallError("Marketplace constellation belongs to another source")
-    plugins = [row for row in client.plugins() if row.get("pluginId") == PLUGIN_ID]
+    plugins = [row for row in client.plugins(marketplace="constellation") if row.get("pluginId") == PLUGIN_ID]
     if len(plugins) > 1:
         raise InstallError("Native plugin registration is ambiguous")
     plugin = plugins[0] if plugins else None
@@ -498,7 +498,7 @@ def install_bundle(bundle: Path, codex_home: Path, modules: Iterable[str] | None
                             if rollback_errors:
                                 raise InstallError("Previous catalog could not be restored")
                             backend.add_plugin()
-                        elif any(p.get("pluginId") == PLUGIN_ID for p in backend.plugins()):
+                        elif any(p.get("pluginId") == PLUGIN_ID for p in backend.plugins(marketplace="constellation")):
                             backend.remove_plugin()
                     except Exception:
                         rollback_errors.append("native plugin")
@@ -519,7 +519,7 @@ def install_bundle(bundle: Path, codex_home: Path, modules: Iterable[str] | None
                     try:
                         if receipt:
                             _preflight(home, select_modules(receipt["modules"]), backend)
-                        elif any(p.get("pluginId") == PLUGIN_ID for p in backend.plugins()):
+                        elif any(p.get("pluginId") == PLUGIN_ID for p in backend.plugins(marketplace="constellation")):
                             raise InstallError("Plugin registration remains after rollback")
                     except Exception:
                         rollback_errors.append("restoration verification")

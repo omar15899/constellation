@@ -1,7 +1,8 @@
 # Constellation: autoridad compartida, ejecución nativa
 
-Constellation organiza el trabajo; Codex ejecuta modelos, herramientas, agentes,
-sesiones, permisos, skills y plugins. Los proyectos conservan sus datos,
+Constellation organiza el trabajo; Codex y Claude Code ejecutan modelos,
+herramientas, agentes, sesiones, permisos, skills y plugins mediante sus interfaces
+nativas. Los proyectos conservan sus datos,
 invariantes, pruebas y propiedad Git. No hay un segundo runtime de agentes ni
 un servicio de selección semántica.
 
@@ -9,9 +10,9 @@ un servicio de selección semántica.
 
 | Responsabilidad | Implementación autoritativa | Configuración y estado | Consumidores |
 | --- | --- | --- | --- |
-| Descubrimiento y carga de skills | Codex; catálogo de la sesión y APIs nativas | Configuración nativa, ámbito y plugin | Coordinador y agentes según su superficie |
+| Descubrimiento y carga de skills | Cliente nativo; catálogo de la sesión y sus APIs | Configuración nativa, ámbito y plugin | Coordinador y agentes según su superficie |
 | Selección y composición | Modelo, descripciones nativas e instrucciones de las skills | Requisitos de la tarea; sin registro paralelo | Cada tarea |
-| Diagnóstico de capacidades | `ecosystem/native.py`, sobre APIs y CLI nativos | Snapshot de lectura; no base de datos | Usuario, instalación y mantenimiento |
+| Diagnóstico de capacidades | `ecosystem/native.py` para Codex; `ecosystem/claude.py verify` y comandos nativos para Claude | Snapshot de lectura e integridad; sin catálogo paralelo | Usuario, instalación y mantenimiento |
 | Revisión independiente y continuidad | `ecosystem/runtime/review_gate.py` | Política compartida, historial, presupuesto temporal y extensiones del receptor | Adaptadores Git, portable y OmarOS |
 | Entrega y publicación Git | `ecosystem/runtime/workflow.py` | Contrato y evidencia privados en `.git/constellation` | Repositorios Git y coordinador |
 | Coordinación entre repositorios | `ecosystem/runtime/workspace.py` y `dispatch.py` | Registro declarativo del workspace y dependencias de la tarea | Hub y otros workspaces explícitos |
@@ -20,7 +21,8 @@ un servicio de selección semántica.
 | Diario personal | Receptor `progress_journal.py` de OmarOS y renderizado compartido | Política personal exacta, notas curadas e índice privado mínimo | Sólo fuentes y checkpoints personales autorizados |
 | Personalización pedagógica | Skill de enseñanza disponible y perfil explícito del usuario | Perfil local provisional, editable y ajeno al paquete | Explicaciones y feedback intencional reutilizable |
 | Eventos Codex | Entrada estable `CODEX_HOME/constellation/hook.py`, fuente `ecosystem/hook_entry.py`; adaptador `ecosystem/hooks.py` | Recibo e inventario verificados bajo lock; activación/confianza nativas; sólo contratos activos | Plugin instalado |
-| Distribución | `ecosystem/build.py` e `install.py` | Inventario y recibo de instalación; caché derivado | Codex local y receptores |
+| Eventos Claude | `ecosystem/claude_hooks.py`, traducción al mismo `ecosystem/hooks.py` | Identidad `claude-<session_id>`, metadata estructural y dueño de hooks explícito | Plugin Claude o adaptador receptor |
+| Distribución | `ecosystem/build.py`; instaladores `install.py` y `claude.py` | Un bundle permitido, hashes, recibos y proyecciones nativas | Codex, Claude y receptores autorizados |
 | Dominio | `AGENTS.md`, herramientas y validadores del proyecto | Archivos propios del receptor | Su trabajo especializado |
 
 Las entradas históricas `.codex/workflow.py`, `workspace.py`, `dispatch.py`,
@@ -28,10 +30,45 @@ Las entradas históricas `.codex/workflow.py`, `workspace.py`, `dispatch.py`,
 contienen otra implementación. El hub mantiene el registro de sus repositorios;
 no determina la propiedad Git de OmarOS ni de un tercero.
 
+## Una distribución para varios portátiles
+
+La versión 1.3.0 distribuye un núcleo y dos entradas nativas. Las skills conservan
+un único cuerpo canónico en `skills/`. Las instrucciones de roles permanecen en
+`ecosystem/agents/*.toml`; el constructor genera el Markdown que Claude requiere.
+Los manifiestos `.codex-plugin/plugin.json` y `.claude-plugin/plugin.json`
+identifican la misma versión y apuntan a recursos permitidos dentro del paquete.
+La construcción y el ZIP son deterministas para unas mismas entradas y módulos.
+
+Cada adaptador traduce eventos y registro nativos. Ambos consumen los contratos,
+checks, revisión y progreso existentes; no coordinan modelos mediante otro
+runtime. Los agentes siguen siendo procesos del cliente, con su modelo, esfuerzo,
+permisos y capacidad efectiva. La distribución completa incluye los ocho papeles;
+una selección de módulos conserva los papeles necesarios para esa selección.
+
+Claude admite un plugin permanente en `~/.claude/skills/constellation`, sin
+marketplace ni cambios de settings. Su instalador protege ese directorio por
+propiedad e integridad; el estado operativo vive fuera de él y sobrevive a una
+actualización. Codex conserva su registro nativo, recibo y entrada estable.
+Las diferencias de instalación reflejan las interfaces reales de los clientes,
+sin imponer un formato único que ninguno de ellos garantice.
+
+Los portátiles comparten versión, fuentes metodológicas y controles de evidencia.
+Las cuentas, datos, políticas locales, registros de proyectos y conectores
+permanecen separados. El paquete no transporta transcripciones, credenciales,
+perfiles privados ni estados de investigación. Una instalación igual no garantiza
+respuestas iguales ni que un proveedor esté disponible en ambos ordenadores.
+Los proyectos conservan sus fuentes originales y el dueño Git de cada entrega.
+
+OmarOS mantiene su adaptador y sus cuatro recursos derivados fijados en 1.2.0.
+El número 1.3.0 identifica esta distribución dual, no una actualización implícita
+del pin receptor. Su actualizador actual sólo admite bundles 1.2.0 y debe rechazar
+el nuevo hasta que se migre expresamente ese contrato. La distribución no se
+copia sobre los recursos derivados del vault.
+
 ## Descubrir, seleccionar y ejecutar
 
 El catálogo de la **sesión actual** es la primera fuente para decidir qué puede
-usar el agente. Codex expone metadatos y carga el cuerpo de una skill cuando
+usar el agente. El cliente expone metadatos y carga el cuerpo de una skill cuando
 resulta pertinente. Una petición explícita tiene prioridad dentro de los
 permisos y las instrucciones superiores. El agente explica una selección cuando
 ayuda a entender el trabajo; no debe cargar instrucciones irrelevantes para
@@ -43,6 +80,12 @@ conversación. Por ejemplo, en 0.163.0 se observaron plugins remotos instalados
 que no aparecían en `skills/list` del proceso nuevo aunque sus skills sí estaban
 expuestas en esta sesión. La ausencia en ese listado no demuestra ausencia en
 otras superficies.
+
+En Claude, `claude.py verify` comprueba la instalación y deja desconocidos carga,
+confianza y ejecución. `/context`, `/skills`, `/agents`, `/hooks` y `/status`
+permiten inspeccionar una sesión concreta. Su validación de manifiesto tampoco
+ejecuta un experimento de investigación. Las comprobaciones y ensayos realmente
+observados quedan separados en [COMPATIBILITY.md](COMPATIBILITY.md).
 
 Instalación, descubrimiento, habilitación, autorización, compatibilidad y
 ejecución son hechos diferentes. Una lista de herramientas MCP demuestra
@@ -150,16 +193,76 @@ para autorizar únicamente sus rutas explícitas en la misma sesión y destino
 congelado. No importa código del vault ni certifica su cierre, renombrados o
 validación de conocimiento; esas responsabilidades siguen en su adaptador.
 
+El adaptador Claude comunica el CLI y la identidad prefijada en `SessionStart`,
+sin iniciar un contrato. Traduce sólo identidad, evento, cwd y rutas de edición;
+no transmite prompts, transcripciones, contenido de herramientas ni resultados
+de agentes. Claude no documenta un `turn_id` equivalente: la correlación usa
+metadata estructural deliberada y no fabrica una identidad a partir del texto
+privado. Las observaciones de agentes conservan los IDs nativos reales.
+
+Un receptor que declara `CONSTELLATION_HOOK_OWNER=project` conserva la autoridad
+de su adaptador y evita un segundo tratamiento global de eventos. La traducción
+no ejecuta scripts del proyecto. `onFailure: "block"` protege los eventos
+nativos que lo admiten; `Stop` y `SubagentStop` quedan fuera de esa protección.
+El cierre requiere evidencia y aceptación explícitas del motor, incluso si el
+cliente deja de pedir continuaciones. Los hooks de archivos tampoco confinan
+escrituras arbitrarias por shell o MCP.
+
 Los hooks Git del hub controlan privacidad y consistencia del diff; **un commit
 o push manual no exige la revisión de Constellation**. La revisión y el destino
 congelado se exigen en el camino de publicación del workflow. Los hooks de
 Sweeplab y GasStorage conservan sus responsabilidades propias. No se promete
 enforcement fuera de los caminos que realmente lo implementan.
 
+## Correspondencia con diseños publicados por Anthropic
+
+La comparación del 2026-10-28 se refiere a principios y mecanismos observables,
+no a igualdad de productos ni a reproducir resultados internos de Anthropic.
+Sus publicaciones respaldan una estructura pequeña que compone capacidades y
+exige evidencia. Incorporar cada servicio, proceso o modo anunciado añadiría
+dependencias sin demostrar que mejora este centro de investigación.
+
+| Diseño publicado | Correspondencia y límite de Constellation |
+| --- | --- |
+| [Agentes efectivos](https://www.anthropic.com/research/building-effective-agents) | Skills y especialistas se componen según dependencias reales. Una tarea simple no necesita un equipo o workflow persistente. El cliente ejecuta los agentes. |
+| [Sistema de investigación multiagente](https://www.anthropic.com/research/multi-agent-research-system) | El coordinador acota trabajos, asigna archivos y exige resultados, fuentes y revisión independiente. Más agentes no prueban mejores conclusiones; amplitud, exactitud de citas y calidad de síntesis necesitan evaluación propia. |
+| [Ingeniería de contexto](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents) | El catálogo permite cargar instrucciones pertinentes y los handoffs conservan alcance, evidencia y pendientes. El progreso curado es recuperable sin distribuir conversaciones completas. Los límites efectivos siguen perteneciendo al cliente. |
+| [Agent Skills](https://www.anthropic.com/research/equipping-agents-for-the-real-world-with-agent-skills) | Instrucciones y referencias viven en archivos canónicos, se distribuyen modularmente y se cargan cuando hacen falta. La presencia de una skill no demuestra selección ni uso correcto. |
+| [Harnesses para tareas largas](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents) | Requisitos explícitos, progreso durable, checks y revisión actuales permiten reanudar y decidir qué falta. Un estado mecánico completo no sustituye una prueba real del comportamiento o argumento. |
+| [Evaluación de agentes](https://www.anthropic.com/research/demystifying-evals-for-ai-agents) | Se distinguen afirmaciones del agente, resultado observado y evidencia independiente. Los checks deterministas conviven con revisión intelectual. Los ensayos repetidos deben separar conseguir algún éxito de mantener el éxito en todos los intentos; las diferencias entre modelos requieren casos representativos. |
+| [Diseño adaptable del harness](https://www.anthropic.com/research/harness-design-long-running-apps) | La ejecución nativa y los adaptadores pequeños permiten cambiar de cliente sin duplicar el núcleo. La separación autor/revisor se conserva, y cada componente añadido debe justificar su función con evidencia. |
+| [Managed Agents](https://www.anthropic.com/research/managed-agents) | Se separan estado recuperable, contratos y ejecución. Aquí el estado es local y cada proyecto conserva su autoridad; distribuir el paquete no instala un servicio cloud ni ofrece sus garantías operativas. |
+
+Los [plugins Claude](https://claude.com/resources/articles/claude-code-plugins)
+aportan distribución nativa de skills, agentes y hooks. La versión 1.3 usa ese
+mecanismo para entregar el mismo núcleo. Los
+[workflows dinámicos](https://claude.com/resources/articles/introducing-dynamic-workflows-in-claude-code)
+pueden ejecutar tareas dentro del cliente, pero su adopción no reemplaza el
+contrato durable ni la aceptación independiente. Las
+[evaluaciones nativas de plugins](https://code.claude.com/docs/en/plugin-evals)
+permiten contrastar casos con una baseline sin plugin; son una herramienta
+adicional que requiere disponibilidad y llamadas a modelos, no una condición
+para instalar o verificar el paquete sin conexión.
+
+La comparación deja abierta la medición de resultados entre Codex y Claude:
+ejecutar la misma pregunta acotada, comprobar fuentes y contraejemplos, provocar
+una ausencia o fallo de evidencia y verificar que ninguna síntesis lo convierte
+en aprobación. Los porcentajes y mejoras publicados por Anthropic no son
+mediciones de Constellation.
+
+La [medición publicada de cobertura interna de acciones](https://www.anthropic.com/institute/measuring-pace-of-ai-development)
+tampoco se transfiere a este paquete. Sus hooks observan eventos concretos y
+protegen las herramientas de archivos declaradas; no interceptan universalmente
+shell, MCP ni toda acción del cliente. La revisión y publicación vuelven a
+comprobar el alcance por su propio camino.
+
 ## Referencias nativas
 
 El comportamiento se contrasta con el binario instalado y las interfaces
 documentadas de [skills](https://learn.chatgpt.com/docs/build-skills),
 [hooks](https://learn.chatgpt.com/docs/hooks) y
-[app-server](https://learn.chatgpt.com/docs/app-server). Una documentación más
+[app-server](https://learn.chatgpt.com/docs/app-server), y con las interfaces
+Claude de [plugins](https://code.claude.com/docs/en/plugins/create),
+[hooks](https://code.claude.com/docs/en/hooks) y
+[subagentes](https://code.claude.com/docs/en/sub-agents). Una documentación más
 nueva no convierte sus campos en parámetros admitidos por una versión anterior.
