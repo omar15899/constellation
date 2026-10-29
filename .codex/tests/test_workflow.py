@@ -12,25 +12,24 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-MODULE = Path(__file__).resolve().parents[1] / "workflow.py"
-RUNTIME = MODULE.parent / "ecosystem/runtime"
-sys.path.insert(0, str(MODULE.parent))
+CODEX = Path(__file__).resolve().parents[1]
+MODULE = CODEX / "ecosystem/cli.py"
+RUNTIME = MODULE.parent / "runtime"
+sys.path.insert(0, str(CODEX))
+from ecosystem import cli
+from ecosystem.hooks import METHOD_GUIDANCE
 from ecosystem.runtime import workflow as w
 
 
 def copy_runtime(destination: Path) -> None:
-    """Install the compatibility entry point and its single implementation."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(MODULE, destination)
-    shutil.copytree(RUNTIME.parent, destination.parent / "ecosystem", dirs_exist_ok=True,
+    """Install the canonical package directly, without compatibility launchers."""
+    shutil.copytree(MODULE.parent, destination.parent, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
 
 
 def native_hook_command(event: str, runtime: Path) -> list[str]:
-    """Exercise legacy payload handling, independently of native hook loading."""
-    events = {"UserPromptSubmit": "prompt", "PreToolUse": "pre-tool",
-              "SubagentStart": "subagent-start", "Stop": "stop"}
-    return [sys.executable, str(runtime), "hook", events[event]]
+    """Exercise the native hook adapter from the canonical package."""
+    return [sys.executable, str(runtime.with_name("hooks.py")), event]
 
 
 class GitFixture(unittest.TestCase):
@@ -298,12 +297,12 @@ class GitFixture(unittest.TestCase):
         engine = w.review_engine()
         policy = json.loads((RUNTIME / "review-policy.json").read_text())
         payload = {"author": "native-worker-id", "paths": ["answer.md"]}
-        argv = [str(MODULE), "--root", str(self.root), "--session", "test-session", "review-author"]
+        argv = [str(MODULE), "git", "--root", str(self.root), "--session", "test-session", "review-author"]
         with patch.object(engine, "author", wraps=engine.author) as register, \
                 patch.object(engine, "policy_for", return_value=policy), \
                 patch("sys.argv", argv), patch("sys.stdin", io.StringIO(json.dumps(payload))), \
                 patch("sys.stdout", new=io.StringIO()) as output:
-            self.assertEqual(w.main(), 0)
+            self.assertEqual(cli.main(), 0)
         self.assertEqual(json.loads(output.getvalue()), {"registered": "native-worker-id",
                                                        "paths": ["answer.md"], "unchanged": False})
         self.assertEqual(register.call_args.args[0], self.root.resolve())
@@ -533,12 +532,17 @@ class GitFixture(unittest.TestCase):
         with self.assertRaisesRegex(w.Blocked, "Private or external"):
             self.flow.reviewed(self.flow.load())
 
+    def assert_unregistered_response(self, event: str, result: dict) -> None:
+        expected = ({"hookSpecificOutput": {"hookEventName": event,
+                    "additionalContext": METHOD_GUIDANCE}} if event == "UserPromptSubmit" else {})
+        self.assertEqual(result, expected)
+
     def native_hook(self, event, payload, cwd=None):
-        """Execute the compatibility entry point using a disposable runtime."""
-        runtime = self.root / ".codex/workflow.py"
-        runtime.parent.mkdir(exist_ok=True)
+        """Execute the native adapter using a disposable canonical package."""
+        runtime = self.root / ".codex/ecosystem/cli.py"
+        runtime.parent.mkdir(parents=True, exist_ok=True)
         copy_runtime(runtime)
-        (runtime.parent / "profile.json").write_text('{"mode":"native"}\n')
+        (runtime.parent.parent / "profile.json").write_text('{"mode":"native"}\n')
         payload = {"hook_event_name": event, "turn_id": "fixture-turn",
                    "session_id": "test-session", "cwd": str(cwd or self.root), **payload}
         return subprocess.run(native_hook_command(event, runtime), cwd=cwd or self.root,
@@ -548,8 +552,8 @@ class GitFixture(unittest.TestCase):
     def test_prompt_does_not_start_or_synchronize_a_task_from_subfolder(self):
         self.advance_remote()
         before = w.git(self.root, "rev-parse", "HEAD")
-        runtime = self.root / ".codex/workflow.py"
-        runtime.parent.mkdir()
+        runtime = self.root / ".codex/ecosystem/cli.py"
+        runtime.parent.mkdir(parents=True)
         copy_runtime(runtime)
         w.git(self.root, "config", "--add", "core.excludesFile", str(self.base / "ignore"))
         (self.base / "ignore").write_text(".codex/\n")
@@ -557,7 +561,7 @@ class GitFixture(unittest.TestCase):
                    "prompt": "SYNTHETIC_PRIVATE_PROMPT"}
         result = self.native_hook("UserPromptSubmit", payload, cwd=runtime.parent)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {})
+        self.assert_unregistered_response("UserPromptSubmit", json.loads(result.stdout))
         self.assertEqual(w.git(self.root, "rev-parse", "HEAD"), before)
         self.assertFalse((self.root / "remote.md").exists())
         self.assertEqual(list(self.flow.home.iterdir()), [])
@@ -709,18 +713,19 @@ class GitFixture(unittest.TestCase):
             w.outgoing_gate(self.root, "HEAD", w.git(self.root, "rev-parse", "origin/main"))
 
     def test_git_hooks_do_not_deadlock_inside_workflow(self):
-        runtime = self.root / ".codex/workflow.py"
-        runtime.parent.mkdir()
+        runtime = self.root / ".codex/ecosystem/cli.py"
+        runtime.parent.mkdir(parents=True)
         copy_runtime(runtime)
         self.commit("install runtime fixture")
         w.git(self.root, "push")
         import sys
         for event in ("pre-commit", "post-commit", "pre-push"):
             hook = self.root / f".git/hooks/{event}"
-            hook.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{runtime}" git-hook {event}\n')
+            shutil.copyfile(CODEX / "git-hooks" / event, hook)
             hook.chmod(0o755)
         self.task()
-        with self.flow.lock():
+        with patch.dict(os.environ, {"PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"]}), \
+                self.flow.lock():
             result = self.flow.commit(["answer.md"], "Add answer with hooks")
         self.assertEqual(result["head"], w.git(self.root, "rev-parse", "origin/main"))
 
@@ -811,7 +816,7 @@ class GitFixture(unittest.TestCase):
     def test_hook_ignores_neighbor_without_native_profile(self):
         result = self.native_hook("UserPromptSubmit", {}, cwd=self.other)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {})
+        self.assert_unregistered_response("UserPromptSubmit", json.loads(result.stdout))
         self.assertFalse((self.other / ".git/constellation").exists())
 
     def test_all_hooks_ignore_hostile_runtime_in_neighbor_cwd(self):
@@ -834,7 +839,7 @@ class GitFixture(unittest.TestCase):
                         result = self.native_hook(event, payload, cwd=nested)
                         self.assertEqual(result.returncode, 0, result.stderr)
                         self.assertNotIn("UNTRUSTED_RUNTIME_EXECUTED", result.stdout + result.stderr)
-                        self.assertEqual(json.loads(result.stdout), {})
+                        self.assert_unregistered_response(event, json.loads(result.stdout))
                         self.assertFalse((hostile / "executed").exists())
                         self.assertFalse((self.other / ".git/constellation").exists())
         self.assertEqual(list(self.flow.home.iterdir()), [])
@@ -924,28 +929,28 @@ class GitFixture(unittest.TestCase):
         payload = {"session_id": "neighbor", "cwd": str(self.other), "prompt": "synthetic"}
         result = self.native_hook("UserPromptSubmit", payload, cwd=self.root)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {})
+        self.assert_unregistered_response("UserPromptSubmit", json.loads(result.stdout))
         self.assertFalse((self.other / ".git/constellation").exists())
 
     def test_hook_ignores_local_profile_metadata_without_starting_task(self):
         import sys
-        runtime = self.root / ".codex/workflow.py"
-        runtime.parent.mkdir()
+        runtime = self.root / ".codex/ecosystem/cli.py"
+        runtime.parent.mkdir(parents=True)
         copy_runtime(runtime)
-        marker = runtime.parent / "profile.json"
+        marker = runtime.parent.parent / "profile.json"
         payload = json.dumps({"session_id": "invalid-marker", "cwd": str(self.root),
                               "hook_event_name": "UserPromptSubmit", "turn_id": "fixture-turn"})
         for content in ['{"mode":"projected"}', '{}']:
             marker.write_text(content)
-            result = subprocess.run([sys.executable, str(runtime), "hook", "prompt"], input=payload, text=True, capture_output=True)
+            result = subprocess.run(native_hook_command("UserPromptSubmit", runtime), input=payload, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout), {})
+            self.assert_unregistered_response("UserPromptSubmit", json.loads(result.stdout))
             self.assertFalse((self.root / ".git/constellation/" / (w.digest(b"invalid-marker")[:24]+".json")).exists())
         marker.unlink()
         marker.symlink_to(self.base / "outside.json")
-        result = subprocess.run([sys.executable, str(runtime), "hook", "prompt"], input=payload, text=True, capture_output=True)
+        result = subprocess.run(native_hook_command("UserPromptSubmit", runtime), input=payload, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {})
+        self.assert_unregistered_response("UserPromptSubmit", json.loads(result.stdout))
         self.assertFalse((self.base / "outside.json").exists())
 
 

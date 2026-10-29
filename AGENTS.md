@@ -34,8 +34,9 @@ en un archivo privado local fuera del repositorio y de la carga activa.
 
 ## Contexto que aporta información
 
-Localiza primero el repositorio pertinente mediante `python3 .codex/workspace.py
-route RUTA` y lee su `AGENTS.md`, sus invariantes en `.codex/PROJECT.md` y las
+Localiza primero el repositorio pertinente mediante
+`python3 .codex/ecosystem/cli.py workspace route RUTA` y lee su `AGENTS.md`,
+sus invariantes en `.codex/PROJECT.md` y las
 instrucciones de las carpetas afectadas. Abrir la raíz no carga automáticamente
 los contratos de todos los hijos. Consulta su
 `CLAUDE.md` si contiene información del proyecto que falte, sin importar cadenas
@@ -57,13 +58,14 @@ El agente principal resuelve el trabajo. Puede usar hasta 64 subagentes cuando
 subtareas independientes ahorren tiempo o aporten una revisión útil, con alcance
 y archivos claros. Decide cuántos necesita según la tarea; es capacidad máxima,
 no una cantidad que deba agotar.
-Consulta `.codex/agent_policy.py show` para el presupuesto por repositorio;
-el límite del cliente y de la sesión prevalece y se comparte entre sus tareas.
+Consulta `.codex/ecosystem/cli.py agent-policy show` para el presupuesto por
+repositorio; el límite del cliente y de la sesión prevalece y se comparte entre
+sus tareas.
 No ocupes todos los agentes por obligación ni crees pools por repositorio dentro
 de una misma sesión. Hereda modelo y esfuerzo; el coordinador integra y publica.
 
 Cuando delegar aporte trabajo independiente útil, tras declarar el plan usa
-`workspace.py dispatch --capacity N` para obtener paquetes y oleadas por dueño
+`cli.py workspace dispatch --capacity N` para obtener paquetes y oleadas por dueño
 Git. Ejecuta los paquetes pertinentes con agentes nativos,
 descuenta los agentes ya ocupados y conserva archivos exclusivos por escritor.
 Para investigar aplica [.codex/RESEARCH.md](.codex/RESEARCH.md): hipótesis,
@@ -72,7 +74,7 @@ reales con `review-author` y sus rutas antes de revisar; un ID de tarea no es
 una identidad. El reparto no ejecuta ni certifica tareas por sí mismo.
 
 Antes de publicar, aplica [REVIEW.md](REVIEW.md) y la revisión independiente del
-motor común. Abre una ronda con `workspace.py review-start --repo RUTA`, entrega
+motor común. Abre una ronda con `cli.py workspace review-start --repo RUTA`, entrega
 su token y el diff a revisores distintos del autor, registra sus informes y
 resuelve cada hallazgo con evidencia independiente. Quick requiere un revisor;
 Standard, tres de corrección; Deep, tres de corrección y dos de seguridad.
@@ -86,7 +88,7 @@ no sustituye una aprobación humana exigida por el proyecto o el servidor.
 ## Ejecución y evidencia
 
 Para trabajar desde esta raíz sobre uno o varios repositorios, usa
-[workspace.py](.codex/WORKSPACE.md): rutas exactas relativas al hub, un contrato
+[CLI de workspace](.codex/WORKSPACE.md): rutas exactas relativas al hub, un contrato
 por dueño Git, pruebas y revisión por repositorio, commits granulares y push al
 upstream congelado de cada rama. Declara `depends_on` cuando un cambio necesite
 otro: proveedores primero, consumidores después. Un fallo deja el conjunto

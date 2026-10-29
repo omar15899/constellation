@@ -25,6 +25,7 @@ class RepositoryBoundaries(unittest.TestCase):
     tearDown = fixture.GitFixture.tearDown
     commit = fixture.GitFixture.commit
     task = fixture.GitFixture.task
+    assert_unregistered_response = fixture.GitFixture.assert_unregistered_response
 
     def nested(self):
         child = self.root / "child"
@@ -123,7 +124,7 @@ class RepositoryBoundaries(unittest.TestCase):
 
     def test_failed_begin_has_nonzero_cli_exit_code(self):
         w.git(self.root, "remote", "set-url", "origin", str(self.base / "missing.git"))
-        result = subprocess.run([sys.executable, str(fixture.MODULE), "--root", str(self.root),
+        result = subprocess.run([sys.executable, str(fixture.MODULE), "git", "--root", str(self.root),
                                  "--session", "cli-failure", "begin"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("sync_error", json.loads(result.stdout))
@@ -278,7 +279,7 @@ class RepositoryBoundaries(unittest.TestCase):
         hook = self.root / ".git/hooks/pre-commit"
         hook.write_text("#!/bin/sh\nprintf 'ran' > .git/hook-ran\nexec "
                         + shlex.quote(sys.executable) + " " + shlex.quote(str(fixture.MODULE))
-                        + " git-hook pre-commit\n")
+                        + " git git-hook pre-commit\n")
         hook.chmod(0o755)
         self.flow.commit(["answer.md"], "Add answer with preserved index", preserve_index=True)
         self.assertEqual((self.root / ".git/hook-ran").read_text(), "ran")
@@ -321,7 +322,7 @@ class RepositoryBoundaries(unittest.TestCase):
         (self.root / "README.md").write_text("unrelated staged work\n")
         w.git(self.root, "add", "README.md")
         self.task()
-        result = subprocess.run([sys.executable, str(fixture.MODULE), "--root", str(self.root),
+        result = subprocess.run([sys.executable, str(fixture.MODULE), "git", "--root", str(self.root),
                                  "--session", "test-session", "commit", "--preserve-index",
                                  "-m", "Add answer only", "answer.md"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -357,7 +358,7 @@ class RepositoryBoundaries(unittest.TestCase):
         self.repair_fixture(intended)
         index_before = w.index_fingerprint(self.root, [])
         remote_before = w.git(self.remote, "rev-parse", "refs/heads/main")
-        result = subprocess.run([sys.executable, str(fixture.MODULE), "--root", str(self.root),
+        result = subprocess.run([sys.executable, str(fixture.MODULE), "git", "--root", str(self.root),
                                  "--session", "test-session", "recover", intended], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
@@ -502,7 +503,7 @@ class RepositoryBoundaries(unittest.TestCase):
             self.assertEqual((self.root / ".git" / f"{event}-owner").read_text(), "native")
 
     def workspace_command(self, *args, payload=None):
-        return subprocess.run([sys.executable, str(self.root / ".codex/workspace.py"),
+        return subprocess.run([sys.executable, str(self.root / ".codex/ecosystem/cli.py"), "workspace",
                                "--session", "hook-workspace", *args], cwd=self.root,
                               input=json.dumps(payload) if payload is not None else None,
                               capture_output=True, text=True, timeout=15)
@@ -510,9 +511,7 @@ class RepositoryBoundaries(unittest.TestCase):
     def native_workspace(self, *, include_hub=False):
         runtime = self.root / ".codex"
         runtime.mkdir()
-        fixture.copy_runtime(runtime / "workflow.py")
-        for filename in ("workspace.py", "review_gate.py"):
-            shutil.copyfile(fixture.MODULE.parent / filename, runtime / filename)
+        fixture.copy_runtime(runtime / "ecosystem/cli.py")
         (runtime / "profile.json").write_text('{"mode":"native"}\n')
         (runtime / "repositories.json").write_text(json.dumps({"schema_version": 1, "repositories": [
             {"path": ".", "management": "native"}, {"path": "child", "management": "native"}]}))
@@ -533,7 +532,7 @@ class RepositoryBoundaries(unittest.TestCase):
         payload = {"session_id": "hook-workspace", "cwd": str(self.root),
                    "hook_event_name": hook_name, "turn_id": "fixture-turn",
                    "tool_name": "apply_patch", **fields}
-        command = fixture.native_hook_command(hook_name, self.root / ".codex/workflow.py")
+        command = fixture.native_hook_command(hook_name, self.root / ".codex/ecosystem/cli.py")
         return subprocess.run(command,
                               cwd=self.root, input=json.dumps(payload), capture_output=True,
                               text=True, timeout=10)
@@ -590,7 +589,7 @@ class RepositoryBoundaries(unittest.TestCase):
         before = manifest.read_bytes()
         result = self.native_event("prompt", prompt="A different task", turn_id="new-task")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {})
+        self.assert_unregistered_response("UserPromptSubmit", json.loads(result.stdout))
         self.assertEqual(manifest.read_bytes(), before)
         self.assertFalse((directory / f"{key}.json").exists())
 

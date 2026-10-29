@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +16,8 @@ from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE))
+from ecosystem import cli
+from ecosystem import build as builder
 from ecosystem.runtime import dispatch
 from ecosystem.runtime import workspace as ws
 from ecosystem.runtime.workflow import review_engine
@@ -295,10 +298,134 @@ class DispatchTests(unittest.TestCase):
         self.assertIn("Provider::check", consumer["depends_on"])
         self.assertNotIn("Provider::integrate", consumer["depends_on"])
 
+    def canonical_cli(self, package: Path, *arguments: str, cwd: Path):
+        """Run a standalone package without compatibility modules in its source root."""
+        shutil.copytree(MODULE / "ecosystem", package, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        return self.run_canonical_cli(package / "cli.py", *arguments, cwd=cwd)
+
+    def run_canonical_cli(self, entry: Path, *arguments: str, cwd: Path):
+        result = subprocess.run([sys.executable, "-B", str(entry), *arguments],
+                                cwd=cwd, capture_output=True, text=True,
+                                env={**os.environ, "CODEX_HOME": str(self.base / "codex-home")})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def native_child_workspace(self):
+        child = self.root / "Provider"
+        (child / ".codex").mkdir()
+        (child / ".codex/repositories.json").write_text(json.dumps({
+            "schema_version": 1, "repositories": [{"path": ".", "management": "native"}]}))
+        (child / ".codex/agent-policy.json").write_text(json.dumps({
+            "schema_version": 1, "defaults": {"max_concurrent_threads_per_session": 3},
+            "repositories": {}}))
+        return child
+
+    def test_source_cli_defaults_to_its_hub_and_accepts_an_explicit_root(self):
+        child = self.native_child_workspace()
+        package = self.root / ".codex/ecosystem"
+        route = self.canonical_cli(package, "workspace", "route", "Consumer/README.md", cwd=self.base)
+        self.assertEqual(route[0]["repository"], "Consumer")
+        policy = self.canonical_cli(package, "agent-policy", "show", "--repo", "Consumer", cwd=child)
+        self.assertEqual(policy["repositories"][0]["max_concurrent_threads_per_session"], 8)
+        route = self.canonical_cli(package, "workspace", "--root", str(child), "route", "README.md", cwd=self.base)
+        self.assertEqual(route[0]["repository"], ".")
+        policy = self.canonical_cli(package, "agent-policy", "--root", str(child), "show", cwd=self.base)
+        self.assertEqual(policy["repositories"][0]["max_concurrent_threads_per_session"], 3)
+
+    def test_invalid_source_registry_never_selects_the_callers_workspace(self):
+        child = self.native_child_workspace()
+        package = self.root / ".codex/ecosystem"
+        shutil.copytree(MODULE / "ecosystem", package,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        registry = self.root / ".codex/repositories.json"
+        for condition in ("missing", "malformed", "directory", "symlink"):
+            with self.subTest(registry=condition):
+                if registry.is_dir():
+                    registry.rmdir()
+                elif registry.exists() or registry.is_symlink():
+                    registry.unlink()
+                if condition == "malformed":
+                    registry.write_text("{invalid")
+                elif condition == "directory":
+                    registry.mkdir()
+                elif condition == "symlink":
+                    try:
+                        registry.symlink_to(child / ".codex/repositories.json")
+                    except OSError as exc:
+                        self.skipTest(f"Symlink fixture unavailable: {exc}")
+                before = self.fingerprints()
+                for arguments in (("workspace", "route", "README.md"), ("agent-policy", "show")):
+                    with self.subTest(command=arguments[0]):
+                        result = subprocess.run([sys.executable, "-B", str(package / "cli.py"), *arguments],
+                                                cwd=child, capture_output=True, text=True,
+                                                env={**os.environ, "CODEX_HOME": str(self.base / "codex-home")})
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(self.fingerprints(), before)
+
+    def test_distributed_cli_discovers_the_callers_workspace(self):
+        child = self.native_child_workspace()
+        package = self.base / "bundle/ecosystem"
+        route = self.canonical_cli(package, "workspace", "route", "README.md", cwd=child)
+        self.assertEqual(route[0]["repository"], ".")
+        policy = self.canonical_cli(package, "agent-policy", "show", cwd=child)
+        self.assertEqual(policy["repositories"][0]["max_concurrent_threads_per_session"], 3)
+        route = self.canonical_cli(package, "workspace", "--root", str(self.root),
+                                   "route", "Consumer/README.md", cwd=child)
+        self.assertEqual(route[0]["repository"], "Consumer")
+
+    def test_verified_bundle_in_reserved_directory_uses_the_callers_workspace(self):
+        child = self.native_child_workspace()
+        bundle = self.base / "package-location/.codex"
+        builder.build_bundle(bundle, modules=["coding"], source_root=MODULE)
+        before = self.fingerprints()
+        route = self.run_canonical_cli(bundle / "ecosystem/cli.py", "workspace", "route", "README.md", cwd=child)
+        self.assertEqual(route[0]["repository"], ".")
+        policy = self.run_canonical_cli(bundle / "ecosystem/cli.py", "agent-policy", "show", cwd=child)
+        self.assertEqual(policy["repositories"][0]["max_concurrent_threads_per_session"], 3)
+        route = self.run_canonical_cli(bundle / "ecosystem/cli.py", "workspace", "--root", str(self.root),
+                                       "route", "Consumer/README.md", cwd=child)
+        self.assertEqual(route[0]["repository"], "Consumer")
+        self.assertEqual(self.fingerprints(), before)
+
+    def test_source_directory_case_alias_preserves_its_workspace(self):
+        child = self.native_child_workspace()
+        package = self.root / ".codex/ecosystem"
+        shutil.copytree(MODULE / "ecosystem", package,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        alias = self.root / ".CODEX/ecosystem/cli.py"
+        if not alias.is_file() or not alias.samefile(package / "cli.py"):
+            self.skipTest("The fixture volume has case-sensitive path lookup")
+        before = self.fingerprints()
+        route = self.run_canonical_cli(alias, "workspace", "route", "Consumer/README.md", cwd=child)
+        self.assertEqual(route[0]["repository"], "Consumer")
+        policy = self.run_canonical_cli(alias, "agent-policy", "show", "--repo", "Consumer", cwd=child)
+        self.assertEqual(policy["repositories"][0]["max_concurrent_threads_per_session"], 8)
+        self.assertEqual(self.fingerprints(), before)
+
+    def test_unverified_bundle_markers_cannot_redirect_the_source_workspace(self):
+        child = self.native_child_workspace()
+        package = self.root / ".codex/ecosystem"
+        shutil.copytree(MODULE / "ecosystem", package,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        genuine = builder.build_bundle(self.base / "genuine-bundle", modules=["coding"], source_root=MODULE)
+        marker = package.parent / "bundle.json"
+        records = ("{invalid", json.dumps({"schema": 1, "modules": ["coding"], "files": {}}),
+                   json.dumps(genuine))
+        for content in records:
+            with self.subTest(marker=content[:45]):
+                marker.write_text(content)
+                before = self.fingerprints()
+                route = self.run_canonical_cli(package / "cli.py", "workspace", "route", "Consumer/README.md", cwd=child)
+                self.assertEqual(route[0]["repository"], "Consumer")
+                policy = self.run_canonical_cli(package / "cli.py", "agent-policy", "show", "--repo", "Consumer", cwd=child)
+                self.assertEqual(policy["repositories"][0]["max_concurrent_threads_per_session"], 8)
+                self.assertEqual(self.fingerprints(), before)
+
     def test_cli_is_readonly_and_returns_json(self):
         self.plan(["Provider/lib.py"])
         before = self.fingerprints()
-        result = subprocess.run([sys.executable, "-B", str(MODULE / "workspace.py"), "--root", str(self.root),
+        result = subprocess.run([sys.executable, "-B", str(MODULE / "ecosystem/cli.py"), "workspace", "--root", str(self.root),
                                  "--session", self.workspace.session, "dispatch", "--capacity", "2"],
                                 capture_output=True, text=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -562,9 +689,9 @@ class DispatchTests(unittest.TestCase):
         self.review_current_plan()
         original = ws.git(self.root / "Provider", "rev-parse", "HEAD")
         output = io.StringIO()
-        argv = ["workspace.py", "--root", str(self.root), "--session", self.workspace.session, "publish", "--repo", "Provider"]
+        argv = ["cli.py", "workspace", "--root", str(self.root), "--session", self.workspace.session, "publish", "--repo", "Provider"]
         with patch.object(sys, "argv", argv), patch.object(sys, "stdout", output):
-            self.assertEqual(ws.main(), 0)
+            self.assertEqual(cli.main(), 0)
         result = json.loads(output.getvalue())
         self.assertTrue(result["repositories"]["Provider"]["unchanged"])
         self.assertEqual(result["repositories"]["Provider"]["head"], original)

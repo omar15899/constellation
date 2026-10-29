@@ -26,10 +26,10 @@ no aprueba checks, revisiones, publicaciones ni resultados científicos.
 ## Guardar primero en el origen
 
 Desde un proyecto Git, usa el workflow receptor; desde el hub, añade `--repo` a
-los comandos de `workspace.py`. Primero consulta:
+los comandos de `cli.py workspace`. Primero consulta:
 
 ```sh
-python3 .codex/workspace.py progress-show --repo .
+python3 .codex/ecosystem/cli.py workspace progress-show --repo .
 ```
 
 Devuelve `task_progress`, `expected_task_start` y `revision`. La primera
@@ -115,7 +115,7 @@ el registro de proyectos a la política.
 Después de guardar el checkpoint, prepara la proyección:
 
 ```sh
-python3 .codex/workspace.py progress-export --repo . --task-uid UUID
+python3 .codex/ecosystem/cli.py workspace progress-export --repo . --task-uid UUID
 ```
 
 El resultado contiene `envelope`. Esta operación **no escribe en OmarOS**.

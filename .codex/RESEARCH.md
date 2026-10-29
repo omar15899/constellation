@@ -1,7 +1,7 @@
 # Investigación y ejecución coordinada
 
 Para una entrega Git, el coordinador declara requisitos y archivos exactos con
-`workspace.py plan`. Usa `dispatch` cuando delegar aporte trabajo independiente;
+`cli.py workspace plan`. Usa `dispatch` cuando delegar aporte trabajo independiente;
 el mapa o la investigación sólo se añaden para resolver incertidumbres reales.
 Una pregunta breve no necesita este ciclo. El runtime compartido conserva la
 responsabilidad de comprobar, revisar y publicar en cada dueño Git.
@@ -80,7 +80,7 @@ operativo y los artefactos científicos, sin duplicar conversaciones ni logs.
 ## Ejecutar el reparto
 
 ```sh
-python3 .codex/workspace.py --session ID dispatch --capacity 8
+python3 .codex/ecosystem/cli.py workspace --session ID dispatch --capacity 8
 ```
 
 El resultado contiene paquetes por repositorio y oleadas deterministas. La
@@ -124,7 +124,7 @@ proveedores antes que consumidores. `finish` cierra el conjunto cuando todas las
 integraciones terminan, sin exigir publicar al proveedor antes de poder implementar
 al consumidor.
 Un proveedor sin cambios también necesita publicación verificada antes que sus
-consumidores. El coordinador usa `workspace.py publish --repo RUTA` para publicar
+consumidores. El coordinador usa `cli.py workspace publish --repo RUTA` para publicar
 y comparar su HEAD remoto sin crear un commit; el comando acepta participantes
 sin rutas de escritura y rechaza entregables propios pendientes.
 
@@ -132,7 +132,7 @@ El identificador de una tarea es una clave del plan, nunca la identidad de un
 agente. Registra la identidad devuelta por la herramienta para cada contribuyente:
 
 ```sh
-python3 .codex/workspace.py --session ID review-author --repo Shared <<'JSON'
+python3 .codex/ecosystem/cli.py workspace --session ID review-author --repo Shared <<'JSON'
 {"author":"ID_REAL_DEL_IMPLEMENTADOR","paths":["src/example.py"]}
 JSON
 ```
@@ -184,7 +184,7 @@ de progreso, explicita un cambio de enfoque mediante la continuidad de
 [WORKSPACE.md](WORKSPACE.md#revisión-independiente). La ausencia de presupuesto
 medible se informa como desconocida. Replanificar conserva historia, hallazgos,
 autores y mínimos. Después registra evidencia para cada requisito,
-publica las rutas declaradas con `workspace.py commit` y ejecuta `finish`.
+publica las rutas declaradas con `cli.py workspace commit` y ejecuta `finish`.
 El cierre comprueba los SHA remotos de los participantes. Una caída de red deja
 progreso pendiente para reanudar; no autoriza omitir controles ni publicar vecinos.
 

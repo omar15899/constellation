@@ -12,9 +12,10 @@ the same research contracts. Credentials, connector access, data, personal
 profiles and task state remain local.
 
 Use one existing lifecycle per objective. For this Git owner, use
-`.codex/workflow.py --session claude-NATIVE_SESSION_ID`; for coordinated owners,
-use `.codex/workspace.py` and the actual contracts of each repository. Research
-without publication can use the shared portable CLI. Obtain the native session
+`.codex/ecosystem/cli.py git --session claude-NATIVE_SESSION_ID`; for coordinated
+owners, use `.codex/ecosystem/cli.py workspace` and the actual contracts of each
+repository. Research without publication can use the shared portable CLI.
+Obtain the native session
 identity from the plugin context and pass it explicitly. Register actual author
 and reviewer IDs without the lifecycle prefix.
 

@@ -15,7 +15,7 @@ un servicio de selección semántica.
 | Diagnóstico de capacidades | `ecosystem/native.py` para Codex; `ecosystem/claude.py verify` y comandos nativos para Claude | Snapshot de lectura e integridad; sin catálogo paralelo | Usuario, instalación y mantenimiento |
 | Revisión independiente y continuidad | `ecosystem/runtime/review_gate.py` | Política compartida, historial, presupuesto temporal y extensiones del receptor | Adaptadores Git, portable y OmarOS |
 | Entrega y publicación Git | `ecosystem/runtime/workflow.py` | Contrato y evidencia privados en `.git/constellation` | Repositorios Git y coordinador |
-| Coordinación entre repositorios | `ecosystem/runtime/workspace.py` y `dispatch.py` | Registro declarativo del workspace y dependencias de la tarea | Hub y otros workspaces explícitos |
+| Coordinación entre repositorios | `ecosystem/runtime/workspace.py` y `ecosystem/runtime/dispatch.py` | Registro declarativo del workspace y dependencias de la tarea | Hub y otros workspaces explícitos |
 | Evidencia matemática/editorial sin publicación | `ecosystem/core.py` | Contratos con hipótesis, checks, evaluaciones y SQLite privado | Trabajos de investigación y documentos |
 | Progreso recuperable | `ecosystem/runtime/progress.py`; adaptadores existentes | `task_progress` en el JSON Git o SQLite portable; sin almacén nuevo | Trabajo sustancial y reanudación |
 | Diario personal | Receptor `progress_journal.py` de OmarOS y renderizado compartido | Política personal exacta, notas curadas e índice privado mínimo | Sólo fuentes y checkpoints personales autorizados |
@@ -25,10 +25,11 @@ un servicio de selección semántica.
 | Distribución | `ecosystem/build.py`; instaladores `install.py` y `claude.py` | Un bundle permitido, hashes, recibos y proyecciones nativas | Codex, Claude y receptores autorizados |
 | Dominio | `AGENTS.md`, herramientas y validadores del proyecto | Archivos propios del receptor | Su trabajo especializado |
 
-Las entradas históricas `.codex/workflow.py`, `workspace.py`, `dispatch.py`,
-`review_gate.py` y `agent_policy.py` son adaptadores de importación y CLI. No
-contienen otra implementación. El hub mantiene el registro de sus repositorios;
-no determina la propiedad Git de OmarOS ni de un tercero.
+El CLI `ecosystem/cli.py` es la entrada común a `git`, `workspace` y
+`agent-policy`; desde el checkout se invoca en `.codex/ecosystem/cli.py`.
+Importa los módulos de `ecosystem/runtime/` directamente, sin lanzadores de
+compatibilidad en la raíz de `.codex/`. El hub mantiene el registro de sus
+repositorios; no determina la propiedad Git de OmarOS ni de un tercero.
 
 ## Organización de fuentes y distribución
 
@@ -51,6 +52,12 @@ parte de la identidad nativa y no se cambian por estética. Conservarlas no
 mantiene ni concede confianza: una instalación o definición modificada puede
 requerir una nueva aprobación del cliente. Cada proyección procede de una fuente
 única en `manifests/`; no hay otro registro ni generador de arquitectura.
+
+Los recibos y las verificaciones de instalaciones anteriores conservan la
+propiedad, integridad y recuperación necesarias para actualizar. Son datos y
+controles del instalador vigente; no mantienen otra estructura activa ni otro
+runtime. El adaptador de OmarOS y su copia derivada verificada pertenecen al
+contrato receptor actual.
 
 ## Una distribución para varios portátiles
 
@@ -268,9 +275,9 @@ Un lock compartido protege validación y ejecución del hook; el instalador usa
 el mismo lock en exclusiva para actualizar. Una colisión o instalación incoherente
 produce una respuesta controlada, sin ejecutar código parcialmente actualizado.
 El contrato de instalación, confianza y primera recarga está en
-[README.md](../README.md#instalar-y-actualizar).
+[instalación y actualización](migrations.md#instalar-y-actualizar).
 El guard de patches no intercepta todas las escrituras por shell o MCP.
-Un puente acotado de migración reconoce contratos OmarOS activos como datos
+El adaptador de OmarOS reconoce sus contratos activos como datos
 para autorizar únicamente sus rutas explícitas en la misma sesión y destino
 congelado. No importa código del vault ni certifica su cierre, renombrados o
 validación de conocimiento; esas responsabilidades siguen en su adaptador.

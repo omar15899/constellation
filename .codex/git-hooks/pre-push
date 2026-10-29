@@ -1,3 +1,3 @@
 #!/bin/sh
 repo_root=$(git rev-parse --show-toplevel) || exit 2
-exec python3 "$repo_root/.codex/workflow.py" git-hook pre-push
+exec python3 "$repo_root/.codex/ecosystem/cli.py" git git-hook pre-push

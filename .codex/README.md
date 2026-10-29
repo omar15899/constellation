@@ -1,12 +1,12 @@
 # Codex nativo: coordinación y publicación verificables
 
 Para coordinar proyectos desde `~/GitHub` o desde cualquier hijo, empieza en
-[WORKSPACE.md](WORKSPACE.md). `workspace.py` distribuye rutas y ejecuta este
+[WORKSPACE.md](WORKSPACE.md). `cli.py workspace` distribuye rutas y ejecuta este
 ciclo por cada dueño Git. El registro operativo está en `repositories.json`;
 los proyectos propios usan perfiles nativos y `ruflo` conserva su perfil externo.
 La sección de uso siguiente documenta el motor de **un solo repositorio**.
 
-El perfil mantiene instrucciones breves y entradas al runtime compartido de
+El perfil mantiene instrucciones breves y una entrada al runtime compartido de
 [Constellation](ecosystem/docs/architecture.md). Codex trabaja directamente; no necesita proyectar Claude,
 cargar el sistema de agentes de Claude ni recorrer una cadena de skills. El modelo,
 esfuerzo y permisos se heredan de los ajustes del usuario.
@@ -25,14 +25,14 @@ muestra y trazabilidad hasta paper. La [guía local](QUANT_RESEARCH.md) la conec
 con los laboratorios y sus comandos. Distribuir la skill no instala los motores,
 proveedores o brokers ni acredita que la sesión actual la haya descubierto.
 
-Cuando la tarea se beneficia de delegación, `workspace.py dispatch` propone
+Cuando la tarea se beneficia de delegación, `cli.py workspace dispatch` propone
 implementación, checks y revisión ordenados por dependencias y capacidad. Una
 implementación con un solo dueño puede quedar en el coordinador; mapa e
 investigación se añaden cuando resuelven una incertidumbre real.
 [RESEARCH.md](RESEARCH.md) explica la ejecución y el
 handoff de evidencia. Ocho perfiles compartidos en `ecosystem/agents/` dan instrucciones a los
 trabajadores; el coordinador los inicia con las herramientas del cliente.
-Un participante sin cambios se publica y verifica con `workspace.py publish
+Un participante sin cambios se publica y verifica con `cli.py workspace publish
 --repo RUTA`, conservando la dependencia del consumidor sin crear commits vacíos.
 
 La [integración documental con OmarOS](KNOWLEDGE.md) centraliza documentos e
@@ -74,8 +74,10 @@ contexto del cliente instalado. Las pruebas con modelos concretos constan en
 
 ## Uso
 
-Desde la raíz del hub, ejecuta `python3 .codex/workflow.py`. El CLI usa
-`CODEX_THREAD_ID`; si el hook comunica otra sesión, añade `--session ID` antes
+Desde la raíz del hub, ejecuta `python3 .codex/ecosystem/cli.py git`. La misma
+entrada ofrece `workspace` y `agent-policy`; los algoritmos viven sólo en
+`ecosystem/runtime/`. El CLI usa `CODEX_THREAD_ID`; si el hook comunica otra
+sesión, añade `--session ID` antes
 del subcomando. No compartas la sesión `manual` entre trabajos concurrentes.
 
 1. `begin --turn ID` comprueba explícitamente el upstream.
@@ -129,22 +131,22 @@ El instalador activa tres hooks de Git (`pre-commit`, `post-commit`, `pre-push`)
 solo si no sustituye hooks ajenos. Guarda el valor anterior en el directorio
 privado de Git. No cambia la configuración global de Codex ni su confianza.
 
-`hooks.json` conserva una declaración vacía de migración. Los cinco eventos del
-plugin usan un único adaptador para contratos activos. `UserPromptSubmit` no
-crea tareas ni comprueba remotos; `PreToolUse` verifica las rutas declaradas;
+Los cinco eventos nativos pertenecen al plugin instalado; el hub no mantiene
+otro manifiesto de hooks. Un único adaptador atiende los contratos activos.
+`UserPromptSubmit` no crea tareas ni comprueba remotos; `PreToolUse` verifica
+las rutas declaradas;
 los eventos de agentes comunican contexto y `Stop` solicita cierre con intentos
-acotados e idempotentes. No se publica desde hooks. Los comandos heredados de
-hooks delegan al mismo adaptador para sesiones que todavía los tengan cargados.
+acotados e idempotentes. No se publica desde hooks.
 
 La confianza se administra en `/hooks`; instalar no la concede. Comprueba
 descubrimiento, habilitación, confianza y ejecución por separado. No edites
 hashes de confianza ni uses opciones para eludirla. Una sesión nueva carga las
 definiciones actuales sin los eventos duplicados del hub.
-El plugin 1.2 usa `CODEX_HOME/constellation/hook.py` como entrada estable y
+El plugin usa `CODEX_HOME/constellation/hook.py` como entrada estable y
 comparte el lock de instalación para validar el paquete antes de ejecutarlo.
-La primera transición desde un comando capturado del caché 1.1 requiere reabrir
-el hilo; consulta el contrato de
-[instalación y actualización](ecosystem/README.md#instalar-y-actualizar).
+Abre una sesión nueva después de actualizar el paquete o sus definiciones;
+consulta el contrato de
+[instalación y actualización](ecosystem/docs/migrations.md#instalar-y-actualizar).
 [Documentación oficial de hooks](https://learn.chatgpt.com/docs/hooks).
 
 ## Alcance y límites
@@ -154,7 +156,7 @@ La concurrencia general de Codex se configura en `~/.codex/config.toml` con
 permiten usar hasta ese máximo cuando haga falta; el primario no cuenta.
 La política [agent-policy.json](agent-policy.json) alinea los perfiles nativos
 en 64 para que no prevalezcan los anteriores límites de seis u ocho. El comando
-`python3 .codex/agent_policy.py show` muestra la política efectiva;
+`python3 .codex/ecosystem/cli.py agent-policy show` muestra la política efectiva;
 `check` detecta divergencias y `apply --repo RUTA` actualiza únicamente las rutas
 de configuración declaradas en el plan. Reinicia la sesión para cargar cambios.
 La herramienta de aplicación no modifica modelo, esfuerzo, permisos, confianza

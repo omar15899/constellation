@@ -7,21 +7,21 @@ Cada repositorio conserva su historia, sus pruebas y su contrato. El
 
 Codex empieza en [AGENTS.md](AGENTS.md) y utiliza su
 [perfil nativo](.codex/README.md): alcance explícito, pruebas, revisión
-independiente y publicación verificada. Sus [seis perfiles de agente](.codex/agents/)
+independiente y publicación verificada. Sus [ocho perfiles de agente](.codex/ecosystem/agents/)
 apoyan el reparto del [workflow](.codex/WORKSPACE.md); el
 [plugin portable](.codex/ecosystem/README.md) aporta las skills `coding`,
-`mathematics` y `writter`. El perfil se edita directamente y
+`mathematics`, `quant-research` y `writter`. El perfil se edita directamente y
 `.codex/profile.json` impide que la proyección de Claude lo sustituya.
 
-Claude conserva [CLAUDE.md](CLAUDE.md), su [kernel](.claude/CLAUDE.md), contratos,
-roles, skills y hooks. Los 19 proyectos propios tienen perfiles Codex nativos
+Claude conserva [CLAUDE.md](CLAUDE.md), su [entrada local](.claude/CLAUDE.md),
+contratos, roles, skills y hooks. Los proyectos propios tienen perfiles Codex nativos
 con sus reglas técnicas y una referencia al motor común. `ruflo` conserva su
 perfil externo. Ninguna operación incluye otros proyectos sin declararlos.
 
 Para trabajar sobre cualquiera de ellos desde la raíz o desde un hijo:
 
 ```sh
-python3 ~/GitHub/.codex/workspace.py route Shared/README.md PricingLab/README.md
+python3 ~/GitHub/.codex/ecosystem/cli.py workspace route Shared/README.md PricingLab/README.md
 ```
 
 El [flujo entre repositorios](.codex/WORKSPACE.md) divide los archivos por dueño
@@ -36,7 +36,7 @@ python3 .codex/install.py
 python3 -m unittest discover -s .codex/tests -v
 ```
 
-Python 3.9+ y Git bastan para este flujo. Las herramientas de proyección de
+Python 3.11+ y Git bastan para este flujo. Las herramientas de proyección de
 Claude necesitan Python 3.12+. El [README de Codex](.codex/README.md) detalla las
 pruebas específicas, la preservación de cambios previos y los límites de los
 controles. Pasar pruebas o instalar hooks de Git no activa automáticamente los

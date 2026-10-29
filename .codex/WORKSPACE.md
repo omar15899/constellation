@@ -5,15 +5,18 @@ Un archivo pertenece a la raíz que devuelve Git para su directorio; su posició
 en una carpeta no lo convierte en parte del índice del padre. El coordinador
 usa esa propiedad real y mantiene un contrato, revisión y publicación por dueño.
 
-Ejecuta `python3 ~/GitHub/.codex/workspace.py` desde cualquier carpeta. Sus rutas
-son siempre relativas a `~/GitHub`, no al directorio de la terminal. Para un hub
-clonado en otra ubicación, invoca su script; la raíz por defecto es la que contiene
-ese script. `--root` permite seleccionar explícitamente otro hub compatible.
+Ejecuta `python3 ~/GitHub/.codex/ecosystem/cli.py workspace` desde cualquier
+carpeta. Sus rutas son siempre relativas a `~/GitHub`, no al directorio de la
+terminal. Para un hub
+clonado en otra ubicación, invoca su CLI; en el checkout fuente, la raíz por
+defecto es la que contiene `.codex/repositories.json`. Un paquete distribuido
+localiza el workspace desde el directorio actual. `--root` permite seleccionar
+explícitamente otro hub compatible.
 
 ## Localizar y declarar
 
 ```sh
-python3 ~/GitHub/.codex/workspace.py route Shared/README.md PricingLab/README.md
+python3 ~/GitHub/.codex/ecosystem/cli.py workspace route Shared/README.md PricingLab/README.md
 ```
 
 `route` es de solo lectura: muestra dueño, ruta interna, rama, upstream e
@@ -28,7 +31,7 @@ un identificador propio con `--session ID`; no compartas `manual` entre tareas.
 Este ejemplo declara una actualización documental en dos proyectos:
 
 ```sh
-python3 ~/GitHub/.codex/workspace.py --session ejemplo plan <<'JSON'
+python3 ~/GitHub/.codex/ecosystem/cli.py workspace --session ejemplo plan <<'JSON'
 {
   "requirements": ["Ambos README describen el mismo contrato de datos"],
   "paths": ["Shared/README.md", "PricingLab/README.md"],
@@ -49,7 +52,7 @@ incluidos en una tarea; clasificarlos no autoriza modificarlos.
 
 ## Distribuir el trabajo
 
-Tras el plan, `workspace.py --session ID dispatch --capacity N` devuelve un
+Tras el plan, `cli.py workspace --session ID dispatch --capacity N` devuelve un
 grafo de tareas y oleadas estables para los participantes. Respeta `depends_on`,
 el presupuesto común y los límites por repositorio. Elige N según la capacidad
 real disponible del cliente, descontando agentes ya activos. El comando no
@@ -68,7 +71,7 @@ contenido, y abre la revisión sólo después de implementar y comprobar.
 Registra los autores reales antes de revisar:
 
 ```sh
-python3 .codex/workspace.py --session ejemplo review-author --repo Shared <<'JSON'
+python3 .codex/ecosystem/cli.py workspace --session ejemplo review-author --repo Shared <<'JSON'
 {"author":"ID_REAL_DEL_SUBAGENTE","paths":["README.md"]}
 JSON
 ```
@@ -80,7 +83,7 @@ espera la revisión de todo el conjunto, publica en orden y reserva `finish` par
 después de todos los commits; así no crea una espera circular entre implementación
 del consumidor y publicación del proveedor.
 Si un participante no tiene cambios propios que comprometer, usa
-`workspace.py --session ID publish --repo RUTA`: verifica y publica su HEAD
+`cli.py workspace --session ID publish --repo RUTA`: verifica y publica su HEAD
 actual sin crear un commit. También sirve para un proveedor con `paths: []`.
 Esta comprobación establece la publicación que necesita su consumidor; omitirla
 dejaría la dependencia pendiente. Se rechaza si hay entregables propios sin commit,
@@ -97,8 +100,8 @@ de publicación. Las tareas de reparación se abren sólo ante hallazgos reales.
 Tras implementar, registra comprobaciones pertinentes con el cwd del dueño:
 
 ```sh
-python3 ~/GitHub/.codex/workspace.py --session ejemplo check --repo Shared -- git diff --check
-python3 ~/GitHub/.codex/workspace.py --session ejemplo check --repo PricingLab -- git diff --check
+python3 ~/GitHub/.codex/ecosystem/cli.py workspace --session ejemplo check --repo Shared -- git diff --check
+python3 ~/GitHub/.codex/ecosystem/cli.py workspace --session ejemplo check --repo PricingLab -- git diff --check
 ```
 
 Para código, sustituye esas comprobaciones por las pruebas del comportamiento
@@ -109,14 +112,14 @@ La revisión recibe un objeto por repositorio, con cada requisito
 exacto como clave y evidencia concreta como valor:
 
 ```sh
-python3 ~/GitHub/.codex/workspace.py --session ejemplo review <<'JSON'
+python3 ~/GitHub/.codex/ecosystem/cli.py workspace --session ejemplo review <<'JSON'
 {
   "Shared": {"Ambos README describen el mismo contrato de datos": "Comparados los campos y tipos con su definición en Shared y su uso en PricingLab."},
   "PricingLab": {"Ambos README describen el mismo contrato de datos": "Comprobado que el ejemplo consumidor usa los campos y tipos documentados por Shared."}
 }
 JSON
-python3 ~/GitHub/.codex/workspace.py --session ejemplo commit -m 'Aclara el contrato de datos' Shared/README.md PricingLab/README.md
-python3 ~/GitHub/.codex/workspace.py --session ejemplo finish
+python3 ~/GitHub/.codex/ecosystem/cli.py workspace --session ejemplo commit -m 'Aclara el contrato de datos' Shared/README.md PricingLab/README.md
+python3 ~/GitHub/.codex/ecosystem/cli.py workspace --session ejemplo finish
 ```
 
 Un lote crea un commit por repositorio y respeta las dependencias. También puedes
@@ -152,7 +155,7 @@ al coordinador durante estos commits. Fuera de ese contexto mantiene su flujo.
 Si un hook crea un commit fuera del alcance, la publicación queda bloqueada
 también al reintentar. No basta con volver a ejecutar `commit` o `finish`. La
 reparación de historia requiere autorización específica; después, el motor
-local ofrece `workflow.py --root RAÍZ --session ID recover SHA_COMPLETO` para
+local ofrece `cli.py git --root RAÍZ --session ID recover SHA_COMPLETO` para
 auditar el HEAD reparado, su árbol, revisión, destino y todos los commits desde
 el inicio. `recover` no mueve ramas, no modifica archivos ni índices y no hace
 push. Solo retira el bloqueo cuando esa evidencia vuelve a ser válida.
@@ -176,9 +179,9 @@ Al delegar aplica también el presupuesto del repositorio afectado. La política
 no puede cambiar el límite de una sesión ya iniciada.
 
 ```sh
-python3 .codex/agent_policy.py show
-python3 .codex/agent_policy.py check --repo Shared
-python3 .codex/agent_policy.py --session ejemplo apply --repo Shared
+python3 .codex/ecosystem/cli.py agent-policy show
+python3 .codex/ecosystem/cli.py agent-policy check --repo Shared
+python3 .codex/ecosystem/cli.py agent-policy --session ejemplo apply --repo Shared
 ```
 
 Para cambiar el límite, declara la política y los `.codex/config.toml` afectados
@@ -211,8 +214,8 @@ cuando no haya capacidad paralela. Consulta [REVIEW.md](../REVIEW.md) y las
 invariantes locales antes de revisar.
 
 ```sh
-python3 .codex/workspace.py --session ejemplo review-context --repo Shared
-python3 .codex/workspace.py --session ejemplo review-start --repo Shared
+python3 .codex/ecosystem/cli.py workspace --session ejemplo review-context --repo Shared
+python3 .codex/ecosystem/cli.py workspace --session ejemplo review-start --repo Shared
 ```
 
 `review-context` no abre una ronda. `review-start` devuelve un token de los
@@ -269,7 +272,7 @@ expone la señal observada y `continuation_required`. Un archivo distinto no
 demuestra progreso semántico: ese juicio sigue correspondiendo al coordinador.
 
 ```sh
-python3 .codex/workspace.py --session ejemplo review-start --repo Shared \
+python3 .codex/ecosystem/cli.py workspace --session ejemplo review-start --repo Shared \
   --continuation-reason 'El nuevo contraejemplo permite aislar la causa' \
   --continuation-next-action 'Contrastar la reparación con ese caso y su límite'
 ```
@@ -282,7 +285,7 @@ El presupuesto de revisión usa un plazo UTC explícito, no una estimación de
 tokens. El coordinador lo declara o amplía con revisión esperada y motivo:
 
 ```sh
-python3 .codex/workspace.py --session ejemplo review-budget --repo Shared <<'JSON'
+python3 .codex/ecosystem/cli.py workspace --session ejemplo review-budget --repo Shared <<'JSON'
 {"expected_budget_revision":0,"deadline_at":"2026-10-19T12:00:00Z","reason":"Plazo explícito asignado a esta revisión"}
 JSON
 ```
@@ -305,7 +308,7 @@ admite. Los demás mínimos se conservan, incluidos los más estrictos del recep
 
 Después registra la evidencia de cada requisito con `review` y publica con el
 flujo habitual. `commit` y `finish` comprueban también esta puerta. Los comandos
-equivalentes de `workflow.py` no necesitan `--repo`. Una consulta con `paths: []`
+equivalentes de `cli.py git` no necesitan `--repo`. Una consulta con `paths: []`
 no requiere subagentes. Esta puerta es local: la CI del hub prueba los controles,
 pero GitHub sólo los exige para fusionar si sus reglas remotas lo configuran.
 
@@ -330,7 +333,7 @@ el plugin y conservan sus hooks Git. El guarda de patches no cubre todas las
 escrituras de shell o MCP y no sustituye los permisos del cliente.
 La entrada estable, el lock de actualización y la recarga única al migrar desde
 un comando antiguo están descritos en
-[la instalación del plugin](ecosystem/README.md#instalar-y-actualizar).
+[la instalación del plugin](ecosystem/docs/migrations.md#instalar-y-actualizar).
 
 El estado mecánico vive bajo el directorio privado de Git, con bloqueos por
 workspace y por repositorio. No registra prompts, transcripciones, comandos

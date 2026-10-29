@@ -1,4 +1,0 @@
-{
-  "description": "Deprecated hub lifecycle entry. The installed Constellation plugin owns the five native lifecycle hooks. Native trust and enablement remain under user control; this file does not activate the previously disabled Stop hook. Git safety hooks remain separate.",
-  "hooks": {}
-}

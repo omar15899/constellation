@@ -22,9 +22,27 @@ def main(argv: list[str] | None = None) -> int:
     if arguments[:1] == ["git"]:
         from ecosystem.runtime.workflow import entrypoint
         return entrypoint(arguments[1:])
-    if arguments[:1] == ["workspace"]:
-        from ecosystem.runtime.workspace import entrypoint
-        return entrypoint(arguments[1:])
+    if arguments[:1] in (["workspace"], ["agent-policy"]):
+        package_parent = Path(__file__).resolve().parent.parent
+        # Source aliases retain one owner even on case-insensitive filesystems.
+        # Only a complete verified bundle can opt out of that checkout default.
+        default_root = None
+        if package_parent.name.casefold() == ".codex":
+            default_root = package_parent.parent
+            marker = package_parent / "bundle.json"
+            if marker.exists() or marker.is_symlink():
+                from ecosystem.build import verify_bundle
+                try:
+                    verify_bundle(package_parent)
+                except (OSError, ValueError):
+                    pass
+                else:
+                    default_root = None
+        if arguments[0] == "workspace":
+            from ecosystem.runtime.workspace import entrypoint
+        else:
+            from ecosystem.runtime.agent_policy import entrypoint
+        return entrypoint(arguments[1:], default_root=default_root)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--state-dir", type=Path, default=default_state_dir())
