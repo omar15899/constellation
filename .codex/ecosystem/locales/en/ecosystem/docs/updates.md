@@ -10,13 +10,16 @@ its own bundle digest before that revision is acknowledged. A network failure ke
 available. A later interval retries incomplete setup.
 
 On a POSIX device with a verified installation, use the stable device entry,
-canonical vault root, GitHub checkout and actual Codex executable. The
-`plan` command prints the launchd or systemd user definitions and activation
-commands for this device.
+canonical vault root, Constellation source checkout and actual Codex executable.
+The source on this computer is `~/.codex`. Here `--workspace-root` identifies
+the source whose skills are excluded from duplicate native discovery. The
+operational project workspace remains `~/GitHub`, selected with
+`cli workspace --root ~/GitHub`. The `plan` command prints the launchd or systemd
+user definitions and activation commands for this device.
 
 ```sh
 ~/.codex/constellation/run updates plan \
-  --vault-root ~/OmarOS --workspace-root ~/GitHub --codex /path/to/codex
+  --vault-root ~/OmarOS --workspace-root ~/.codex --codex /path/to/codex
 ```
 
 Inspect the output of `plan` before choosing `enable`. The `enable` operation

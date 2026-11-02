@@ -1,45 +1,63 @@
-# Trabajar desde GitHub o desde un proyecto
+# Propietarios y workspaces
 
-Usa la función `constellation` de la [guía de entrada](README.md), que ejecuta la versión instalada y verificada en este equipo. Las rutas de `workspace` son relativas al hub. Desde el hub o cualquier subcarpeta, la instalación busca el registro `.codex/repositories.json` más cercano entre los directorios ascendentes. Desde fuera, o si dos registros se solapan, proporciona la raíz expresamente.
+`~/.codex` es el dueño de la fuente de Constellation, en `main`. Su
+[registro](repositories.json) contiene sólo `.`. `~/GitHub` conserva otro dueño
+Git, en `codex/workspace`, con el registro de los proyectos hijos. El remoto
+compartido conserva la historia; cada raíz tiene su contrato, índice y publicación.
+
+Usa la función `constellation` de la [guía de entrada](README.md). Las rutas de
+un workspace son relativas a su raíz, que debe ser un repositorio Git real. El
+motor rechaza enlaces ambiguos y rutas que salgan de esa raíz; el registro de
+Constellation no se usa para incorporar a sus carpetas hermanas.
 
 ```sh
-constellation workspace route Shared/README.md PricingLab/README.md
-constellation workspace --root "$HOME/GitHub" route Shared/README.md
+constellation git --root "$HOME/.codex" --session ID status
+constellation workspace --root "$HOME/GitHub" route Shared/README.md PricingLab/README.md
 ```
 
-El comando conserva la rama, el upstream y las instrucciones del propietario real de cada archivo. Un proyecto externo debe identificarse expresamente en el alcance. El [registro](repositories.json) es información del workspace y la [política de agentes](agent-policy.json) fija los límites locales. La [doctrina de revisión](../REVIEW.md) y la [guía de investigación](RESEARCH.md) definen las obligaciones aplicables.
+Las entradas históricas en `~/GitHub/.codex/ecosystem/cli.py` conservan el
+workspace de GitHub y remiten al lanzador instalado. El CLI de la fuente en
+`~/.codex/.codex/ecosystem/cli.py` permite `--source` para desarrollo y selecciona
+esta raíz por defecto; proporciona `--root` expresamente al trabajar en GitHub.
 
-Los proyectos antiguos pueden seguir llamando al CLI situado en `.codex/ecosystem/cli.py` del hub. La entrada del checkout proporciona la raíz del hub a la misma instalación del equipo. `workspace --root RUTA` sigue seleccionando una raíz explícita. El runtime de desarrollo se selecciona expresamente con `--source`.
+## Coordinar dos proyectos de GitHub
 
-## Coordinar dos propietarios
-
-`plan` comprueba el upstream de los participantes, fija rutas exactas y prepara un contrato por dueño Git. Declara las dependencias en el mismo plan.
+`plan` comprueba upstreams, fija rutas y prepara el contrato de cada dueño.
+Declara las dependencias en el mismo plan.
 
 ```sh
-constellation workspace --session ID plan <<'JSON'
+constellation workspace --root "$HOME/GitHub" --session ID plan <<'JSON'
 {
   "requirements": ["Ambos proyectos describen el mismo contrato de datos"],
   "paths": ["Shared/README.md", "PricingLab/README.md"],
   "depends_on": {"PricingLab": ["Shared"]}
 }
 JSON
-constellation workspace --session ID dispatch --capacity 4
+constellation workspace --root "$HOME/GitHub" --session ID dispatch --capacity 4
+constellation workspace --root "$HOME/GitHub" --session ID check --repo Shared -- git diff --check
+constellation workspace --root "$HOME/GitHub" --session ID check --repo PricingLab -- git diff --check
 ```
 
-El reparto propone paquetes por dueño. El coordinador asigna agentes nativos según la capacidad real, conserva rutas exclusivas por escritor y comprueba la evidencia de los proveedores antes de integrar consumidores. Los identificadores de los paquetes y los agentes reales son distintos.
+El reparto entrega paquetes; el coordinador los asigna a agentes nativos reales,
+con rutas exclusivas, y comprueba la evidencia de los proveedores antes de integrar
+sus consumidores. Los trabajadores preservan cambios ajenos y no publican.
+
+## Revisión independiente
+
+Registra todos los autores con `review-author --repo RUTA`, abre `review-start`
+tras los checks y registra los informes reales para el token vigente. Las cuotas
+y la independencia se aplican por archivo según [REVIEW.md](../REVIEW.md). Otro
+agente verifica cada hallazgo corregido o refutado. `review` documenta la
+evidencia por requisito y propietario; los commits siguen las dependencias.
 
 ```sh
-constellation workspace --session ID check --repo Shared -- git diff --check
-constellation workspace --session ID check --repo PricingLab -- git diff --check
+constellation workspace --root "$HOME/GitHub" --session ID commit -m 'Aclara el contrato de datos' Shared/README.md PricingLab/README.md
+constellation workspace --root "$HOME/GitHub" --session ID finish
 ```
 
-Usa pruebas apropiadas para los cambios reales. Registra autores mediante `review-author --repo RUTA`, abre `review-start --repo RUTA` y registra los informes reales sobre el token vigente. Los hallazgos requieren resolución independiente. `review` recibe evidencia por requisito y propietario. Los commits y sus pushes siguen el orden de dependencias.
-
-```sh
-constellation workspace --session ID commit -m 'Aclara el contrato de datos' Shared/README.md PricingLab/README.md
-constellation workspace --session ID finish
-```
-
-Un proveedor sin archivos propios puede acreditar la publicación de su HEAD con `publish --repo RUTA`. Si falla una fase, `status` conserva el progreso por repositorio. Reanuda el propietario pendiente con su contrato vigente. Publicar en dos remotos son dos operaciones independientes. La documentación seleccionada para OmarOS requiere su [contrato documental](KNOWLEDGE.md) y el progreso personal requiere autorización explícita.
-
-Las operaciones disponibles, incluyendo recuperación de checks y presupuesto de revisión, se consultan con `constellation workspace --help` y la ayuda de cada subcomando. Los hooks compartidos requieren confianza en el cliente. La instalación, ejecución efectiva de un evento y revisión sustantiva se verifican por separado.
+La publicación de `main` y de `codex/workspace` son operaciones distintas. Usa el
+flujo Git de la raíz correspondiente y comprueba cada SHA remoto. Las operaciones
+se consultan con `constellation workspace --help` y la ayuda de sus subcomandos.
+La instalación, la ejecución real de hooks y su confianza se verifican por separado.
+El progreso personal y la recepción documental de OmarOS conservan sus políticas;
+el registro del workspace no concede esos permisos.

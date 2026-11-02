@@ -8,10 +8,18 @@ pertenecen al proyecto que los contiene.
 ## Fuente, instalación y proyecto
 
 La fuente canónica está en el repositorio de Constellation. En el equipo de Omar,
-ese checkout ocupa la raíz de `~/GitHub`, que también contiene repositorios
-hijos independientes. Las instrucciones de las skills se mantienen en
-`.codex/skills/`. El motor, los ocho roles canónicos, los adaptadores nativos y
-las pruebas se mantienen en `.codex/ecosystem/`.
+ese checkout ocupa `~/.codex`, en `main`. Las instrucciones de las skills se
+mantienen en `.codex/skills/`; el motor, los ocho roles canónicos, los adaptadores
+nativos y las pruebas se mantienen en `.codex/ecosystem/`. La estructura de la
+fuente se conserva bajo esa raíz y no se mezcla con los directorios instalados
+`skills/`, `agents/`, `plugins/` y `constellation/` del mismo Codex home.
+
+`~/GitHub` mantiene el workspace de proyectos y las herramientas locales de
+Claude en la rama `codex/workspace` del mismo remoto. Conserva su raíz Git y su
+registro de hijos; el registro de la fuente contiene únicamente `.`. Para operar
+en los proyectos desde la fuente usa `workspace --root "$HOME/GitHub"`.
+La allowlist de `~/.codex` publica la fuente y las instrucciones: configuración
+efectiva, cuentas, conversaciones, perfiles y estado de aplicación quedan locales.
 
 El constructor selecciona los recursos de la edición y genera el inventario de
 archivos, huellas y permisos. Las ediciones inglesa y española comparten el motor.

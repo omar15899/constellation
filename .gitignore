@@ -1,42 +1,22 @@
-# Allowlist .gitignore for the constellation orchestrator repo (~/GitHub/).
-# Strategy: ignore everything at the repo root, then re-include only the
-# orchestrator paths, then drop junk that lives INSIDE the included subtree.
-
-# 1. Ignore every entry at the repo root.
+# The Codex home is also the Constellation source repository.
+# Publish only maintained source and instructions; application state stays local.
 /*
-
-# 2. Re-include the orchestrator paths (and this file).
-#    Claude and Codex own independent versioned entry points.
-#    Retired projection archives stay ignored if restored locally.
-!/.claude/
-!/.codex/
-!/CLAUDE.md
+!/.gitignore
 !/AGENTS.md
-!/QUANTOS.md
 !/README.md
 !/REVIEW.md
+!/.codex/
 !/.github/
-!/.gitignore
+/.github/*
+!/.github/pull_request_template.md
 
-# 3. Drop junk that lives inside the re-included .claude/ subtree.
-#    These match at any depth under an already-included directory.
+# Derived files inside the maintained source subtree.
 **/__pycache__/
 *.pyc
 *.pyo
 **/.DS_Store
-/.claude/scheduled_tasks.lock
-
-# 4. Belt-and-braces: caches that could appear inside .claude/ later.
 **/.venv/
 **/.mypy_cache/
 **/.pytest_cache/
 **/.ruff_cache/
 **/.playwright-mcp/
-
-# 5. Per-session Bash run ledgers (command + exit-code evidence consumed by
-#    evidence_audit). Ephemeral — never committed. The DURABLE research ledger
-#    is the commit-trailer history, not these files.
-/.claude/run/
-
-# Private legacy archive path; never stage its contents if restored locally.
-/.codex_NOTUSE/

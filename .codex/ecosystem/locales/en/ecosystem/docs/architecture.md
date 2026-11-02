@@ -8,9 +8,18 @@ that contains them.
 ## Source, installation and project
 
 The Constellation repository holds the canonical source. On Omar's computer,
-the checkout occupies the root of `~/GitHub`, which also contains independent
-child repositories. Skill instructions live in `.codex/skills/`. The engine,
-eight canonical roles, native adapters and tests live in `.codex/ecosystem/`.
+the checkout occupies `~/.codex`, on `main`. Skill instructions remain in
+`.codex/skills/`; the engine, eight canonical roles, native adapters and tests
+remain in `.codex/ecosystem/`. This source layout is separate from the installed
+`skills/`, `agents/`, `plugins/` and `constellation/` directories in the same
+Codex home.
+
+`~/GitHub` keeps the project workspace and its local Claude tools on the
+`codex/workspace` branch of the same remote. It retains its Git root and child
+registry; the source registry contains only `.`. From the source, select the
+projects with `workspace --root "$HOME/GitHub"`. The `~/.codex` allowlist publishes
+source and instructions; effective configuration, accounts, conversations,
+private profiles and application state remain local.
 
 The builder selects the resources for an edition and generates the inventory
 of files, digests and permissions. The English and Spanish editions share the

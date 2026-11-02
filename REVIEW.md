@@ -5,7 +5,7 @@ trabajo, publicación equivocada, evidencia caducada, fugas de datos privados,
 dependencias invertidas o contratos que mienten. No exige preferencias de estilo
 ni refactors que no solucionen el problema del encargo.
 
-El reparto `workspace.py dispatch` asigna revisores por dueño Git y riesgo.
+El reparto `workspace dispatch` asigna revisores por dueño Git y riesgo.
 Quick requiere uno de corrección; Standard, tres de corrección; Deep, tres de
 corrección y dos de seguridad. La cuota se aplica a cada archivo: revisar otro
 archivo no completa su cobertura. Las identidades son las devueltas por las
@@ -49,7 +49,7 @@ con motivo conserva el historial. Este presupuesto local no modifica los límite
 ni permisos nativos del cliente. [WORKSPACE.md](.codex/WORKSPACE.md) contiene el
 contrato de los comandos; las reglas del receptor pueden imponer otros límites.
 
-En este hub, revisa especialmente:
+En la fuente de Constellation, revisa especialmente:
 
 - Propiedad real de Git, rutas literales, enlaces simbólicos, índice ajeno,
   upstream congelado y commits salientes.
@@ -60,9 +60,10 @@ En este hub, revisa especialmente:
   publicables. No abras archivos privados como contexto de revisión.
 - Configuración de agentes que conserva modelo, esfuerzo, permisos y confianza.
 
-En hijos, añade su REVIEW.md si existe y sus invariantes de PROJECT.md. Para
-QuantOS comprueba causalidad temporal, determinismo, procedencia y dependencias
-de tiers cuando el cambio las afecte. No audites todos los proyectos por rutina.
+Cuando un encargo incluya proyectos de `~/GitHub`, añade su REVIEW.md si existe
+y las invariantes de su PROJECT.md. Para QuantOS comprueba causalidad temporal,
+determinismo, procedencia y dependencias de tiers cuando el cambio las afecte.
+Cada proyecto conserva su dueño Git; no audites vecinos por rutina.
 
 Cada regresión corregida debe dejar una prueba que falle antes de la corrección
 y pase después, cuando sea automatizable. Las pruebas del motor incluyen casos

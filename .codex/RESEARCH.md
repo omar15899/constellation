@@ -1,7 +1,9 @@
 # Investigación y ejecución coordinada
 
 Para una entrega Git, el coordinador declara requisitos y archivos exactos con
-`cli.py workspace plan`. Usa `dispatch` cuando delegar aporte trabajo independiente;
+`cli.py workspace --root RUTA plan`. La fuente vive en `~/.codex`; los proyectos
+de software se seleccionan con `--root "$HOME/GitHub"`. Usa `dispatch` cuando
+delegar aporte trabajo independiente;
 el mapa o la investigación sólo se añaden para resolver incertidumbres reales.
 Una pregunta breve no necesita este ciclo. El runtime compartido conserva la
 responsabilidad de comprobar, revisar y publicar en cada dueño Git.
@@ -80,7 +82,7 @@ operativo y los artefactos científicos, sin duplicar conversaciones ni logs.
 ## Ejecutar el reparto
 
 ```sh
-python3 .codex/ecosystem/cli.py workspace --session ID dispatch --capacity 8
+python3 .codex/ecosystem/cli.py workspace --root "$HOME/GitHub" --session ID dispatch --capacity 8
 ```
 
 El resultado contiene paquetes por repositorio y oleadas deterministas. La
@@ -132,7 +134,7 @@ El identificador de una tarea es una clave del plan, nunca la identidad de un
 agente. Registra la identidad devuelta por la herramienta para cada contribuyente:
 
 ```sh
-python3 .codex/ecosystem/cli.py workspace --session ID review-author --repo Shared <<'JSON'
+python3 .codex/ecosystem/cli.py workspace --root "$HOME/GitHub" --session ID review-author --repo Shared <<'JSON'
 {"author":"ID_REAL_DEL_IMPLEMENTADOR","paths":["src/example.py"]}
 JSON
 ```
@@ -190,10 +192,10 @@ progreso pendiente para reanudar; no autoriza omitir controles ni publicar vecin
 
 ## Investigación QuantOS
 
-Lee [QUANTOS.md](../QUANTOS.md) y el
-[contrato de promoción](../.claude/contracts/promotion_gate.md) cuando corresponda.
-La [guía cuantitativa](QUANT_RESEARCH.md) conecta datos, experimentos y validación
-con las capacidades existentes y sus límites comprobados.
+El mapa QuantOS, su contrato de promoción y la evidencia de los laboratorios
+pertenecen al workspace `~/GitHub`, no al repositorio fuente del orquestador.
+La [guía cuantitativa](QUANT_RESEARCH.md) enlaza la metodología común y el punto
+de entrada del workspace para consultar sus capacidades y límites actuales.
 Conserva la familia completa de pruebas, su denominador `m`, causalidad temporal,
 clase de ejecución y procedencia del motor. Los instrumentos del proyecto
 determinan el veredicto; el hub no reimplementa ni rebaja la puerta estadística.

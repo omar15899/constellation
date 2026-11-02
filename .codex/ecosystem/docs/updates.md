@@ -11,13 +11,17 @@ workspace contra su propio hash de distribución antes de reconocer esa revisió
 pendiente.
 
 En un equipo POSIX donde ya exista una instalación verificada, usa la entrada
-estable del dispositivo, la ruta canónica de OmarOS, el checkout de GitHub y la ruta real
-del ejecutable Codex. El comando `plan` muestra las definiciones de launchd o
-systemd de usuario y los comandos de activación.
+estable del dispositivo, la ruta canónica de OmarOS, el checkout fuente de
+Constellation y la ruta real del ejecutable Codex. En este equipo la fuente está
+en `~/.codex`. Aquí `--workspace-root` identifica la fuente cuyas skills se
+excluyen del descubrimiento duplicado; el workspace operativo de proyectos sigue
+en `~/GitHub` y se selecciona con `cli workspace --root ~/GitHub`.
+El comando `plan` muestra las definiciones de launchd o systemd de usuario y los
+comandos de activación.
 
 ```sh
 ~/.codex/constellation/run updates plan \
-  --vault-root ~/OmarOS --workspace-root ~/GitHub --codex /ruta/al/codex
+  --vault-root ~/OmarOS --workspace-root ~/.codex --codex /ruta/al/codex
 ```
 
 Inspecciona el resultado de `plan` antes de elegir `enable`. La operación
