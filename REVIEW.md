@@ -25,7 +25,8 @@ Empieza el informe por el número de hallazgos; di explícitamente cuando sea ce
 El coordinador ejecuta las comprobaciones pertinentes y entrega el diff a un
 agente independiente con contexto suficiente. El informe cubre corrección y
 regresiones; una segunda revisión de seguridad es obligatoria para las rutas
-sensibles de `.codex/ecosystem/runtime/review-policy.json`. El revisor no edita su propio objeto de
+sensibles de la política compartida de Constellation, mantenida en
+`~/.codex/.codex/ecosystem/runtime/review-policy.json`. El revisor no edita su propio objeto de
 revisión. Registra todos los implementadores mediante `review-author` con sus
 rutas: tampoco pueden revisar o resolver hallazgos de sus propios archivos.
 Otro agente puede verificar hallazgos discutidos o corregidos.

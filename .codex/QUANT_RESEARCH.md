@@ -6,9 +6,9 @@ conservan datos, cálculos y validación. Aplica [RESEARCH.md](RESEARCH.md), el
 [contrato de promoción](../.claude/contracts/promotion_gate.md). Esta guía no
 instala proveedores, autoriza operaciones reales ni declara una estrategia válida.
 
-La skill portable [quant-research](skills/quant-research/SKILL.md) conserva la
+La skill portable [quant-research](https://github.com/omar15899/constellation/blob/main/.codex/skills/quant-research/SKILL.md) conserva la
 metodología independiente de los nombres de los proyectos. Su
-[workflow](skills/quant-research/references/workflow.md) define búsqueda completa,
+[workflow](https://github.com/omar15899/constellation/blob/main/.codex/skills/quant-research/references/workflow.md) define búsqueda completa,
 admisibilidad temporal, validación y checks de campaña. Esta guía aporta el mapa
 local y los límites concretos; tener la skill instalada no acredita la ejecución
 de las etapas ni una conexión de datos o broker.
@@ -149,7 +149,7 @@ licencia, calidad de todos los datos ni rentabilidad de una estrategia.
    estadístico aprobado no autoriza órdenes reales.
 5. Publica el veredicto y `run_class` con baseline, familia, código/datos,
    configuración, semillas, pruebas, límites y criterio de revisión. Los
-   hallazgos sustanciales pasan al [diario de progreso](ecosystem/docs/progress.md)
+   hallazgos sustanciales pasan al [diario de progreso](https://github.com/omar15899/constellation/blob/main/.codex/ecosystem/docs/progress.md)
    y a OmarOS sólo dentro de las raíces personales autorizadas. Mantén fuera
    datos corporativos/restringidos, credenciales y material sin derechos de
    redistribución; conserva referencias a las fuentes en lugar de copiarlas.

@@ -1,6 +1,0 @@
-interface:
-  display_name: "Mathematics"
-  short_description: "Investigación y pruebas matemáticas rigurosas"
-  default_prompt: "Usa $constellation:mathematics para resolver este problema y revisar sus hipótesis y demostración."
-policy:
-  allow_implicit_invocation: true

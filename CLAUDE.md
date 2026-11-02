@@ -1,13 +1,15 @@
 # CLAUDE.md — constellation
 
-This repository owns Constellation's shared research and engineering tools.
+This repository owns Omar's software workspace. Constellation's canonical
+source lives in `~/.codex`; this workspace uses the verified device installation.
 Claude and Codex use the same project ownership, evidence and publication rules:
 
 @AGENTS.md
 
 The portable Constellation plugin supplies canonical skills, native specialist
-agents and Claude event adapters. Its source and laptop installation guide are
-in [.codex/ecosystem/README.md](.codex/ecosystem/README.md). Another laptop receives
+agents and Claude event adapters. Its source is maintained in `~/.codex/.codex`;
+the [installation guide](https://github.com/omar15899/constellation/blob/main/.codex/ecosystem/docs/migrations.md)
+describes how another laptop receives
 the same research contracts. Credentials, connector access, data, personal
 profiles and task state remain local.
 

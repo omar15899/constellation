@@ -1,6 +1,0 @@
-interface:
-  display_name: "Coding"
-  short_description: "Implementación, pruebas y revisión de software"
-  default_prompt: "Usa $coding para implementar este cambio con requisitos observables, pruebas pertinentes y revisión independiente."
-policy:
-  allow_implicit_invocation: true

@@ -72,7 +72,7 @@ El consumidor comprueba la revisión y los manifiestos que recibió antes de usa
 un resultado; si cambian, vuelve a verificar las conclusiones afectadas.
 
 Para trabajo sustancial conserva decisiones, hallazgos, evidencia, pendientes y
-próximos pasos mediante el [progreso compartido](ecosystem/docs/progress.md). Guarda el
+próximos pasos mediante el [progreso compartido](https://github.com/omar15899/constellation/blob/main/.codex/ecosystem/docs/progress.md). Guarda el
 checkpoint local antes de sincronizar los hitos autorizados con OmarOS; un fallo
 del vault no debe impedir reanudar. El diario curado complementa el estado
 operativo y los artefactos científicos, sin duplicar conversaciones ni logs.
@@ -105,7 +105,8 @@ Cada encargo debe poder entenderse sin reconstruir la conversación: pregunta y
 decisión, repositorio o entorno, requisitos, rutas exclusivas si escribe,
 dependencias, fuentes y herramientas accesibles, resultado esperado y criterio
 de comprobación. Aclara lo ya resuelto y las fronteras con otras tareas. Usa los
-perfiles de `ecosystem/agents/` cuando estén disponibles; en superficies que no
+perfiles del catálogo instalado, mantenidos en
+`~/.codex/.codex/ecosystem/agents/`, cuando estén disponibles; en superficies que no
 los carguen, transmite sus instrucciones al agente nativo. Hereda modelo,
 esfuerzo y permisos; no presupongas acceso a las conexiones del coordinador.
 

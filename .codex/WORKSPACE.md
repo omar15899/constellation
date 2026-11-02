@@ -9,7 +9,9 @@ constellation workspace --root "$HOME/GitHub" route Shared/README.md
 
 El comando conserva la rama, el upstream y las instrucciones del propietario real de cada archivo. Un proyecto externo debe identificarse expresamente en el alcance. El [registro](repositories.json) es información del workspace y la [política de agentes](agent-policy.json) fija los límites locales. La [doctrina de revisión](../REVIEW.md) y la [guía de investigación](RESEARCH.md) definen las obligaciones aplicables.
 
-Los proyectos antiguos pueden seguir llamando al CLI situado en `.codex/ecosystem/cli.py` del hub. La entrada del checkout proporciona la raíz del hub a la misma instalación del equipo. `workspace --root RUTA` sigue seleccionando una raíz explícita. El runtime de desarrollo se selecciona expresamente con `--source`.
+Los proyectos existentes pueden seguir llamando a `.codex/ecosystem/cli.py` del hub. Este adaptador regular proporciona la raíz del hub a la instalación verificada y conserva la precedencia de un `workspace --root RUTA` explícito posterior. No importa código de los antiguos directorios del motor. La opción `--source` se utiliza únicamente desde la fuente canónica en `~/.codex` y se rechaza en el adaptador del hub.
+
+`~/GitHub` conserva su propietario Git y el registro de sus hijos en la rama `codex/workspace`. El repositorio principal de Constellation está en `~/.codex`, en la rama `main` del mismo remoto privado. Cada raíz conserva su contrato y publicación; no fusiones el árbol fuente de nuevo en este workspace.
 
 ## Coordinar dos propietarios
 

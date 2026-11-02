@@ -1,6 +1,0 @@
-interface:
-  display_name: "Aprendizaje ENGIE"
-  short_description: "Captura y recuperación privada de aprendizajes en OmarOS"
-  default_prompt: "Usa $engie-learning para organizar el aprendizaje aportado y recuperarlo por tema o fecha."
-policy:
-  allow_implicit_invocation: true

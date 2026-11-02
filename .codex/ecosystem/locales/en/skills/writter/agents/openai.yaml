@@ -1,6 +1,0 @@
-interface:
-  display_name: "Writter"
-  short_description: "Evidence-based writing, editing and review"
-  default_prompt: "Use $writter to draft or revise this text according to its audience, purpose, voice and length."
-policy:
-  allow_implicit_invocation: true
