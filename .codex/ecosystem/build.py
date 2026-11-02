@@ -43,7 +43,26 @@ def _load_platform() -> ModuleType:
 _PLATFORM = _load_platform()
 TARGETS = ("posix", "windows-claude")
 
+# General methods are the default distribution. The personal project profile is opt-in.
 MODULES = ("coding", "mathematics", "quant-research", "writter")
+AVAILABLE_MODULES = (*MODULES, "omaros")
+VAULT_SKILLS = {
+    "brainteasers-quant": ("references/course-engine.json", "references/production_protocol.md",
+                          "references/visual_contract.md", "scripts/course_engine.py", "scripts/production.py",
+                          "tests/test_course_engine.py", "tests/test_production.py"),
+    "brainteasers-quant-notes": ("references/editorial.md", "references/tikz.md",
+                                "scripts/context.py", "tests/test_context.py"),
+    "engie-learning": ("references/capture_contract.md", "scripts/learning.py", "tests/test_learning.py"),
+    "fast-finder": ("references/query.md", "scripts/query.py", "scripts/search.py",
+                    "tests/test_query.py", "tests/test_search.py"),
+    "gs-interface-editor": (),
+    "scholar": ("references/reader_test.md",),
+    "teach-from-first-principles": ("references/adversarial-self-containment.md",
+                                   "references/course-construction.md",
+                                   "references/learner-calibration.md"),
+}
+VAULT_RUNTIME = ("README.md", "__init__.py", "dispatch.py", "install.py", "progress_journal.py", "review_gate.py",
+                 "review-policy.json", "skill_run.py", "workflow.py")
 BUNDLE_MANIFEST = "bundle.json"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 CLAUDE_PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
@@ -56,7 +75,10 @@ CLAUDE_FILES = (
 )
 COMMON_FILES = (
     *CLAUDE_FILES,
-    "ecosystem/platform_support.py", "ecosystem/docs/windows.md",
+    "ecosystem/platform_support.py", "ecosystem/docs/windows.md", "ecosystem/sync.py",
+    "ecosystem/tests/test_install_upgrade.py", "ecosystem/tests/test_sync.py",
+    "ecosystem/install_recovery.py", "ecosystem/tests/test_install_recovery.py",
+    "ecosystem/updates.py", "ecosystem/docs/updates.md", "ecosystem/tests/test_updates.py",
     "ecosystem/tests/test_platform_support.py", "ecosystem/tests/test_windows_claude.py",
     "ecosystem/tests/windows_acceptance.py",
     *(f"ecosystem/runtime/{name}.py" for name in
@@ -89,20 +111,37 @@ class BundleError(ValueError):
 
 def select_modules(modules: Iterable[str] | None = None) -> tuple[str, ...]:
     values = list(MODULES if modules is None else modules)
-    if not values or any(value not in MODULES for value in values):
-        raise BundleError("Select one or more of: " + ", ".join(MODULES))
+    if not values or any(value not in AVAILABLE_MODULES for value in values):
+        raise BundleError("Select one or more of: " + ", ".join(AVAILABLE_MODULES))
     if len(values) != len(set(values)):
         raise BundleError("Module selection contains duplicates")
-    return tuple(module for module in MODULES if module in values)
+    return tuple(module for module in AVAILABLE_MODULES if module in values)
+
+
+def skill_names(modules: Iterable[str]) -> tuple[str, ...]:
+    """Expand selected distribution modules into the actual native skill names."""
+    return tuple(skill for module in select_modules(modules)
+                 for skill in (VAULT_SKILLS if module == "omaros" else (module,)))
+
+
+def check_profile(selected: tuple[str, ...], target: str) -> None:
+    """The personal skills require every general method and the POSIX Codex client."""
+    if "omaros" in selected and (target != "posix" or not set(MODULES) <= set(selected)):
+        raise BundleError("The OmarOS profile requires POSIX Codex and all four general methods")
 
 
 def allowed_files(modules: Iterable[str]) -> set[str]:
     selected = select_modules(modules)
     paths = set(COMMON_FILES) | {PLUGIN_MANIFEST, CLAUDE_PLUGIN_MANIFEST}
-    for module in selected:
-        paths.update(f"skills/{module}/{name}" for name in
-                     ("SKILL.md", "agents/openai.yaml", "references/workflow.md"))
-        paths.update(f"ecosystem/agents/{name}.toml" for name in MODULE_AGENTS[module])
+    for skill in skill_names(selected):
+        resources = VAULT_SKILLS.get(skill, ("references/workflow.md",))
+        paths.update(f"skills/{skill}/{name}" for name in ("SKILL.md", "agents/openai.yaml", *resources))
+    paths.update(f"ecosystem/agents/{name}.toml" for module in selected
+                 for name in MODULE_AGENTS.get(module, ()))
+    if "omaros" in selected:
+        paths.update(f"ecosystem/vault/{name}" for name in VAULT_RUNTIME)
+        paths.update(("ecosystem/tests/test_vault_profile.py", "ecosystem/tests/test_vault_install.py",
+                      "ecosystem/tests/test_omaros_package.py"))
     if "mathematics" in selected or "writter" in selected:
         paths.update(("ecosystem/references/ontology.md",
                       "ecosystem/references/ontology-examples.md"))
@@ -117,11 +156,11 @@ _INVENTORY_END = "# END CONSTELLATION CURRENT INVENTORY"
 
 def current_inventory_block() -> str:
     """Project the one current allowlist into self-contained native entries."""
-    singles = {module: allowed_files((module,)) for module in MODULES}
+    singles = {module: allowed_files((module,)) for module in AVAILABLE_MODULES}
     common = set.intersection(*singles.values())
-    extras = {module: singles[module] - common for module in MODULES}
-    for count in range(1, len(MODULES) + 1):
-        for group in combinations(MODULES, count):
+    extras = {module: singles[module] - common for module in AVAILABLE_MODULES}
+    for count in range(1, len(AVAILABLE_MODULES) + 1):
+        for group in combinations(AVAILABLE_MODULES, count):
             projected = common.union(*(extras[module] for module in group))
             if projected != allowed_files(group):
                 raise BundleError("Native inventory projection does not match the current layout")
@@ -130,7 +169,7 @@ def current_inventory_block() -> str:
     lines.extend("    " + json.dumps(path) + "," for path in sorted(common))
     lines.append("))")
     lines.append("_CURRENT_MODULE_FILES = {")
-    for module in MODULES:
+    for module in AVAILABLE_MODULES:
         lines.append("    " + json.dumps(module) + ": frozenset((")
         lines.extend("        " + json.dumps(path) + "," for path in sorted(extras[module]))
         lines.append("    )),")
@@ -545,7 +584,7 @@ def verify_bundle(root: Path, *, installation: bool = False) -> dict:
     _check_claude_plugin(claude)
     if codex["version"] != claude["version"]:
         raise BundleError("Native plugin versions differ")
-    bundle_target(root)
+    check_profile(selected, bundle_target(root))
     for relative in ("ecosystem/claude_hooks.py", "ecosystem/hook_entry.py"):
         entry = regular_file(root, relative).read_bytes()
         if render_current_inventory(entry) != entry:
@@ -601,9 +640,10 @@ def build_bundle(output: Path, modules: Iterable[str] | None = None,
         raise BundleError("Target must be posix or windows-claude")
     if portable and target != "posix":
         raise BundleError("Portable bundles preserve their target; select Windows from canonical sources")
+    available = verify_bundle(source)["modules"] if portable else AVAILABLE_MODULES
+    selected = select_modules(available if portable and modules is None else modules)
+    check_profile(selected, bundle_target(source) if portable else target)
     translations = _english_resources(source) if language == "en" else {}
-    available = verify_bundle(source)["modules"] if portable else MODULES
-    selected = select_modules(available if modules is None else modules)
     if not set(selected) <= set(available):
         raise BundleError("Requested module is not present in the source bundle")
     output = Path(output)
@@ -702,7 +742,7 @@ def write_archive(bundle: Path, output: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--modules", nargs="+", choices=MODULES)
+    parser.add_argument("--modules", nargs="+", choices=AVAILABLE_MODULES)
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--language", choices=("es", "en"), default="es",

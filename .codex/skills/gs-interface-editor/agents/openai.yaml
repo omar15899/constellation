@@ -1,0 +1,6 @@
+interface:
+  display_name: "GS Interface Editor"
+  short_description: "Change and verify the standalone GS interface"
+  default_prompt: "Use $gs-interface-editor to update the GS interface and verify the changed interaction in a browser."
+policy:
+  allow_implicit_invocation: true

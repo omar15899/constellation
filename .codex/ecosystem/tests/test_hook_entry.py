@@ -15,16 +15,18 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
 import textwrap
 import time
 import unittest
+from unittest import mock
 from typing import Any
 
 from test_package import (
-    BundleCase, MODULES, SOURCE_DIR, SyntheticNativeClient,
+    BundleCase, BundleError, METHODS, MODULES, SOURCE_DIR, SyntheticNativeClient,
     build_bundle, install_bundle, snapshot, write_json,
 )
 from install import InstallError
@@ -121,6 +123,260 @@ class HookEntryTests(BundleCase):
             output, error = process.communicate(timeout=5)
             self.fail("Fixture did not reach its barrier: " + output + error)
 
+    @unittest.skipUnless((SOURCE_DIR / "vault/workflow.py").is_file(), "optional vault profile")
+    def test_one_installed_release_routes_vault_commands_and_real_event_payloads(self) -> None:
+        """Exercise the native wire format under the same verified entry as the CLI."""
+        from build import AVAILABLE_MODULES
+
+        personal = self.root / "personal-bundle"
+        build_bundle(personal, AVAILABLE_MODULES, source_root=SOURCE_DIR.parent)
+        home, _ = self.installed(personal)
+        project = self.root / "vault"
+        project.mkdir()
+        env = self.environment(home)
+        env["HOME"] = str(self.root / "user")
+        env.pop("CODEX_THREAD_ID", None)
+        def git(*args: str, cwd: Path = project) -> None:
+            subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.name", "Synthetic profile test")
+        git("config", "user.email", "fixture@example.invalid")
+        git("config", "core.hooksPath", str(project / ".git/hooks"))
+        git("config", "commit.gpgsign", "false")
+        git("commit", "-qm", "Start fixture", "--allow-empty")
+        bare = self.root / "remote.git"
+        git("init", "--bare", "-q", str(bare))
+        git("remote", "add", "origin", str(bare))
+        git("push", "-qu", "origin", "main")
+
+        entry = home / "constellation/run"
+        def command(*args: str, data: dict | None = None, expected: int = 0, environment=None) -> dict:
+            process = subprocess.run([str(entry), *args], cwd=project, env=environment or env,
+                                     input=json.dumps(data or {}), text=True, capture_output=True, timeout=20)
+            self.assertEqual(process.returncode, expected, process.stdout + process.stderr)
+            return json.loads(process.stdout) if process.stdout else {}
+
+        session = "fixture-vault-session"
+        fake_git = project / "git"
+        marker = self.root / "project-git-must-not-run"
+        fake_git.write_text("#!/bin/sh\n: > " + shlex.quote(str(marker)) + "\nexit 1\n")
+        fake_git.chmod(0o755)
+        event_env = {**env, "PATH": str(project) + os.pathsep + env["PATH"],
+                     "GIT_DIR": str(self.root / "false-owner")}
+        def event(name: str, **fields: object) -> dict:
+            return command(name, environment=event_env, data={"hook_event_name": name, "turn_id": "fixture-turn",
+                                      "session_id": session, "cwd": str(project), **fields})
+
+        options = ("--project-root", str(project))
+        command("install-vault", *options, "--expected-bundle-sha256", "0" * 64, expected=2)
+        self.assertFalse((home / "constellation-vault.json").exists())
+        self.assertEqual(command("register-vault", *options)["root"], str(project))
+        binding = home / "constellation-vault.json"
+        original = binding.read_bytes()
+        command("register-vault", *options)
+        self.assertEqual(binding.read_bytes(), original)
+        self.assertEqual(binding.stat().st_nlink, 1)
+
+        prompt = event("UserPromptSubmit", prompt="synthetic-secret-never-read")
+        self.assertIn("OmarOS", prompt["hookSpecificOutput"]["additionalContext"])
+        command("vault", *options, "--session", session, "plan",
+                data={"requirements": ["Synthetic scoped artifact."], "paths": ["result.md"]})
+        tool = {"tool_name": "functions.apply_patch", "tool_input": {"command":
+            "*** Begin Patch\n*** Add File: result.md\n+result\n*** End Patch"}}
+        self.assertEqual(event("PreToolUse", **tool), {})
+        tool["tool_input"] = {"command": "*** Begin Patch\n*** Delete File: result.md\n*** End Patch"}
+        self.assertEqual(event("PreToolUse", **tool)["hookSpecificOutput"]["permissionDecision"], "deny")
+        first = event("Stop", stop_hook_active=False)
+        self.assertEqual(first["decision"], "block")
+        self.assertTrue(first["reason"])
+        replay = event("Stop", stop_hook_active=False)
+        self.assertIs(replay.get("continue"), False)
+        self.assertNotIn("decision", replay)
+        status = command("vault", *options, "--session", session, "status")
+        self.assertEqual(status["stop_attempts"], 1)
+        self.assertIsNone(status["finished"])
+        self.assertNotIn("synthetic-secret-never-read", json.dumps(status))
+        nested = project / "nested"
+        nested.mkdir()
+        git("init", "-q", cwd=nested)
+        outside = self.root / "sibling"
+        outside.mkdir()
+        escaping = {"tool_name": "functions.apply_patch", "tool_input": {"command":
+            f"*** Begin Patch\n*** Add File: {project}/result.md\n+x\n*** End Patch"}}
+        self.assertEqual(event("PreToolUse", cwd=str(outside), **escaping)
+                         ["hookSpecificOutput"]["permissionDecision"], "deny")
+        other = event("UserPromptSubmit", cwd=str(nested))
+        self.assertNotIn("OmarOS lifecycle active", other["hookSpecificOutput"]["additionalContext"])
+        self.assertFalse((nested / ".git/omaros").exists())
+
+        project.rename(self.root / "original-owner")
+        project.mkdir()
+        git("init", "-q")
+        self.assertEqual(event("PreToolUse", **tool)["hookSpecificOutput"]["permissionDecision"], "deny")
+        command("register-vault", *options, expected=2)
+        self.assertEqual(binding.read_bytes(), original)
+        self.assertFalse((project / ".git/omaros").exists())
+        self.assertFalse(marker.exists())
+
+    @unittest.skipUnless((SOURCE_DIR / "vault/workflow.py").is_file(), "optional vault profile")
+    def test_enrollment_writer_retains_the_exclusive_device_lock_after_dispatch(self) -> None:
+        """A child which can still mutate settings prevents a conflicting update."""
+        import contextlib
+        import io
+        from build import AVAILABLE_MODULES
+        with mock.patch.object(sys, "path", [str(SOURCE_DIR.parent), *sys.path]):
+            from ecosystem.vault import install as vault_install
+        import hook_entry
+
+        personal = self.root / "writer-bundle"
+        build_bundle(personal, AVAILABLE_MODULES, source_root=SOURCE_DIR.parent)
+        home, _ = self.installed(personal)
+        repo = self.root / "writer-project"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True)
+        lock = home / "constellation/.install.lock"
+        child = None
+
+        def write_settings(root, codex_home, *, codex, expected_binding, install_lock_fd):
+            nonlocal child
+            self.assertEqual(root, repo)
+            self.assertEqual(codex_home, home)
+            self.assertTrue(os.path.samestat(lock.stat(), os.fstat(install_lock_fd)))
+            self.assertFalse(os.get_inheritable(install_lock_fd))
+            child = subprocess.Popen([sys.executable, "-I", "-c", "import sys; sys.stdin.read()"],
+                                     stdin=subprocess.PIPE, pass_fds=(install_lock_fd,))
+            return 0
+
+        try:
+            with mock.patch.object(vault_install, "entrypoint", side_effect=write_settings), \
+                    mock.patch.object(sys, "path", list(sys.path)), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(hook_entry.dispatch_installed(
+                    home, "install-vault", ["--project-root", str(repo)]), 0)
+            with lock.open("rb") as contender:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(contender.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                child.communicate(input=b"done", timeout=5)
+                fcntl.flock(contender.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            if child is not None and child.poll() is None:
+                child.kill()
+                child.communicate(timeout=5)
+
+
+    def test_updates_receive_immutable_programs_after_the_device_lock_is_released(self) -> None:
+        source = self.source_copy("scheduled-source")
+        (source / "ecosystem/updates.py").write_text(textwrap.dedent("""\
+            import fcntl, hashlib, json
+            def run(args, *, home, sync_source, verifier_source):
+                with (home / 'constellation/.install.lock').open('rb') as lock:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    print(json.dumps([hashlib.sha256(data).hexdigest()
+                                      for data in (sync_source, verifier_source)]))
+                return 0
+            """))
+        candidate = self.root / "scheduled-bundle"
+        build_bundle(candidate, MODULES, source_root=source)
+        home, _ = self.installed(candidate)
+        receipt = json.loads((home / "constellation/receipt.json").read_text())
+        result = subprocess.run([str(home / "constellation/run"), "updates", "fixture"],
+                                env=self.environment(home), cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = [receipt["cache"]["ecosystem/" + name]["sha256"] for name in ("sync.py", "hook_entry.py")]
+        self.assertEqual(json.loads(result.stdout), expected)
+
+        # A non-cooperating replacement after the initial inventory check cannot
+        # turn changed bytes into an executable snapshot.
+        import hook_entry
+        package = home / "constellation/catalog/plugins/constellation"
+        (package / "ecosystem/sync.py").write_text("raise AssertionError('substituted program')")
+        with self.assertRaisesRegex(hook_entry.EntryError, "differs from its receipt"):
+            hook_entry._standalone_snapshot(package, receipt["cache"], "sync.py")
+
+
+    def test_native_launcher_uses_the_installer_python_without_path_discovery(self) -> None:
+        home = self.root / "device's selected home"
+        home, _ = self.installed(self.runtime_bundle("boundpython"), home=home)
+        env = {**self.environment(home), "PATH": str(self.root / "empty-path")}
+        self.assertIsNone(shutil.which("python3", path=env["PATH"]))
+        self.assertEqual(self.invoke(home, environment=env), {"systemMessage": "boundpython"})
+        # Explicit invocation remains bound to the same home even if the ambient
+        # computer or caller selects a different Codex installation.
+        env["CODEX_HOME"] = str(self.root / "different-home")
+        cmd = shlex.quote(str(home / "constellation/run")) + " Stop"
+        self.assertEqual(self.invoke(home, command=cmd, environment=env, event="Stop"),
+                         {"systemMessage": "boundpython"})
+
+    def test_unavailable_python_denies_native_edits_and_fails_operator_commands(self) -> None:
+        from hook_entry import launcher_bytes
+        launcher = self.root / "run"
+        missing = str(self.root / "removed interpreter")
+        launcher.write_bytes(launcher_bytes(missing, self.root, missing, "0" * 64))
+        launcher.chmod(0o700)
+        for event in ("PreToolUse", "Stop"):
+            result = subprocess.run([str(launcher), event], text=True, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0)
+            self.assert_failure(json.loads(result.stdout), event)
+        command = subprocess.run([str(launcher), "cli", "git", "--help"], capture_output=True, timeout=5)
+        self.assertNotEqual(command.returncode, 0)
+
+    def test_tampered_bootstrap_cannot_execute_before_native_verification(self) -> None:
+        home, _ = self.installed()
+        entry = home / "constellation/hook.py"
+        marker = self.root / "tampered-entry-was-executed"
+        entry.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\nprint('{{}}')\n")
+        for event in ("PreToolUse", "Stop"):
+            self.assert_failure(self.invoke(home, event=event), event)
+        cli = subprocess.run([str(home / "constellation/run"), "cli", "git", "--help"], capture_output=True)
+        self.assertNotEqual(cli.returncode, 0)
+        self.assertFalse(marker.exists())
+
+    def test_verified_bootstrap_executes_the_bytes_captured_before_path_replacement(self) -> None:
+        from hook_entry import _VERIFY_ENTRY
+        entry = self.root / "entry.py"
+        entry.write_text("captured_code_ran = True\n")
+        entry.chmod(0o644)
+        expected = hashlib.sha256(entry.read_bytes()).hexdigest()
+        digest_function = hashlib.sha256
+        def swap_after_read(data: bytes):
+            entry.rename(self.root / "original.py")
+            entry.write_text("raise AssertionError('substituted code ran')\n")
+            return digest_function(data)
+        proof = {}
+        with mock.patch.object(sys, "argv", ["-c", str(entry), expected]), \
+                mock.patch.object(hashlib, "sha256", side_effect=swap_after_read):
+            exec(_VERIFY_ENTRY, proof)
+        self.assertTrue(proof["namespace"]["captured_code_ran"])
+
+    def test_redirected_venv_alias_cannot_execute_project_code(self) -> None:
+        from hook_entry import launcher_bytes
+        marker = self.root / "foreign-python-ran"
+        foreign = self.root / "project-python"
+        foreign.write_text("#!/bin/sh\n: > " + shlex.quote(str(marker)) + "\nprintf '{}\\n'\n")
+        foreign.chmod(0o755)
+        alias = self.root / "venv-python"
+        alias.symlink_to(foreign)
+        target = str(Path(sys.executable).resolve(strict=True))
+        run = self.root / "bound-run"
+        run.write_bytes(launcher_bytes(str(alias), self.root, target, "0" * 64))
+        run.chmod(0o700)
+        result = subprocess.run([str(run), "PreToolUse"], text=True, capture_output=True)
+        self.assert_failure(json.loads(result.stdout))
+        self.assertFalse(marker.exists())
+
+    def test_cli_mode_rejects_a_damaged_release_with_nonzero_exit(self) -> None:
+        home, _ = self.installed()
+        entry = home / "constellation/hook.py"
+        args = [sys.executable, "-I", str(entry), "cli", "git", "--help"]
+        env = self.environment(home)
+        ok = subprocess.run(args, cwd=self.root, env=env, text=True, capture_output=True)
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        metadata = home / "constellation/receipt.json"
+        metadata.write_text("{}")
+        failed = subprocess.run(args, cwd=self.root, env=env, text=True, capture_output=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(failed.stdout, "")
+
     def test_captured_manifest_command_survives_upgrade_and_deleted_old_cache(self) -> None:
         release_a = self.runtime_bundle("a")
         release_b = self.runtime_bundle("b")
@@ -142,8 +398,16 @@ class HookEntryTests(BundleCase):
         for module in MODULES:
             with self.subTest(module=module):
                 home = self.root / (module + "-home")
-                install_bundle(bundle, home, modules=[module], client=SyntheticNativeClient(home))
+                modules = [*METHODS, module] if module == "omaros" else [module]
+                install_bundle(bundle, home, modules=modules, client=SyntheticNativeClient(home))
                 self.assertEqual(self.invoke(home), {"systemMessage": "modules"})
+        if "omaros" in MODULES:
+            for partial in (["omaros"], [self.module, "omaros"]):
+                with self.subTest(incomplete_personal_profile=partial):
+                    home = self.root / ("incomplete-personal-" + str(len(partial)))
+                    with self.assertRaisesRegex(BundleError, "all four general methods"):
+                        install_bundle(bundle, home, modules=partial, client=SyntheticNativeClient(home))
+                    self.assertFalse(home.exists())
 
     def test_invalid_module_receipts_reject_before_runtime_import(self) -> None:
         home, _ = self.installed(self.runtime_bundle("invalidmodules"))

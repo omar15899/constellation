@@ -122,9 +122,18 @@ def audit(event, values):
         if isinstance(command, (list, tuple)) and len(command) > 1 and command[0] == 'git':
             readonly = {'rev-parse', 'symbolic-ref', 'remote', 'status', 'diff', 'check-ignore',
                         'ls-files', 'ls-tree', 'diff-tree', 'merge-base'}
-            forbidden = command[1] not in readonly
-            if command[1] == 'config':
-                forbidden = len(command) < 3 or command[2] not in {'--get', '--get-all'}
+            # The shared Git runner disables replace refs before its actual
+            # verb. Never skip arbitrary options such as -c or -C.
+            args = tuple(command[1:])
+            if args[:1] == ('--no-replace-objects',):
+                args = args[1:]
+            forbidden = values[0] != 'git' or not args or args[0] not in readonly
+            if values[0] == 'git' and args[:1] == ('config',):
+                forbidden = len(args) < 3 or args[1] not in {'--get', '--get-all'}
+            if args[:1] == ('remote',):
+                forbidden = forbidden or (len(args) > 1 and args[1:2] != ('get-url',))
+            if args[:1] == ('symbolic-ref',):
+                forbidden = forbidden or args[1:] != ('--short', 'HEAD')
     if event == 'open' and isinstance(values[0], (str, bytes, os.PathLike)):
         forbidden = forbidden or pathlib.Path(os.fsdecode(values[0])).resolve() == pathlib.Path(private)
     if forbidden:
@@ -208,6 +217,18 @@ finally:
         self.assertEqual(output["permissionDecision"], "deny")
         self.assertNotIn("updatedInput", output)
 
+    def test_enrollment_cannot_switch_owners_during_setup(self) -> None:
+        self.make_git()
+        home = Path(self.env["CODEX_HOME"])
+        home.mkdir()
+        before = hooks.check_vault_registration(home, str(self.root), require_bound=False)
+        self.root.rename(self.directory / "original")
+        self.root.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=self.root, env=self.env, check=True)
+        with self.assertRaisesRegex(ValueError, "changed during vault enrollment"):
+            hooks.save_vault_registration(home, before)
+        self.assertFalse((home / "constellation-vault.json").exists())
+
     def test_manifest_filters_are_event_specific(self) -> None:
         manifest = json.loads(source_resource(SOURCE.parent, "ecosystem/hooks.json")[0])
         self.assertEqual(set(manifest["hooks"]), EVENTS)
@@ -220,11 +241,8 @@ finally:
                     for hook in group["hooks"]:
                         command = shlex.split(hook["command"])
                         self.assertEqual(hook["type"], "command")
-                        self.assertIn("-I", command)
-                        self.assertIn("${CODEX_HOME:-$HOME/.codex}/constellation/hook.py", command)
-                        self.assertEqual(command[-1], event)
-                        self.assertGreaterEqual(hook["timeout"], 9)
-                        self.assertLessEqual(hook["timeout"], 15)
+                        self.assertEqual(hook["timeout"], 60 if event == "UserPromptSubmit" else 10)
+                        self.assertEqual(command, ["${CODEX_HOME:-$HOME/.codex}/constellation/run", event])
         matchers = [re.compile(group["matcher"]) for group in manifest["hooks"]["PreToolUse"]]
         for name in ("apply_patch", "functions.apply_patch", "tools:apply_patch", "Edit", "Write"):
             self.assertTrue(any(regex.fullmatch(name) for regex in matchers), name)

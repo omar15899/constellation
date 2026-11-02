@@ -25,6 +25,7 @@ from unittest.mock import patch
 from helpers import (AVAILABLE_PROFILES, CODEX_DIR, COORDINATOR, DEFAULT_PROFILE,
                      PYTHON, REVIEWERS, SOURCE_DIR, WORKER,
                      Scenario, check_definition, finish_request, requirement, start_request)
+from ecosystem.cli import _source_checkout
 from ecosystem.core import Engine, RevisionConflict, default_state_dir, gate
 from ecosystem.storage import Error
 
@@ -1037,7 +1038,8 @@ class StateBoundaryTests(FixtureCase):
 
         def run(script: str, arguments: list[str], payload: dict) -> dict:
             result = subprocess.run(
-                [PYTHON, "-I", "-B", str(SOURCE_DIR / script), *arguments],
+                [PYTHON, "-I", "-B", str(SOURCE_DIR / script),
+                 *(["--source"] if script == "cli.py" and _source_checkout() else []), *arguments],
                 input=json.dumps(payload), text=True, capture_output=True,
                 cwd=scenario.root, env=environment, timeout=15, check=False,
             )
@@ -1075,7 +1077,8 @@ class StateBoundaryTests(FixtureCase):
         environment = {**os.environ, "CODEX_HOME": str(codex_home),
                        "CONSTELLATION_STATE_DIR": str(linked)}
         result = subprocess.run(
-            [PYTHON, "-I", "-B", str(SOURCE_DIR / "cli.py"), "--root", str(scenario.root), "plan"],
+            [PYTHON, "-I", "-B", str(SOURCE_DIR / "cli.py"),
+             *(["--source"] if _source_checkout() else []), "--root", str(scenario.root), "plan"],
             input=json.dumps(scenario.payload(**scenario.contract)), text=True, capture_output=True,
             cwd=scenario.root, env=environment, timeout=15, check=False,
         )

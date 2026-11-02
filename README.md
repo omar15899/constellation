@@ -1,43 +1,13 @@
-# constellation
+# Constellation
 
-Herramientas compartidas para los repositorios independientes de `~/GitHub/`.
-Cada repositorio conserva su historia, sus pruebas y su contrato. El
-[registro operativo](.codex/repositories.json) delimita el workspace;
-[QUANTOS.md](QUANTOS.md) describe la arquitectura cuantitativa.
+Este checkout mantiene la fuente de Constellation y el catálogo de repositorios de `~/GitHub`. Cada proyecto conserva su historia, pruebas y contrato. El registro y el mapa de QuantOS describen el ámbito de trabajo. [Registro](.codex/repositories.json) · [QuantOS](QUANTOS.md)
 
-Codex empieza en [AGENTS.md](AGENTS.md) y utiliza su
-[perfil nativo](.codex/README.md): alcance explícito, pruebas, revisión
-independiente y publicación verificada. Sus [ocho perfiles de agente](.codex/ecosystem/agents/)
-apoyan el reparto del [workflow](.codex/WORKSPACE.md); el
-[plugin portable](.codex/ecosystem/README.md) aporta las skills `coding`,
-`mathematics`, `quant-research` y `writter`. El perfil se edita directamente y
-`.codex/profile.json` impide que la proyección de Claude lo sustituya.
-
-Claude conserva [CLAUDE.md](CLAUDE.md), su [entrada local](.claude/CLAUDE.md),
-contratos, roles, skills y hooks. Los proyectos propios tienen perfiles Codex nativos
-con sus reglas técnicas y una referencia al motor común. `ruflo` conserva su
-perfil externo. Ninguna operación incluye otros proyectos sin declararlos.
-
-Para trabajar sobre cualquiera de ellos desde la raíz o desde un hijo:
+Instala una versión verificada en cada equipo siguiendo la [guía de instalación](.codex/ecosystem/docs/migrations.md). Desde el hub o desde un hijo, este comando identifica los propietarios y sus instrucciones. Usa Python 3.11 o posterior.
 
 ```sh
-python3 ~/GitHub/.codex/ecosystem/cli.py workspace route Shared/README.md PricingLab/README.md
+"${CODEX_HOME:-$HOME/.codex}/constellation/run" cli workspace route Shared/README.md PricingLab/README.md
 ```
 
-El [flujo entre repositorios](.codex/WORKSPACE.md) divide los archivos por dueño
-Git y coordina plan, pruebas, revisión, commits y pushes. Cada push va al
-upstream de su rama; las dependencias se publican en orden y se verifica el
-SHA remoto. Los cambios pendientes ajenos y cada índice se preservan.
+El [contexto del hub](AGENTS.md) selecciona los contratos de los proyectos. El [flujo entre repositorios](.codex/WORKSPACE.md) coordina dependencias y publicación por dueño Git. Los puntos de entrada anteriores de los proyectos llaman a la misma instalación del equipo.
 
-Para instalar y probar el flujo nativo:
-
-```sh
-python3 .codex/install.py
-python3 -m unittest discover -s .codex/tests -v
-```
-
-Python 3.11+ y Git bastan para este flujo. Las herramientas de proyección de
-Claude necesitan Python 3.12+. El [README de Codex](.codex/README.md) detalla las
-pruebas específicas, la preservación de cambios previos y los límites de los
-controles. Pasar pruebas o instalar hooks de Git no activa automáticamente los
-hooks de Codex: sus nuevas definiciones requieren revisión nativa en `/hooks`.
+Para modificar Constellation, ejecuta las pruebas de la fuente y construye el paquete desde este checkout. Las instrucciones de [desarrollo e instalación](.codex/README.md) describen la separación entre la fuente candidata, la distribución y una sesión que ya está abierta.

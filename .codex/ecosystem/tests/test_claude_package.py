@@ -20,6 +20,7 @@ sys.path.insert(0, str(SOURCE / "ecosystem"))
 import build as builder
 import claude as claude_installer
 from validate import validate
+from helpers import AVAILABLE_PROFILES
 
 
 class ClaudePackageTests(unittest.TestCase):
@@ -28,7 +29,7 @@ class ClaudePackageTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.bundle = self.root / "release"
-        self.manifest = builder.build_bundle(self.bundle, source_root=SOURCE)
+        self.manifest = builder.build_bundle(self.bundle, AVAILABLE_PROFILES, source_root=SOURCE)
 
     def source_copy(self) -> Path:
         target = self.root / "source"

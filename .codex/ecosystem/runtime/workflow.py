@@ -17,8 +17,10 @@ from pathlib import Path, PureWindowsPath
 import re
 import stat
 import subprocess
+import tempfile
+from urllib.parse import urlsplit
 import sys
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from . import progress as journal
 from .. import platform_support as ps
@@ -35,7 +37,24 @@ def review_engine():
 
 
 def run(root: Path, *args: str, timeout: int = 25, extra_env: dict[str, str] | None = None) -> str:
-    operation = f"git {args[1]}" if args[0] == "git" and len(args) > 1 else "command"
+    operation = "command"
+    if args and args[0] == "git":
+        operation = "git command"
+        position = 1
+        while position < len(args):
+            if args[position] in {"--no-replace-objects", "--literal-pathspecs"}:
+                position += 1
+            elif args[position] == "-c" and position + 1 < len(args):
+                position += 2
+            else:
+                break
+        # Diagnostics retain only known command names, never option values,
+        # endpoints, path arguments, or captured command output.
+        if position < len(args) and args[position] in {
+                "add", "cat-file", "check-ignore", "commit", "config", "diff", "diff-tree", "fetch",
+                "ls-files", "ls-remote", "ls-tree", "merge", "merge-base", "push", "remote",
+                "rev-list", "rev-parse", "status", "symbolic-ref"}:
+            operation = f"git {args[position]}"
     try:
         result = subprocess.run(args, cwd=root, capture_output=True, text=True, encoding="utf-8",
                                 timeout=timeout, env={**os.environ, **(extra_env or {}), "GIT_TERMINAL_PROMPT": "0"})
@@ -47,8 +66,10 @@ def run(root: Path, *args: str, timeout: int = 25, extra_env: dict[str, str] | N
     return result.stdout.rstrip("\n")
 
 
-def git(root: Path, *args: str, extra_env: dict[str, str] | None = None) -> str:
-    return run(root, "git", *args, extra_env=extra_env)
+def git(root: Path, *args: str, extra_env: dict[str, str] | None = None,
+        config: tuple[str, ...] = (), timeout: int = 25) -> str:
+    options = [item for entry in config for item in ("-c", entry)]
+    return run(root, "git", "--no-replace-objects", *options, *args, timeout=timeout, extra_env=extra_env)
 
 
 def now() -> str:
@@ -76,24 +97,66 @@ def _write_private(path: Path, content: bytes, *, append: bool = False) -> None:
         ps.sync_file(stream.fileno())
 
 
-def stop_replay(state: dict[str, Any], request_id: str | None) -> dict[str, Any] | None:
-    """Do not spend another continuation on a replayed native lifecycle event."""
-    if request_id is None:
-        return None
-    if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", request_id):
+# The first two distinct failures can request continuation. The third ends it.
+_STOP_LIMIT = 3
+
+
+def _stop_digest(identifier: str) -> str:
+    if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", identifier):
         raise Blocked("Stop request_id must be a bounded event identifier.")
-    previous = state.get("last_stop_request", {})
-    if previous.get("id") != request_id:
-        return None
-    if not previous.get("incomplete"):
-        return {}
-    return {"continue": False, "systemMessage": "Constellation: INCOMPLETE. Replayed Stop event; inspect the existing task status."}
+    return digest(identifier.encode("ascii"))
 
 
-def record_stop(state: dict[str, Any], request_id: str | None, result: dict[str, Any]) -> dict[str, Any]:
-    if request_id is not None:
-        state["last_stop_request"] = {"id": request_id, "incomplete": bool(result)}
-    return result
+def prepare_stop(state: dict[str, Any], request_id: str | None) -> tuple[str | None, bool]:
+    """Validate metadata and retain only digests of previously charged failures.
+
+    Old Git contracts cached their last event, and an earlier vault profile
+    also retained unbounded raw IDs. Successful events spent no continuation.
+    The native hook supplies an identity derived solely from event metadata.
+    """
+    key = None if request_id is None else _stop_digest(request_id)
+    attempts = state.get("stop_attempts", 0)
+    spent = state.get("stop_request_hashes", [])
+    if (type(attempts) is not int or attempts < 0 or not isinstance(spent, list)
+            or len(spent) > _STOP_LIMIT
+            or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item) for item in spent)
+            or len(set(spent)) != len(spent)):
+        raise Blocked("Invalid Stop continuation history.")
+    changed = attempts > _STOP_LIMIT
+    if changed:
+        state["stop_attempts"] = _STOP_LIMIT
+    if "last_stop_request" in state or "failed_stop_requests" in state:
+        previous = state.pop("last_stop_request", None)
+        old = state.pop("failed_stop_requests", [])
+        if (not isinstance(old, list) or previous is not None
+                and (not isinstance(previous, dict) or type(previous.get("incomplete")) is not bool)):
+            raise Blocked("Invalid historical Stop record.")
+        legacy = old[:_STOP_LIMIT]
+        if previous and previous["incomplete"]:
+            legacy.append(previous.get("id"))
+        hashes = list(dict.fromkeys([*spent, *(_stop_digest(item) for item in legacy)]))
+        if hashes:
+            state["stop_request_hashes"] = hashes[:_STOP_LIMIT]
+        changed = True
+    return key, changed
+
+
+def incomplete_stop(state: dict[str, Any], key: str | None, reason: str, *,
+                    label: str, continuation: str) -> tuple[dict[str, Any], bool]:
+    """Charge at most once per identified failure, after checking live state."""
+    spent = state.get("stop_request_hashes", [])
+    if key is not None and key in spent:
+        return {"continue": False, "systemMessage": f"{label}: INCOMPLETE. Replayed Stop event; inspect the current task."}, False
+    attempts = state.get("stop_attempts", 0)
+    if attempts < _STOP_LIMIT:
+        state["stop_attempts"] = attempts + 1
+        if key is not None:
+            # Recovery can open a new continuation window on the same contract.
+            state["stop_request_hashes"] = [*spent, key][-_STOP_LIMIT:]
+    if state["stop_attempts"] >= _STOP_LIMIT:
+        return {"continue": False, "stopReason": f"{label} task incomplete: {reason}",
+                "systemMessage": f"{label}: INCOMPLETE. {reason}"}, attempts < _STOP_LIMIT
+    return {"decision": "block", "reason": continuation}, True
 
 
 def private_path(path: str) -> bool:
@@ -308,9 +371,139 @@ def publication_target(root: Path) -> dict[str, str]:
             "url_sha256": digest(fetch_urls[0].encode())}
 
 
-def sync(root: Path) -> dict[str, Any]:
+def _config_string(value: str) -> str:
+    if not value or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise Blocked("Transport configuration contains an unsupported empty value or control character.")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _transport_protocol(endpoint: str) -> str:
+    """Limit the frozen operation to the endpoint's already permitted native protocol."""
+    if "::" in endpoint.split("/", 1)[0] or endpoint.startswith("-"):
+        raise Blocked("External transport helpers are not supported for guarded publication.")
+    if "://" in endpoint:
+        protocol = urlsplit(endpoint).scheme.lower()
+    elif re.match(r"^[A-Za-z]:[/\\]", endpoint) or ":" not in endpoint.split("/", 1)[0]:
+        protocol = "file"
+    else:
+        protocol = "ssh"
+    if protocol not in {"file", "git", "http", "https", "ssh"}:
+        raise Blocked("A guarded upstream requires a native Git transport.")
+    return protocol
+
+
+def _permitted_protocol(root: Path, endpoint: str, invoke: Callable[..., str]) -> str:
+    protocol = _transport_protocol(endpoint)
+    allowed = os.environ.get("GIT_ALLOW_PROTOCOL")
+    if allowed is not None:
+        if protocol not in allowed.split(":"):
+            raise Blocked("The configured Git transport policy denies this upstream.")
+        return protocol
+    fallback = "user" if protocol == "file" else "always"
+    fallback = invoke(root, "config", "--default", fallback, "--get", "protocol.allow")
+    policy = invoke(root, "config", "--default", fallback, "--get", f"protocol.{protocol}.allow")
+    if policy != "always" and not (policy == "user" and os.environ.get("GIT_PROTOCOL_FROM_USER", "1") == "1"):
+        raise Blocked("The configured Git transport policy denies this upstream.")
+    return protocol
+
+
+@contextmanager
+def frozen_transport(root: Path, target: dict[str, str], invoke: Callable[..., str]) -> Iterator[Callable[..., str]]:
+    """Bind Git's actual transport to the frozen endpoint while keeping native owner hooks.
+
+    A remote alias or URL rewrite can change between verification and push. Replace
+    both URL lists at command precedence, with a first-read, full-length identity
+    rewrite. Git chooses the first longest prefix and rewrites each URL just once.
+    The capability check rejects Git versions that append empty values instead of
+    clearing lists. Preserve system credential/SSL configuration after the guard.
+    The private temporary file may contain the endpoint, but never inline HTTP
+    credentials; URL text is excluded from receipts and error output.
+    """
+    remote = target["remote"]
+    if not remote or remote.startswith("-") or any(ord(c) <= 32 or ord(c) == 127 for c in remote):
+        raise Blocked("The frozen upstream has an unsupported remote name.")
+    urls = invoke(root, "remote", "get-url", "--all", remote).splitlines()
+    push = invoke(root, "remote", "get-url", "--push", "--all", remote).splitlines()
+    if len(urls) != 1 or urls != push or digest(urls[0].encode()) != target["url_sha256"]:
+        raise Blocked("The upstream endpoint no longer matches the authorized destination.")
+    endpoint = urls[0]
+    if (re.match(r"(?i)^https?://[^/]*@", endpoint) or
+            re.match(r"(?i)^[a-z]+://[^/@]*:[^/@]*@", endpoint) or "?" in endpoint or "#" in endpoint):
+        raise Blocked("Use a credential helper and an upstream URL without inline credentials or parameters.")
+    protocol = _permitted_protocol(root, endpoint, invoke)
+    quoted = _config_string(endpoint)
+    disabled = os.environ.get("GIT_CONFIG_NOSYSTEM", "").lower() in {"true", "yes", "on", "1"}
+    system = "" if disabled else invoke(root, "var", "GIT_CONFIG_SYSTEM")
+    with tempfile.TemporaryDirectory(prefix="constellation-transport-") as temporary:
+        identity = Path(temporary) / "gitconfig"
+        config_text = f"[url {quoted}]\n\tinsteadOf = {quoted}\n\tpushInsteadOf = {quoted}\n"
+        if system:
+            config_text += "[include]\n\tpath = " + _config_string(str((root / system).absolute())) + "\n"
+        identity.write_text(config_text, encoding="utf-8")
+        identity.chmod(0o600)
+        environment = {"GIT_CONFIG_NOSYSTEM": "0", "GIT_CONFIG_SYSTEM": str(identity),
+                       "GIT_NO_REPLACE_OBJECTS": "1", "GIT_ALLOW_PROTOCOL": protocol}
+        options = (f"remote.{remote}.url=", f"remote.{remote}.url={endpoint}",
+                   f"remote.{remote}.pushurl=", f"remote.{remote}.pushurl={endpoint}",
+                   f"remote.{remote}.mirror=false", "http.followRedirects=false")
+
+        def transport(*arguments: str) -> str:
+            return invoke(root, *arguments, config=options, extra_env=environment, timeout=300)
+
+        if (transport("remote", "get-url", "--all", remote).splitlines() != urls
+                or transport("remote", "get-url", "--push", "--all", remote).splitlines() != urls):
+            raise Blocked("Git cannot pin a single transport endpoint; use Git 2.48 or newer.")
+        yield transport
+
+
+def verify_outgoing_commits(root: Path, remote: str, local: str, commits: list[str]) -> None:
+    """Permit only existing verified receipts in the immutable outgoing commit range."""
+    environment = {"GIT_NO_REPLACE_OBJECTS": "1"}
+    git(root, "merge-base", "--is-ancestor", remote, local, extra_env=environment)
+    outgoing = git(root, "rev-list", f"{remote}..{local}", extra_env=environment).splitlines()
+    if not set(outgoing) <= set(commits):
+        raise Blocked("Outgoing history includes a commit not verified by this task; no publication is authorized.")
+
+
+def remote_tip(transport: Callable[..., str], target: dict[str, str]) -> str:
+    """Read exactly the single approved branch using the pinned transport."""
+    fields = transport("ls-remote", "--upload-pack=git-upload-pack", "--exit-code", "--",
+                       target["remote"], target["ref"]).split()
+    if (len(fields) != 2 or fields[1] != target["ref"] or
+            not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", fields[0])):
+        raise Blocked("Cannot establish the authorized upstream branch tip.")
+    return fields[0]
+
+
+def publish_frozen(root: Path, target: dict[str, str], local: str, commits: list[str],
+                   outgoing_gate: Callable[[str, str], None], invoke: Callable[..., str],
+                   *, whole_head: bool = False) -> None:
+    """Publish the reviewed SHA to one exact branch and re-read that same endpoint."""
+    with frozen_transport(root, target, invoke) as transport:
+        name, ref = target["remote"], target["ref"]
+
+        previous = remote_tip(transport, target)
+        if local != previous:
+            outgoing_gate(local, previous)
+            if whole_head:
+                git(root, "merge-base", "--is-ancestor", previous, local,
+                    extra_env={"GIT_NO_REPLACE_OBJECTS": "1"})
+            else:
+                verify_outgoing_commits(root, previous, local, commits)
+            if git(root, "rev-parse", "HEAD") != local:
+                raise Blocked("Local HEAD changed before publication.")
+            transport("push", "--receive-pack=git-receive-pack", "--no-mirror", "--no-follow-tags",
+                      "--recurse-submodules=no", "--", name, f"{local}:{ref}")
+        if remote_tip(transport, target) != local or git(root, "rev-parse", "HEAD") != local:
+            raise Blocked("Remote verification failed: the upstream does not match local HEAD.")
+
+
+def sync(root: Path, expected: dict[str, str] | None = None) -> dict[str, Any]:
     target = publication_target(root)
-    git(root, "fetch", "--prune", target["remote"])
+    if expected is not None and expected != target:
+        raise Blocked("The upstream destination changed before synchronization.")
+    with frozen_transport(root, target, git) as transport:
+        transport("fetch", "--upload-pack=git-upload-pack", "--prune", "--no-recurse-submodules", "--", target["remote"])
     ahead, behind = map(int, git(root, "rev-list", "--left-right", "--count", "HEAD...@{upstream}").split())
     if behind:
         if ahead:
@@ -432,6 +625,19 @@ def outgoing_gate(root: Path, local: str, remote_sha: str) -> None:
         raise Blocked("\n".join(errors[:30]))
 
 
+def validate_changed_scope(state: dict[str, Any], dirty: set[str],
+                           private_path: Callable[[str], bool]) -> set[str]:
+    """Reject unfinished or undeclared public changes against the owner's baseline."""
+    pending = set(state["paths"]) & dirty
+    if pending:
+        raise Blocked(f"Uncommitted task files: {', '.join(sorted(pending))}")
+    unexpected = dirty - set(state["baseline_dirty"]) - set(state["paths"])
+    unknown = {p for p in unexpected if not private_path(p) and not state.get("unrelated", {}).get(p)}
+    if unknown:
+        raise Blocked(f"New undeclared files need scope review: {', '.join(sorted(unknown))}. Declare task paths or explain unrelated paths in plan.")
+    return unexpected
+
+
 class Workflow:
     def __init__(self, root: Path, session: str, *, create_state: bool = True):
         if ps.IS_WINDOWS:
@@ -508,7 +714,7 @@ class Workflow:
 
     def sync_upstream(self, state: dict[str, Any]) -> dict[str, Any]:
         self.ensure_target(state)
-        info = sync(self.root)
+        info = sync(self.root, state["target"])
         self.ensure_target(state)
         return info
 
@@ -669,6 +875,14 @@ class Workflow:
             raise Blocked(str(exc)) from None
         return {"envelope": envelope}
 
+    def check_snapshot(self, state: dict[str, Any]) -> dict[str, str | None]:
+        """Return the file identities stored in this owner's check receipts."""
+        return snapshot(self.root, state["paths"], state.get("deletions", []))
+
+    def review_module(self):
+        """Return the review binding for this Git owner's profile."""
+        return review_engine()
+
     def check(self, command: list[str], *, timeout: int = 300) -> dict[str, Any]:
         state = self.load()
         self.identify_author(state)
@@ -676,7 +890,7 @@ class Workflow:
             raise Blocked("check needs a command after --.")
         if type(timeout) is not int or not 1 <= timeout <= 3600:
             raise Blocked("Check timeout must be an integer between 1 and 3600 seconds.")
-        before = snapshot(self.root, state["paths"], state.get("deletions", []))
+        before = self.check_snapshot(state)
         record = {"command_sha256": digest(json.dumps(command).encode()), "exit_code": -1, "at": now(),
                   "timeout_seconds": timeout, "snapshot": before, "changed_during_check": False,
                   "output_sha256": digest(b""), "completed": False}
@@ -692,7 +906,7 @@ class Workflow:
             # An unlaunchable or timed-out check must supersede its old success.
             result = subprocess.CompletedProcess(command, -1, b"", type(exc).__name__.encode())
         try:
-            after = snapshot(self.root, state["paths"], state.get("deletions", []))
+            after = self.check_snapshot(state)
         except (Blocked, OSError):
             after = None
         record.update(exit_code=result.returncode, changed_during_check=before != after,
@@ -748,7 +962,7 @@ class Workflow:
         if (replacement.get("completed") is not True or type(replacement.get("exit_code")) is not int
                 or replacement["exit_code"] != 0
                 or replacement.get("changed_during_check") is not False
-                or replacement.get("snapshot") != snapshot(self.root, state["paths"], state.get("deletions", []))):
+                or replacement.get("snapshot") != self.check_snapshot(state)):
             raise Blocked("Replacement check must have completed successfully without changing any current artifact.")
         return normalized
 
@@ -822,7 +1036,7 @@ class Workflow:
                    or state["checks"][index]["changed_during_check"]) for index in latest.values()):
             raise Blocked("A check is still failing; rerun that check successfully before review.")
         required = [p for p in state["paths"] if not p.endswith((".md", ".rst", ".txt"))]
-        version = snapshot(self.root, state["paths"], state.get("deletions", []))
+        version = self.check_snapshot(state)
         passing = [c for index in latest.values() for c in [state["checks"][index]]
                    if c["exit_code"] == 0 and not c["changed_during_check"]
                    and all(p in c["snapshot"] and c["snapshot"][p] == version[p] for p in required)]
@@ -840,14 +1054,15 @@ class Workflow:
         self.review_context(state)
         if operation == "budget" and state.get("author") != self.session:
             raise Blocked("Review budget requires the frozen coordinator identity.")
-        engine = review_engine()
+        engine = self.review_module()
         try:
             if operation == "start" and payload and payload.get("risk"):
                 levels = ("quick", "standard", "deep")
                 risk = payload["risk"]
                 if risk not in levels:
                     raise Blocked("Risk must be quick, standard or deep.")
-                previous = state.get("review_risk", "quick")
+                previous = max((state.get("review_risk", "quick"),
+                                state.get("review_gate", {}).get("mode_floor", "quick")), key=levels.index)
                 if levels.index(risk) < levels.index(previous):
                     raise Blocked("The risk floor cannot be lowered during an active task.")
                 state["review_risk"] = risk
@@ -879,7 +1094,7 @@ class Workflow:
     def independent_context(self, state: dict[str, Any]) -> dict[str, Any]:
         self.identify_author(state)
         self.review_context(state)
-        engine = review_engine()
+        engine = self.review_module()
         try:
             return engine.prepare(self.root, state)
         except engine.ReviewError as exc:
@@ -888,7 +1103,7 @@ class Workflow:
     def independent_reviewed(self, state: dict[str, Any]) -> None:
         self.identify_author(state)
         self.review_context(state)
-        engine = review_engine()
+        engine = self.review_module()
         try:
             engine.validate(self.root, state)
         except engine.ReviewError as exc:
@@ -962,15 +1177,7 @@ class Workflow:
                 raise Blocked(f"Undeclared patch path: {relative}")
 
     def checked_scope(self, state: dict[str, Any]) -> set[str]:
-        dirty = changed(self.root)
-        pending = set(state["paths"]) & dirty
-        if pending:
-            raise Blocked(f"Uncommitted task files: {', '.join(sorted(pending))}")
-        unexpected = dirty - set(state["baseline_dirty"]) - set(state["paths"])
-        unknown = {p for p in unexpected if not private_path(p) and not state.get("unrelated", {}).get(p)}
-        if unknown:
-            raise Blocked(f"New undeclared files need scope review: {', '.join(sorted(unknown))}. Declare task paths or explain unrelated paths in plan.")
-        return unexpected
+        return validate_changed_scope(state, changed(self.root), private_path)
 
     def validate_blob(self, path: str, blob: bytes) -> list[str]:
         """Domain adapters may add artifact validation without another lifecycle."""
@@ -982,22 +1189,18 @@ class Workflow:
     def outgoing_gate(self, local: str, remote_sha: str) -> None:
         outgoing_gate(self.root, local, remote_sha)
 
-    def publish(self) -> dict[str, Any]:
+    def publish(self, *, whole_head: bool = False) -> dict[str, Any]:
         state = self.load()
         self.identify_author(state)
         if state.get("publication_blocker"):
             raise Blocked(state["publication_blocker"])
         info = self.sync_upstream(state)
         local = git(self.root, "rev-parse", "HEAD")
-        remote_sha = git(self.root, "rev-parse", "@{upstream}")
-        self.outgoing_gate(local, remote_sha)
+        if whole_head and state["paths"]:
+            raise Blocked("Whole-HEAD publication requires an explicit provider with no task paths.")
+        target = self.ensure_target(state)
+        publish_frozen(self.root, target, local, state["commits"], self.outgoing_gate, git, whole_head=whole_head)
         self.ensure_target(state)
-        if info["ahead"]:
-            git(self.root, "push", info["remote"], f"{local}:{info['ref']}")
-        actual = git(self.root, "ls-remote", "--exit-code", info["remote"], info["ref"]).split()[0]
-        self.ensure_target(state)
-        if actual != local or git(self.root, "rev-parse", "HEAD") != local:
-            raise Blocked("Remote verification failed: the upstream does not match local HEAD.")
         self.log("remote_verified", commit=local)
         return {"head": local, "remote": info["remote"], "ref": info["ref"], "verified_at": now()}
 
@@ -1020,6 +1223,8 @@ class Workflow:
         self.sync_upstream(state)
         self.reviewed(state)
         parent = git(self.root, "rev-parse", "HEAD")
+        with frozen_transport(self.root, state["target"], git) as transport:
+            verify_outgoing_commits(self.root, remote_tip(transport, state["target"]), parent, state["commits"])
         git(self.root, "--literal-pathspecs", "add", "--", *paths)
         self.staged_gate(paths if preserve_index else None)
         staged = staged_paths(self.root)
@@ -1129,30 +1334,25 @@ class Workflow:
         self.identify_author(state)
         if active_only and state.get("finished"):
             return {}
-        replay = stop_replay(state, request_id)
-        if replay is not None:
-            return replay
+        key, migrated = prepare_stop(state, request_id)
         try:
             self.ensure_target(state)
             self.reviewed(state)
             if not state.get("finished") or state["finished"]["head"] != git(self.root, "rev-parse", "HEAD"):
                 raise Blocked("Run workflow.py finish to verify commits and the remote branch.")
             self.checked_scope(state)
-            result = record_stop(state, request_id, {})
-            if request_id is not None:
+        except Blocked as exc:
+            reason = str(exc)
+            result, charged = incomplete_stop(state, key, reason, label="Constellation",
+                continuation=f"[CONSTELLATION-CONTINUE:{self.key}] {reason} Follow .codex/README.md. Report any real blocker; never claim completion without evidence.")
+            if charged:
+                self.log("stop_incomplete", reason=reason)
+            if charged or migrated:
                 self.save(state)
             return result
-        except Blocked as exc:
-            state["stop_attempts"] += 1
-            self.log("stop_incomplete", reason=str(exc))
-            if state["stop_attempts"] > 2:
-                result = {"continue": False, "stopReason": f"Constellation task incomplete: {exc}",
-                        "systemMessage": f"Constellation: INCOMPLETE. {exc}"}
-            else:
-                result = {"decision": "block", "reason": f"[CONSTELLATION-CONTINUE:{self.key}] {exc} Follow .codex/README.md. Report any real blocker; never claim completion without evidence."}
-            record_stop(state, request_id, result)
+        if migrated:
             self.save(state)
-            return result
+        return {}
 
 
 def subagent_context(session: str, payload: dict[str, Any]) -> dict[str, Any]:

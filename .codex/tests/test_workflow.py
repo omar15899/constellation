@@ -21,10 +21,50 @@ from ecosystem.hooks import METHOD_GUIDANCE
 from ecosystem.runtime import workflow as w
 
 
+def git_operation(arguments) -> str | None:
+    """Read the Git subcommand after the exact global options our transport emits."""
+    if not arguments or Path(arguments[0]).name != "git":
+        return None
+    offset = 1
+    while offset < len(arguments):
+        option = arguments[offset]
+        if option in {"--no-replace-objects", "--literal-pathspecs"}:
+            offset += 1
+        elif option in {"-c", "-C"}:
+            if offset + 1 >= len(arguments):
+                raise AssertionError("Git fixture received an incomplete global option")
+            offset += 2
+        else:
+            return option
+    return None
+
+
 def copy_runtime(destination: Path) -> None:
     """Install the canonical package directly, without compatibility launchers."""
     shutil.copytree(MODULE.parent, destination.parent, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+
+
+def install_test_bundle(bundle: Path, home: Path) -> None:
+    """Create an actual device receipt and cache using only a synthetic Codex registry."""
+    setup = (
+        "from pathlib import Path; import sys; sys.path.insert(0, sys.argv[1]); "
+        "from test_package import install_bundle, SyntheticNativeClient; home=Path(sys.argv[3]); "
+        "install_bundle(Path(sys.argv[2]), home, client=SyntheticNativeClient(home))"
+    )
+    subprocess.run([sys.executable, "-I", "-B", "-c", setup, str(CODEX / "ecosystem/tests"),
+                    str(bundle), str(home)], check=True, capture_output=True, text=True)
+
+
+def device_cli(base: Path) -> list[str]:
+    """Run a fixture's Git CLI, including nested hooks, from its verified device installation."""
+    from ecosystem.build import build_bundle
+    bundle = base / "cli-release"
+    home = Path(os.environ["CODEX_HOME"])
+    if not (home / "constellation/receipt.json").exists():
+        build_bundle(bundle, modules=["coding"], source_root=CODEX)
+        install_test_bundle(bundle, home)
+    return [str(home / "constellation/run"), "cli"]
 
 
 def native_hook_command(event: str, runtime: Path) -> list[str]:
@@ -35,7 +75,7 @@ def native_hook_command(event: str, runtime: Path) -> list[str]:
 class GitFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()
         self.environment = patch.dict(os.environ, {"CODEX_HOME": str(self.base / "codex-home")})
         self.environment.start()
         self.addCleanup(self.environment.stop)
@@ -793,6 +833,28 @@ class GitFixture(unittest.TestCase):
         self.assertEqual(self.flow.load()["stop_attempts"], 1)
         self.assertEqual(self.flow.stop(request_id="event-2")["decision"], "block")
         self.assertEqual(self.flow.load()["stop_attempts"], 2)
+        second = self.flow.path.read_bytes()
+        self.assertFalse(self.flow.stop(request_id="event-1")["continue"])
+        self.assertEqual(self.flow.path.read_bytes(), second)
+        self.assertNotIn(b"event-1", second)
+        for i in range(3, 9):
+            self.assertFalse(self.flow.stop(request_id=f"event-{i}")["continue"])
+        exhausted = self.flow.load()
+        self.assertEqual(exhausted["stop_attempts"], 3)
+        self.assertEqual(len(exhausted["stop_request_hashes"]), 3)
+        exhausted["stop_attempts"] = 0  # The recovery operation starts a new retry window.
+        self.flow.save(exhausted)
+        self.assertEqual(self.flow.stop(request_id="recovery-event")["decision"], "block")
+        self.assertFalse(self.flow.stop(request_id="recovery-event")["continue"])
+        self.assertEqual(self.flow.load()["stop_attempts"], 1)
+
+    def test_historical_stop_record_replays_without_spending_or_retaining_raw_id(self):
+        state = self.flow.begin("historical")
+        state.update(stop_attempts=1, last_stop_request={"id": "synthetic-prior", "incomplete": True})
+        self.flow.save(state)
+        self.assertFalse(self.flow.stop(request_id="synthetic-prior")["continue"])
+        self.assertEqual(self.flow.load()["stop_attempts"], 1)
+        self.assertNotIn(b"synthetic-prior", self.flow.path.read_bytes())
 
     def test_completed_stop_event_replay_preserves_state(self):
         self.task()
@@ -803,7 +865,7 @@ class GitFixture(unittest.TestCase):
         self.assertEqual(self.flow.stop(request_id="completed-event"), {})
         self.assertEqual(self.flow.path.read_bytes(), before)
         (self.root / "forgotten.md").write_text("new pending work\n")
-        self.assertEqual(self.flow.stop(request_id="next-event")["decision"], "block")
+        self.assertEqual(self.flow.stop(request_id="completed-event")["decision"], "block")
 
     def test_inspection_does_not_create_operational_state(self):
         directory = self.other / ".git/constellation"
@@ -836,6 +898,7 @@ class GitFixture(unittest.TestCase):
         copy_runtime(runtime)
         self.commit("install runtime fixture")
         w.git(self.root, "push")
+        device_cli(self.base)
         import sys
         for event in ("pre-commit", "post-commit", "pre-push"):
             hook = self.root / f".git/hooks/{event}"
@@ -891,6 +954,9 @@ class GitFixture(unittest.TestCase):
         target.mkdir()
         (self.root / "legacy").symlink_to(target, target_is_directory=True)
         self.commit("add old symlink")
+        w.git(self.root, "push")
+        self.assertEqual(w.git(self.root, "rev-parse", "HEAD"),
+                         w.git(self.remote, "rev-parse", "refs/heads/main"))
         self.flow.begin("delete link")
         self.flow.plan({"requirements": ["remove legacy link"], "paths": ["legacy"], "deletions": ["legacy"]})
         with self.assertRaisesRegex(w.Blocked, "still exists"):
@@ -1011,12 +1077,15 @@ class GitFixture(unittest.TestCase):
     def test_failed_fetch_does_not_persist_stderr_or_argv(self):
         original = subprocess.run
         sentinel = "SYNTHETIC_PRIVATE_FETCH_STDERR"
+        attempts = []
         def fake_run(args, **kwargs):
-            if args[:2] == ("git", "fetch"):
+            if git_operation(args) == "fetch":
+                attempts.append(tuple(args))
                 return subprocess.CompletedProcess(args, 128, "", sentinel)
             return original(args, **kwargs)
         with patch.object(subprocess, "run", side_effect=fake_run):
             state = self.flow.begin("failure privacy")
+        self.assertEqual(len(attempts), 1)
         self.assertIn("git fetch failed (128)", state["sync_error"])
         stored = self.flow.path.read_text() + (self.flow.home / "events.jsonl").read_text()
         self.assertNotIn(sentinel, stored)
@@ -1024,12 +1093,15 @@ class GitFixture(unittest.TestCase):
     def test_fetch_timeout_does_not_persist_command_arguments(self):
         original = subprocess.run
         sentinel = "SYNTHETIC_PRIVATE_TIMEOUT_ARG"
+        attempts = []
         def fake_run(args, **kwargs):
-            if args[:2] == ("git", "fetch"):
+            if git_operation(args) == "fetch":
+                attempts.append(tuple(args))
                 raise subprocess.TimeoutExpired(["git", "fetch", sentinel], 25)
             return original(args, **kwargs)
         with patch.object(subprocess, "run", side_effect=fake_run):
             state = self.flow.begin("timeout privacy")
+        self.assertEqual(len(attempts), 1)
         self.assertIn("git fetch timed out", state["sync_error"])
         self.assertNotIn(sentinel, self.flow.path.read_text())
 

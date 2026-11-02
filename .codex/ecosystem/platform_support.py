@@ -640,46 +640,119 @@ def file_lock(descriptor: int, *, exclusive: bool = True,
 
 @lru_cache(maxsize=2)
 def _ps_posix_rename_api(system: str):
-    """Bind an atomic no-replace primitive, never a check-then-rename fallback."""
+    """Bind the native atomic rename primitive used for exclusive moves and swaps."""
     if system != "darwin" and not system.startswith("linux"):
         raise PlatformError(errno.ENOTSUP, "Atomic exclusive directory rename is unavailable on this platform.")
     library = ctypes.CDLL(None, use_errno=True)
     try:
-        if system == "darwin":
-            function = library.renamex_np
-            function.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-        else:
-            function = library.renameat2
-            function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
-                                 ctypes.c_char_p, ctypes.c_uint]
+        function = library.renameatx_np if system == "darwin" else library.renameat2
+        function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
     except AttributeError as exc:
         raise PlatformError(errno.ENOTSUP, "Atomic exclusive directory rename is unavailable in libc.") from exc
     function.restype = ctypes.c_int
     return function
 
 
-def _ps_posix_rename_exclusive(stage: Path, target: Path) -> None:
+def _ps_posix_rename(stage: Path, target: Path, *, exchange: bool,
+                     source_fd: int | None = None, destination_fd: int | None = None) -> None:
+    """Perform one native rename; both operands survive an exchange."""
     function = _ps_posix_rename_api(sys.platform)
     ctypes.set_errno(0)
     source, destination = os.fsencode(stage), os.fsencode(target)
-    if sys.platform == "darwin":
-        result = function(source, destination, 0x4)  # RENAME_EXCL
-    else:
-        result = function(-100, source, -100, destination, 0x1)  # AT_FDCWD, RENAME_NOREPLACE
+    at_cwd = -2 if sys.platform == "darwin" else -100
+    # Both APIs use bit 2 for exchange. Exclusive moves use bit 4 on Darwin and bit 1 on Linux.
+    flags = 2 if exchange else (4 if sys.platform == "darwin" else 1)
+    result = function(at_cwd if source_fd is None else source_fd, source,
+                      at_cwd if destination_fd is None else destination_fd, destination, flags)
     if result == 0:
         return
     code = ctypes.get_errno() or errno.EIO
     if code in {errno.EEXIST, errno.ENOTEMPTY}:
         raise FileExistsError(errno.EEXIST, "Destination already exists.", str(target))
     if code in {errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EINVAL}:
-        raise PlatformError(code, "Atomic exclusive directory rename is unsupported or rejected by this filesystem.")
-    raise PlatformError(code, "Atomic exclusive directory rename failed.")
+        raise PlatformError(code, "Atomic rename is unsupported or rejected by this filesystem.")
+    raise PlatformError(code, "Atomic rename failed.")
+
+
+def _ps_posix_rename_exclusive(stage: Path, target: Path) -> None:
+    _ps_posix_rename(stage, target, exchange=False)
+
+
+@contextmanager
+def _ps_parent_fd(path: Path) -> Iterator[int]:
+    """Open a POSIX directory through handles, refusing links at every component."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptor = os.open(path.anchor, flags)
+    try:
+        for part in path.parts[1:]:
+            child = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def _ps_file_rename(stage: Path, target: Path, *, exchange: bool) -> None:
+    if IS_WINDOWS:
+        raise PlatformError("The Codex file promotion contract requires POSIX.")
+    stage, target = _ps_absolute(stage), _ps_absolute(target)
+    if stage == target or not stage.name or not target.name:
+        raise PlatformError("File promotion requires two distinct names.")
+    with _ps_parent_fd(stage.parent) as src, _ps_parent_fd(target.parent) as dst:
+        first = os.stat(stage.name, dir_fd=src, follow_symlinks=False)
+        if not stat.S_ISREG(first.st_mode):
+            raise PlatformError("File promotion requires a regular staging file.")
+        if exchange:
+            try:
+                second = os.stat(target.name, dir_fd=dst, follow_symlinks=False)
+            except FileNotFoundError as exc:
+                raise PlatformError("The exchange destination is absent.") from exc
+            if not stat.S_ISREG(second.st_mode) or os.path.samestat(first, second):
+                raise PlatformError("An exchange requires distinct existing regular files.")
+        _ps_posix_rename(Path(stage.name), Path(target.name), source_fd=src, destination_fd=dst,
+                         exchange=exchange)
+
+
+def exchange_files(stage: Path, target: Path) -> None:
+    """Atomically swap two regular files, keeping the displaced inode at stage.
+
+    Callers verify the displaced identity *after* the swap and retain unexpected
+    material. The syscall never removes either operand. An unsupported filesystem
+    fails before changing the names.
+    """
+    _ps_file_rename(stage, target, exchange=True)
+
+
+def promote_file(stage: Path, target: Path) -> None:
+    """Atomically occupy a vacant path. An intervening file survives an EEXIST."""
+    _ps_file_rename(stage, target, exchange=False)
+
+
+def promote_directory_at(source_fd: int, source_name: str, destination_fd: int,
+                         destination_name: str) -> None:
+    """Publish a complete POSIX directory into a vacant name under a pinned parent.
+
+    The caller retains both open parent descriptors through this operation. Names
+    are individual directory entries, so no lookup can escape the pinned parents.
+    A competing creator wins or gets EEXIST without either tree being overwritten.
+    """
+    if IS_WINDOWS:
+        raise PlatformError("Directory handle promotion requires POSIX.")
+    for descriptor, name in ((source_fd, source_name), (destination_fd, destination_name)):
+        if (type(descriptor) is not int or descriptor < 0 or not stat.S_ISDIR(os.fstat(descriptor).st_mode)
+                or not isinstance(name, str) or not name or name in {".", ".."} or "/" in name or chr(0) in name):
+            raise PlatformError("Directory promotion needs an open parent and one entry name.")
+    if not stat.S_ISDIR(os.stat(source_name, dir_fd=source_fd, follow_symlinks=False).st_mode):
+        raise PlatformError("The staged entry is not a real directory.")
+    _ps_posix_rename(Path(source_name), Path(destination_name), source_fd=source_fd,
+                     destination_fd=destination_fd, exchange=False)
 
 
 def promote_directory(stage: Path, target: Path) -> None:
     """Atomically rename a directory only when the destination does not exist.
 
-    macOS uses renamex_np(RENAME_EXCL), Linux uses renameat2(RENAME_NOREPLACE),
+    macOS uses renameatx_np(RENAME_EXCL), Linux uses renameat2(RENAME_NOREPLACE),
     and Windows uses MoveFileEx without replacement and with write-through.
     There is no target precreation, check-then-rename or replacement fallback.
     Unsupported operating systems, libc entries or filesystems fail closed.

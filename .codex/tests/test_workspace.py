@@ -514,6 +514,10 @@ class WorkspaceFixture(unittest.TestCase):
         self.assertEqual(self.workspace.load()["stop_attempts"], 1)
         self.assertEqual(self.workspace.stop(request_id="event-2")["decision"], "block")
         self.assertEqual(self.workspace.load()["stop_attempts"], 2)
+        after_second = {path: path.read_bytes() for path in paths}
+        self.assertFalse(self.workspace.stop(request_id="event-1")["continue"])
+        self.assertEqual({path: path.read_bytes() for path in paths}, after_second)
+        self.assertTrue(all(b"event-1" not in data for data in after_second.values()))
 
     def test_completed_stop_event_replay_preserves_workspace_state(self):
         paths = ["answer.md", "Shared/answer.md"]
@@ -525,6 +529,10 @@ class WorkspaceFixture(unittest.TestCase):
         before = self.workspace.path.read_bytes()
         self.assertEqual(self.workspace.stop(request_id="completed-event"), {})
         self.assertEqual(self.workspace.path.read_bytes(), before)
+        (self.root / "Shared/forgotten.md").write_text("Concurrent work")
+        self.assertEqual(self.workspace.stop(request_id="completed-event")["decision"], "block")
+        self.assertIsNone(self.workspace.load()["finished"])
+
 
 
 if __name__ == "__main__":

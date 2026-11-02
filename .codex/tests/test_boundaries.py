@@ -124,7 +124,7 @@ class RepositoryBoundaries(unittest.TestCase):
 
     def test_failed_begin_has_nonzero_cli_exit_code(self):
         w.git(self.root, "remote", "set-url", "origin", str(self.base / "missing.git"))
-        result = subprocess.run([sys.executable, str(fixture.MODULE), "git", "--root", str(self.root),
+        result = subprocess.run([*fixture.device_cli(self.base), "git", "--root", str(self.root),
                                  "--session", "cli-failure", "begin"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("sync_error", json.loads(result.stdout))
@@ -278,7 +278,7 @@ class RepositoryBoundaries(unittest.TestCase):
         staged_diff = w.git(self.root, "diff", "--cached", "--binary")
         hook = self.root / ".git/hooks/pre-commit"
         hook.write_text("#!/bin/sh\nprintf 'ran' > .git/hook-ran\nexec "
-                        + shlex.quote(sys.executable) + " " + shlex.quote(str(fixture.MODULE))
+                        + shlex.join(fixture.device_cli(self.base))
                         + " git git-hook pre-commit\n")
         hook.chmod(0o755)
         self.flow.commit(["answer.md"], "Add answer with preserved index", preserve_index=True)
@@ -322,7 +322,7 @@ class RepositoryBoundaries(unittest.TestCase):
         (self.root / "README.md").write_text("unrelated staged work\n")
         w.git(self.root, "add", "README.md")
         self.task()
-        result = subprocess.run([sys.executable, str(fixture.MODULE), "git", "--root", str(self.root),
+        result = subprocess.run([*fixture.device_cli(self.base), "git", "--root", str(self.root),
                                  "--session", "test-session", "commit", "--preserve-index",
                                  "-m", "Add answer only", "answer.md"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -358,7 +358,7 @@ class RepositoryBoundaries(unittest.TestCase):
         self.repair_fixture(intended)
         index_before = w.index_fingerprint(self.root, [])
         remote_before = w.git(self.remote, "rev-parse", "refs/heads/main")
-        result = subprocess.run([sys.executable, str(fixture.MODULE), "git", "--root", str(self.root),
+        result = subprocess.run([*fixture.device_cli(self.base), "git", "--root", str(self.root),
                                  "--session", "test-session", "recover", intended], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
@@ -488,7 +488,7 @@ class RepositoryBoundaries(unittest.TestCase):
         def record(args, **kwargs):
             if args and args[0] == "git":
                 marker = kwargs.get("env", os.environ).get("CONSTELLATION_COMMIT_OWNER")
-                is_commit = args[1] == "commit" or args[1:3] == ("--literal-pathspecs", "commit")
+                is_commit = fixture.git_operation(args) == "commit"
                 if is_commit:
                     self.assertEqual(marker, "native")
                     marked_commands.append(tuple(args))
@@ -503,7 +503,7 @@ class RepositoryBoundaries(unittest.TestCase):
             self.assertEqual((self.root / ".git" / f"{event}-owner").read_text(), "native")
 
     def workspace_command(self, *args, payload=None):
-        return subprocess.run([sys.executable, str(self.root / ".codex/ecosystem/cli.py"), "workspace",
+        return subprocess.run([*fixture.device_cli(self.base), "workspace", "--root", str(self.root),
                                "--session", "hook-workspace", *args], cwd=self.root,
                               input=json.dumps(payload) if payload is not None else None,
                               capture_output=True, text=True, timeout=15)

@@ -1,0 +1,176 @@
+{
+  "files": {
+    "README.md": {
+      "mode": "100644",
+      "sha256": "6183adb1a86f88fc4fe880d7c9f12ce7a76d4afe218f95a597049cf89bca7cf9",
+      "size": 3670
+    },
+    "convenciones.md": {
+      "mode": "100644",
+      "sha256": "b15cfb91bd30cca8188131c9a775ef903c17ac85b2b4603f7131ed2e05c751bd",
+      "size": 13522
+    },
+    "estilos/asincronas.sty": {
+      "mode": "100644",
+      "sha256": "cd4328a763f58c2610121c903b7ce4a4ed168f5725ec903ed85146d3ccbdd2ac",
+      "size": 5642
+    },
+    "estilos/notacion.tex": {
+      "mode": "100644",
+      "sha256": "3c0f42e1745ed0670e80e0252546cb88a561576215241a67cd00e69566b151cc",
+      "size": 2817
+    },
+    "hesperides/HesperidesQFBeamer.sty": {
+      "mode": "100644",
+      "sha256": "238f8776331899da784d9fc454f019c0aa1de5ce56dfe76400fe8d85eaf62aa3",
+      "size": 16149
+    },
+    "hesperides/HesperidesQFExercises.sty": {
+      "mode": "100644",
+      "sha256": "c5a515e920ba0418178af4977b6cf0f2f8f9448dc8c65c4b0237f8c1cfb69418",
+      "size": 8425
+    },
+    "hesperides/README.md": {
+      "mode": "100644",
+      "sha256": "f5f8cc3b0a1d4cd1cac054ee51175a048ee98728b7e004752fb0d3da6ee21498",
+      "size": 9708
+    },
+    "hesperides/UPSTREAM.md": {
+      "mode": "100644",
+      "sha256": "a986c117ed13fe970aceb90f9e87add8728618623a9ed4a186b970368aeb986b",
+      "size": 650
+    },
+    "hesperides/images/default.png": {
+      "mode": "100644",
+      "sha256": "6d7750ae9355ce329289a502133f285f4ef91c3c381410c9ba5ee1b7370b44fb",
+      "size": 117280
+    },
+    "hesperides/images/hesperides-logo.png": {
+      "mode": "100644",
+      "sha256": "76b49cf880d3c5551720224eb55340a2ab4d3c6961879f8bb2566f7770b54217",
+      "size": 10736
+    },
+    "hesperides/images/logo.png": {
+      "mode": "100644",
+      "sha256": "5c3480daf35b9bfbf5dd96a8cb0d4091f1e2d1bb93d6f7ced6e11de3e17e2d4a",
+      "size": 123884
+    },
+    "hesperides/images/logo_nofont.png": {
+      "mode": "100644",
+      "sha256": "e9be0d67589339e3eb295ae70332e5806486bcb7469ff3603345808d6580740c",
+      "size": 112908
+    },
+    "hesperides/images/logo_useenglish.png": {
+      "mode": "100644",
+      "sha256": "f35843892a4130974aa43a7d6055679b653e5e07697c2b2a1ff4b65d6ee66da6",
+      "size": 93642
+    },
+    "hesperides/images/nomathpazo_asana.png": {
+      "mode": "100644",
+      "sha256": "355b9194db721298525236aa7f22b8fb1bdad36088b6fb749f2a039c9e879fbd",
+      "size": 120235
+    },
+    "hooks/check_compile.py": {
+      "mode": "100644",
+      "sha256": "c7243fe144fca6c62479c0f74b69dada7b044ead50e7a51961cbe94d974c283c",
+      "size": 2720
+    },
+    "hooks/check_entrega.py": {
+      "mode": "100644",
+      "sha256": "5a8cd36e1b0ab28cd2c5fc70552d88c7ba05b413b4befa67fd9307429b029941",
+      "size": 15801
+    },
+    "hooks/check_pre.py": {
+      "mode": "100644",
+      "sha256": "5810d8c4749647a81ab00821e00dc5cf3c142ea2921752eef9886e1a4d5a9148",
+      "size": 4685
+    },
+    "hooks/check_tex.py": {
+      "mode": "100644",
+      "sha256": "983b258406f641001383b7208fdda3269f4cdb7e869f4fda5a61134255b3aca8",
+      "size": 3515
+    },
+    "hooks/comun.py": {
+      "mode": "100644",
+      "sha256": "da4c9bd7567ac5b5072e3b2f5ad79c8a937634cdb9888c4d7297e33014733459",
+      "size": 11220
+    },
+    "plantilla-video/guion-teleprompter.md": {
+      "mode": "100644",
+      "sha256": "94f0ec5e2e06d69e01d12b4802580e515bd141005ef0f5f0229c7926445aee15",
+      "size": 3305
+    },
+    "plantilla-video/justificacion-pedagogica.md": {
+      "mode": "100644",
+      "sha256": "188fef134b64871814d721c16182c2674720a19420d635f44548d0e07ad6992a",
+      "size": 4458
+    },
+    "plantilla-video/presentacion/figures/fig01_densidad.tex": {
+      "mode": "100644",
+      "sha256": "20f59153575b80df6d58cec44a64f0426386d36858ed9f5d3a393a59ae9ab450",
+      "size": 777
+    },
+    "plantilla-video/presentacion/frames/01_portada.tex": {
+      "mode": "100644",
+      "sha256": "252e11cff969b332bf437dcddbac76a6de5e029f1b0f1cf122da7ba9419fced2",
+      "size": 73
+    },
+    "plantilla-video/presentacion/frames/02_idea.tex": {
+      "mode": "100644",
+      "sha256": "b9a2cc5c368b43d2d349d8a53f141726714c992f13608e82251f73426cf33c68",
+      "size": 773
+    },
+    "plantilla-video/presentacion/frames/03_desarrollo.tex": {
+      "mode": "100644",
+      "sha256": "7d87a714591c346df1046ebb1f060b5eaaa03ed484f418a5801aa49f4f31c96d",
+      "size": 498
+    },
+    "plantilla-video/presentacion/main.tex": {
+      "mode": "100644",
+      "sha256": "6fefd18c972cf33a3ac3d01a31238a04a63ab2a008e8184a10d803387ed953f6",
+      "size": 1225
+    },
+    "referencias/evidencia-educativa.md": {
+      "mode": "100644",
+      "sha256": "42c4ce715b59feb757b0a69a469a0c627caa8a70dd5b7292a1cd287e9960e6c2",
+      "size": 4310
+    },
+    "scripts/build.sh": {
+      "mode": "100755",
+      "sha256": "538dabe9ae7c009c0d46da50d5b4db70c6e1678e367f26f6077f25e319551475",
+      "size": 526
+    },
+    "scripts/nuevo_video.sh": {
+      "mode": "100755",
+      "sha256": "9cf9f47c5f5c08dc87b381cf427a49bf030d4061da1884acc06055e4251c7e09",
+      "size": 1851
+    },
+    "scripts/render.sh": {
+      "mode": "100755",
+      "sha256": "761a52ae20013258848a034fb679b4bafadf58132a9a463b8ed111ff0f23ce2d",
+      "size": 545
+    },
+    "scripts/resolver_problema.py": {
+      "mode": "100755",
+      "sha256": "006ed2c04c254559461a0f6882381e20fb8873933b8981750f8ff5586c928884",
+      "size": 3508
+    },
+    "scripts/update_hesperides.sh": {
+      "mode": "100755",
+      "sha256": "68e6edba3a9677d14a4d3b7aab5293d020503d7e2e9b8a89dedf083a3418dd31",
+      "size": 2063
+    },
+    "scripts/validar.py": {
+      "mode": "100755",
+      "sha256": "4424d62416a8f62c2403f3202922fc8a1741b1ff31fa9b2938e92d7f96bb6c3d",
+      "size": 1413
+    },
+    "tests/test_contract.py": {
+      "mode": "100644",
+      "sha256": "1a234c6533994cb9d7abf4e985042d08762b04dc07177d1d38e9be0204873fa3",
+      "size": 10860
+    }
+  },
+  "schema": 1,
+  "tree": "a2e630c37c730f3a2c6f73f252382e339eebf37d"
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "BrainTeasersQuantNotes"
+  short_description: "Apuntes quant claros, rigurosos y sin lagunas"
+  default_prompt: "Usa $brainteasers-quant-notes para mejorar este capítulo en la versión vigente del taller, comprobando cobertura previa y explicando sus fundamentos."
+policy:
+  allow_implicit_invocation: true

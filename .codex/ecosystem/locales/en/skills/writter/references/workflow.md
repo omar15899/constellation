@@ -106,6 +106,43 @@ invented reference. If the absence prevents fulfillment of an essential
 requirement, deliver the partial state and its consequence clearly.
 Do not claim an exhaustive review after checking only a sample.
 
+## Explaining from first principles
+
+The question determines how far back the explanation needs to go. Before
+performing an operation, establish the entities involved, the relationships
+defined between them and the data that make the operation meaningful. Give
+the reason for each construction at the point where the reader needs it.
+A definition specifies an object. The existence of an object satisfying a
+condition, its uniqueness and its independence from a choice each require
+their own justification.
+
+Carry one example through two changes the reader might confuse. In a
+finite-dimensional real vector space, changing basis can change the components
+that describe a vector and a linear functional. Evaluating the same functional
+on the same vector gives the same scalar. Choosing an inner product adds
+another operation. It lets us represent the functional by the vector whose
+inner product with each argument gives its value. Doubling the inner product
+halves the representing vector. The functional still returns the same values.
+This variation shows precisely what depended on the geometry. The
+[ontology](../../../ecosystem/references/ontology.md) and its
+[examples](../../../ecosystem/references/ontology-examples.md) develop the
+construction and the hypotheses for more general cases.
+
+In other disciplines, use the entities and questions of the subject. A
+grayscale image assigns a level to each position. Its histogram counts the
+positions at each level. Swapping two pixels of different levels preserves
+the counts and changes the image. The counts suffice to calculate the mean
+level, but recovering the image requires spatial information. The example
+isolates the information lost by the representation and shows why that loss
+matters to a particular question.
+
+Before displaying a formula, explain the relationship it is meant to express.
+Afterwards interpret what the formula lets the reader conclude. When a result
+requires new assumptions, identify the precise step that uses them. An
+intuition earns its place when the reader can use it to reconstruct the
+argument. Honor the requested order of presentation and give a subtlety room
+when resolving it changes how the reader understands or uses the conclusion.
+
 ## Technical content and mixed deliverables
 
 For an essential mathematical argument, verify the hypotheses, types,
@@ -124,29 +161,6 @@ the task or repeat every lifecycle for each selected skill. In the existing
 report, it is enough to state which capability was used, for what purpose,
 with what evidence and what failed; do not create a separate selection record
 or save conversations.
-
-In a technical explanation, start from the question and the class of object
-that can answer it. Present the general framework that yields the requested
-cases and make explicit what each specialization adds. An example may open
-the text or come first if requested; it must allow a return to the general
-rule without confusing the finite, Euclidean or matrix case with the
-definition. Choose the generality that explains real dependencies without
-imposing an axiomatic route outside the scope.
-
-Consult the [ontology](../../../ecosystem/references/ontology.md) when
-distinctions between objects, spaces, functions, values or representations
-support the argument. Apply it to justify which structure enables each
-operation and which hypotheses the decisive step requires; load only the
-relevant [example](../../../ecosystem/references/ontology-examples.md).
-In other subjects, distinguish entities, relationships and claims according
-to their own framework; do not impose mathematical formalism on them.
-
-Introduce symbols when they express a relationship or distinction the text
-needs. Explain the ingredients first, present the formula and then interpret
-its consequence. Keep names stable and avoid chains of symbols that require
-decoding what prose can say better. Depth is not measured by the amount of
-notation or by length. Use transferable examples: when varying a hypothesis
-or representation, show what changes and what is preserved.
 
 In a report containing text, proof and code, declare the obligations appropriate
 to each deliverable and, if they share a file, to each requirement in that file.

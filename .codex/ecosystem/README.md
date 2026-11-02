@@ -3,7 +3,8 @@
 Constellation coordina requisitos, evidencia, revisión y publicación sobre
 Codex y Claude Code. Los clientes ejecutan modelos, herramientas y agentes;
 cada proyecto conserva sus archivos, permisos y dueño Git. La distribución
-actual `1.4.0-rc.1` reúne cuatro skills y ocho roles con un único runtime.
+actual `1.4.0` reúne cuatro métodos generales y ocho roles. La edición
+personal añade siete skills y el perfil OmarOS al mismo runtime instalado.
 
 El coordinador consulta el catálogo de su sesión y carga las instrucciones
 pertinentes. Descubrimiento, habilitación, autorización, ejecución y calidad del
@@ -30,7 +31,7 @@ almacena prompts y no prueba selección correcta de una skill.
 
 | Fuente | Responsabilidad |
 | --- | --- |
-| `.codex/skills/` | Instrucciones y referencias específicas de las cuatro skills. |
+| `.codex/skills/` | Fuentes canónicas de los cuatro métodos generales y las siete skills del módulo OmarOS. |
 | `.codex/ecosystem/runtime/` | Git, workspace, reparto, revisión y progreso. |
 | `core.py`, `storage.py`, `cli.py` | Contratos portables, persistencia privada y entrada pública. |
 | `platform_support.py` | Primitivas de filesystem y acceso por plataforma. |
@@ -55,9 +56,9 @@ Desde las fuentes, usa un destino nuevo:
 
 ```sh
 python3 .codex/ecosystem/build.py --language en \
-  --output /tmp/constellation-1.4.0-rc.1-en \
-  --archive /tmp/constellation-1.4.0-rc.1-en.zip
-shasum -a 256 /tmp/constellation-1.4.0-rc.1-en.zip
+  --output /tmp/constellation-1.4.0-en \
+  --archive /tmp/constellation-1.4.0-en.zip
+shasum -a 256 /tmp/constellation-1.4.0-en.zip
 ```
 
 La edición predeterminada conserva las fuentes españolas. Ambas ediciones usan
@@ -71,13 +72,19 @@ Instalar o conservar una ruta no concede confianza a los hooks.
 
 ## Trabajar y comprobar
 
-En el checkout, usa `.codex/ecosystem/cli.py git --session ID` o
-`.codex/ecosystem/cli.py workspace --session ID`. Desde un paquete:
+En un equipo configurado, la entrada estable verifica la distribución instalada
+y mantiene el bloqueo mientras utiliza el workspace, el contrato Git del proyecto
+o una skill:
 
 ```sh
-python3 /ruta/paquete/ecosystem/cli.py git --root /ruta/proyecto --session ID begin
-python3 /ruta/paquete/ecosystem/cli.py git --root /ruta/proyecto --session ID plan < contrato.json
+entry="${CODEX_HOME:-$HOME/.codex}/constellation/run"
+"$entry" cli workspace route Shared/README.md
+"$entry" cli git --root /ruta/proyecto --session ID begin
+"$entry" cli skill-read writter
 ```
+
+La CLI del checkout admite `--source` para desarrollar el motor desde su dueño
+Git. La API portátil también funciona desde una distribución extraída y verificada.
 
 El [protocolo](references/protocol.md) separa Git y entrega portable. En Claude,
 la identidad de ciclo es `claude-<session_id>`; los autores y revisores conservan

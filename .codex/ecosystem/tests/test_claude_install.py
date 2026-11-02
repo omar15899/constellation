@@ -21,6 +21,7 @@ from build import BUNDLE_MANIFEST, INSTALL_RECEIPT, build_bundle, file_record, v
 import claude as installer
 import platform_support as platform
 from install import InstallError
+from helpers import AVAILABLE_PROFILES
 
 
 def snapshot(root: Path) -> dict:
@@ -45,7 +46,7 @@ class ClaudeInstallationTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.shared = tempfile.TemporaryDirectory(prefix="claude-distribution-")
         cls.bundle = Path(cls.shared.name).resolve() / "release with spaces"
-        manifest = build_bundle(cls.bundle)
+        manifest = build_bundle(cls.bundle, AVAILABLE_PROFILES)
         cls.skill_relative = Path("skills") / manifest["modules"][0] / "SKILL.md"
 
     @classmethod

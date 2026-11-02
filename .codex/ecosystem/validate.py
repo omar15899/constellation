@@ -44,7 +44,7 @@ try:
     _LAYOUT_SPEC.loader.exec_module(_LAYOUT)
 finally:
     sys.dont_write_bytecode = _ORIGINAL_BYTECODE_POLICY
-MODULES = _LAYOUT.MODULES
+MODULES = _LAYOUT.AVAILABLE_MODULES
 MODULE_AGENTS = _LAYOUT.MODULE_AGENTS
 COMMON_FILES = _LAYOUT.COMMON_FILES
 HOOK_EVENTS = ("UserPromptSubmit", "PreToolUse", "SubagentStart", "SubagentStop", "Stop")
@@ -399,10 +399,11 @@ class _Validator:
             if event == "PreToolUse" and group["matcher"] != PRE_TOOL_MATCHER:
                 self.error(relative, "PreToolUse matcher differs from the declared package contract")
             hooks = group["hooks"]
-            command = f'python3 -I "${{CODEX_HOME:-$HOME/.codex}}/constellation/hook.py" {event}'
+            command = f'"${{CODEX_HOME:-$HOME/.codex}}/constellation/run" {event}'
+            timeout = 60 if event == "UserPromptSubmit" else 10
             if not isinstance(hooks, list) or len(hooks) != 1 or not isinstance(hooks[0], dict):
                 self.error(relative, f"{event} requires exactly one command hook")
-            elif hooks[0] != {"type": "command", "command": command, "timeout": 10} or type(hooks[0].get("timeout")) is not int:
+            elif hooks[0] != {"type": "command", "command": command, "timeout": timeout} or type(hooks[0].get("timeout")) is not int:
                 self.error(relative, f"{event} requires the declared isolated Python command and timeout")
 
 
@@ -424,7 +425,10 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
     if isinstance(modules, str):
         return ["modules must be an iterable of module names, not a single string"]
     try:
-        selected = list(modules) if modules is not None else [name for name in MODULES if (root / "skills" / name).exists()]
+        selected = list(modules) if modules is not None else [
+            name for name in MODULES
+            if any((root / "skills" / skill).exists() for skill in _LAYOUT.skill_names((name,)))
+        ]
     except TypeError:
         return ["modules must be an iterable of module names"]
     if not selected or any(name not in MODULES for name in selected) or len(selected) != len(set(selected)):
@@ -437,8 +441,10 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
         if bundled:
             validator.scan(".")
         else:
-            for module in selected:
-                validator.scan(f"skills/{module}")
+            for skill in _LAYOUT.skill_names(selected):
+                validator.scan(f"skills/{skill}")
+            if "omaros" in selected:
+                validator.scan("ecosystem/vault")
             for directory in ("ecosystem/agents", "ecosystem/references", "ecosystem/evals", "ecosystem/tests", "ecosystem/runtime", "ecosystem/manifests", "ecosystem/docs"):
                 validator.scan(directory)
         for relative in required:
@@ -446,8 +452,8 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
         validator.manifest(manifest)
         validator.claude(bundled=bundled, modules=selected)
         validator.hooks(bundled=bundled)
-        for module in selected:
-            validator.skill(module)
+        for skill in _LAYOUT.skill_names(selected):
+            validator.skill(skill)
         for name in agents:
             validator.agent(name)
         for relative in required:
@@ -467,6 +473,8 @@ def validate(root: Path | str, modules: Iterable[str] | None = None) -> list[str
                 valid_modules = valid_modules and len(inventory_modules) == len(set(inventory_modules)) and set(selected) <= set(inventory_modules)
                 if not valid_modules:
                     validator.error("bundle.json", "inventory modules do not cover the selected modules")
+                else:
+                    _LAYOUT.check_profile(_LAYOUT.select_modules(inventory_modules), _LAYOUT.bundle_target(root))
                 files = inventory.get("files")
                 if not isinstance(files, dict):
                     validator.error("bundle.json", "files must be an object")

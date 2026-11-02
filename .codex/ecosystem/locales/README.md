@@ -6,8 +6,10 @@ overlays. Their paths match the canonical `.codex/` sources. They are build
 inputs, not another active skill checkout.
 
 Both editions retain the `constellation` plugin identity, current
-`1.4.0-rc.1` version, four module IDs (including `writter`), protocol keys and
-review obligations. Install one edition per client.
+`1.4.0` version, four general module IDs (including `writter`), protocol keys and
+review obligations. Install one edition per client. The additional POSIX Codex
+module `omaros` carries the same seven project skills in both language editions.
+They retain their author-selected language.
 
 ## Build from canonical sources
 
@@ -15,8 +17,8 @@ Use Python 3.11+ and new output paths:
 
 ```sh
 python3 .codex/ecosystem/build.py --language en \
-  --output /tmp/constellation-1.4.0-rc.1-en \
-  --archive /tmp/constellation-1.4.0-rc.1-en.zip
+  --output /tmp/constellation-1.4.0-en \
+  --archive /tmp/constellation-1.4.0-en.zip
 ```
 
 Add `--target windows-claude` for the native Windows Claude candidate. The
@@ -43,7 +45,7 @@ its existing bytes, language and target. Explicit conversions are rejected
 because portable packages do not contain the source overlays needed for them.
 
 The schema-1 bundle inventory records file hashes and logical modes. Codex
-ownership uses receipt 3; Claude uses receipt 1; current review policy and ledger
+ownership uses receipt 4, binding the selected Python executable and native launcher; Claude uses receipt 1; current review policy and ledger
 use schema 2. Retired formats are rejected while their files remain preserved.
 Updates between versions with the current compatible layout retain the
 protected installation and recovery contract.

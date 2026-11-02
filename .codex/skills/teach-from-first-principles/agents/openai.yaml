@@ -1,0 +1,6 @@
+interface:
+  display_name: "First-Principles Master Teacher"
+  short_description: "Deep, rigorous, self-contained teaching"
+  default_prompt: "Use $teach-from-first-principles to teach me a subject from zero through examples, ontology, rigorous derivation, practice, and adversarial review."
+policy:
+  allow_implicit_invocation: true

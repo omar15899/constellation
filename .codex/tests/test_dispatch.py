@@ -21,6 +21,7 @@ from ecosystem import build as builder
 from ecosystem.runtime import dispatch
 from ecosystem.runtime import workspace as ws
 from ecosystem.runtime.workflow import review_engine
+from test_workflow import install_test_bundle
 
 
 class DispatchTests(unittest.TestCase):
@@ -302,7 +303,16 @@ class DispatchTests(unittest.TestCase):
         """Run a standalone package without compatibility modules in its source root."""
         shutil.copytree(MODULE / "ecosystem", package, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        if package == self.root / ".codex/ecosystem":
+            self.own_source_manifest(package)
+            arguments = ("--source", *arguments)
         return self.run_canonical_cli(package / "cli.py", *arguments, cwd=cwd)
+
+    def own_source_manifest(self, source: Path) -> None:
+        manifest = (source / "manifests/codex-plugin.json").relative_to(self.root)
+        if not ws.git(self.root, "ls-tree", "HEAD", "--", manifest.as_posix()):
+            ws.git(self.root, "add", "--", manifest.as_posix())
+            ws.git(self.root, "commit", "-m", "Identify the source checkout for developer tests")
 
     def run_canonical_cli(self, entry: Path, *arguments: str, cwd: Path):
         result = subprocess.run([sys.executable, "-B", str(entry), *arguments],
@@ -321,6 +331,143 @@ class DispatchTests(unittest.TestCase):
             "repositories": {}}))
         return child
 
+    def checkout_entry(self) -> Path:
+        """Produce a real source Git owner and a sentinel against local imports."""
+        source = self.root / ".codex/ecosystem"
+        (source / "manifests").mkdir(parents=True)
+        shutil.copy2(MODULE / "ecosystem/cli.py", source / "cli.py")
+        (source / "manifests/codex-plugin.json").write_text('{"name":"constellation"}')
+        ws.git(self.root, "add", ".codex/ecosystem")
+        ws.git(self.root, "commit", "-m", "Own the source entry")
+        (source / "__init__.py").write_text("raise AssertionError('Mutable runtime imported')\n")
+        return source / "cli.py"
+
+    def test_workspace_root_case_alias_retains_owner_and_registry_boundaries(self):
+        alias = self.root.with_name(self.root.name.swapcase())
+        if not alias.exists() or not self.root.samefile(alias):
+            self.skipTest("The test filesystem uses case-sensitive root lookup")
+        workspace = ws.Workspace(alias, "physical-owner")
+        self.assertEqual(workspace.root, self.root)
+        self.assertEqual(workspace.route(["Provider/README.md"])[0]["repository"], "Provider")
+        nested = self.root / "nested"
+        nested.mkdir()
+        with self.assertRaisesRegex(ws.Blocked, "repository root"):
+            ws.Workspace(nested, "not-an-owner")
+
+    def test_unidentified_checkout_never_imports_its_siblings(self):
+        source = self.root / ".codex/ecosystem"
+        source.mkdir()
+        entry = source / "cli.py"
+        shutil.copy2(MODULE / "ecosystem/cli.py", entry)
+        marker = self.root / "unverified-import"
+        poison = f"open({str(marker)!r}, 'w').close()\nraise RuntimeError('unverified import')\n"
+        (source / "__init__.py").write_text(poison)
+        (source / "json.py").write_text(poison)
+        for args in (["workspace", "route", "README.md"], ["--source", "workspace", "route", "README.md"]):
+            result = subprocess.run([sys.executable, str(entry), *args], cwd=self.root / "Provider",
+                                    env={**os.environ, "CODEX_HOME": str(self.base / "empty-home")},
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertFalse(marker.exists())
+        # A caller-provided bundle marker cannot authorize local Python imports.
+        (source.parent / "bundle.json").write_text('{"schema":1,"files":{}}')
+        result = subprocess.run([sys.executable, str(entry), "workspace", "route", "README.md"],
+                                cwd=self.root, env={**os.environ, "CODEX_HOME": str(self.base / "empty-home")},
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(marker.exists())
+
+    def test_legacy_checkout_entry_requires_a_cli_capable_installation(self):
+        entry = self.checkout_entry()
+        home = self.base / "old-home"
+        bootstrap = home / "constellation/hook.py"
+        bootstrap.parent.mkdir(parents=True)
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                if legacy:
+                    bootstrap.write_text("print('hook-only release')\n")
+                    bootstrap.chmod(0o644)
+                    (bootstrap.parent / ".install.lock").touch(mode=0o600)
+                    leftover = bootstrap.parent / "run"
+                    leftover.write_text("#!/bin/sh\nexit 0\n")
+                    leftover.chmod(0o700)
+                    old = {'mode': 0o644, 'sha256': hashlib.sha256(bootstrap.read_bytes()).hexdigest()}
+                    (bootstrap.parent / 'receipt.json').write_text(json.dumps({
+                        'schema': 3, 'hook': old, 'cache': {'ecosystem/hook_entry.py': old}}))
+                result = subprocess.run([sys.executable, "-I", str(entry), "git", "git-hook", "pre-commit"],
+                                        env={**os.environ, "CODEX_HOME": str(home)}, cwd=self.root / "Provider",
+                                        text=True, capture_output=True)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("verified CLI", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    @unittest.skipIf(os.name == "nt", "Codex installation is a POSIX target")
+    def test_parent_and_child_use_one_verified_installation(self):
+        entry = self.checkout_entry()
+        child = self.native_child_workspace()
+        home = self.base / "device-home"
+        bundle = self.base / "release"
+        builder.build_bundle(bundle, modules=["coding"], source_root=MODULE)
+        install_test_bundle(bundle, home)
+        stable = [str(home / "constellation/run"), "cli"]
+        legacy = [sys.executable, str(entry)]
+
+        def run(cmd, args, cwd, *, code=0, payload=None):
+            result = subprocess.run([*cmd, *args], env={**os.environ, "CODEX_HOME": str(home)},
+                                    cwd=cwd, text=True, input=json.dumps(payload) if payload is not None else None,
+                                    capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+            return json.loads(result.stdout) if code == 0 else result.stderr
+
+        for cwd in (self.root, child):
+            route = run(legacy, ["workspace", "route", "Consumer/README.md"], cwd)
+            self.assertEqual(route[0]["repository"], "Consumer")
+            explicit = run(legacy, ["workspace", "--root", str(child), "route", "README.md"], cwd)
+            self.assertEqual(explicit[0]["repository"], ".")
+        self.assertEqual(run(stable, ["workspace", "route", "README.md"], child)[0]["repository"], ".")
+        outsider = child / "Unregistered"
+        outsider.mkdir()
+        subprocess.run(["git", "init", "-q", str(outsider)], check=True)
+        (outsider / "README.md").write_text("outside the registry")
+        member = "Provider/Unregistered/README.md"
+        observed = run(stable, ["workspace", "--root", str(self.root), "route", member], child)
+        self.assertEqual(observed[0]["management"], "unregistered")
+        error = run(stable, ["workspace", "--root", str(self.root), "--session", "denied", "plan"], child,
+                    code=2, payload={"requirements": ["Leave unregistered projects outside the task"], "paths": [member]})
+        self.assertIn("register", error.lower())
+        invalid = run(stable, ["native", "--codex-home", str(home), "--expected-bundle-sha256", "invalid"],
+                      child, code=2)
+        self.assertIn("requires --exclude-source-root", invalid)
+        skill = run(stable, ["skill-read", "coding"], child)
+        self.assertEqual(skill["content"], (bundle / "skills/coding/SKILL.md").read_text())
+        self.assertEqual(Path(skill["path"]).name, "SKILL.md")
+        for name in ("../coding", "coding/references/workflow.md", "mathematics"):
+            self.assertTrue(run(stable, ["skill-read", name], child, code=2))
+
+        # The owner's existing Git hook also enters through the legacy path.
+        # Exercise both decisions on a disposable index and no user payload.
+        guard = self.root / ".git/hooks/pre-commit"
+        shutil.copy2(MODULE / "git-hooks/pre-commit", guard)
+        shadow = self.base / "shadow-bin"
+        shadow.mkdir()
+        poison = shadow / "python3"
+        poison.write_text("#!/bin/sh\nexit 91\n")
+        poison.chmod(0o755)
+        environment = {**os.environ, "CODEX_HOME": str(home),
+                       "PATH": str(shadow) + os.pathsep + os.environ.get("PATH", "")}
+        for filename, expected in (("public.txt", 0), (".env.fixture", 2)):
+            (self.root / filename).write_text("synthetic fixture\n")
+            ws.git(self.root, "add", "--", filename)
+            guard_run = subprocess.run(["git", "hook", "run", "pre-commit"], env=environment,
+                                       cwd=self.root, capture_output=True, text=True, timeout=20)
+            self.assertEqual(guard_run.returncode, expected, guard_run.stdout + guard_run.stderr)
+
+        # Damage to the registered executable cannot turn a guard into a successful no-op.
+        launcher = home / "constellation/run"
+        launcher.write_text("#!/bin/sh\nexit 0\n")
+        denied = run(legacy, ["workspace", "route", "README.md"], self.root, code=2)
+        self.assertIn("verified CLI", denied)
+
     def test_source_cli_defaults_to_its_hub_and_accepts_an_explicit_root(self):
         child = self.native_child_workspace()
         package = self.root / ".codex/ecosystem"
@@ -338,6 +485,7 @@ class DispatchTests(unittest.TestCase):
         package = self.root / ".codex/ecosystem"
         shutil.copytree(MODULE / "ecosystem", package,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        self.own_source_manifest(package)
         registry = self.root / ".codex/repositories.json"
         for condition in ("missing", "malformed", "directory", "symlink"):
             with self.subTest(registry=condition):
@@ -357,7 +505,7 @@ class DispatchTests(unittest.TestCase):
                 before = self.fingerprints()
                 for arguments in (("workspace", "route", "README.md"), ("agent-policy", "show")):
                     with self.subTest(command=arguments[0]):
-                        result = subprocess.run([sys.executable, "-B", str(package / "cli.py"), *arguments],
+                        result = subprocess.run([sys.executable, "-B", str(package / "cli.py"), "--source", *arguments],
                                                 cwd=child, capture_output=True, text=True,
                                                 env={**os.environ, "CODEX_HOME": str(self.base / "codex-home")})
                         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -378,6 +526,7 @@ class DispatchTests(unittest.TestCase):
         child = self.native_child_workspace()
         bundle = self.base / "package-location/.codex"
         builder.build_bundle(bundle, modules=["coding"], source_root=MODULE)
+        install_test_bundle(bundle, self.base / "codex-home")
         before = self.fingerprints()
         route = self.run_canonical_cli(bundle / "ecosystem/cli.py", "workspace", "route", "README.md", cwd=child)
         self.assertEqual(route[0]["repository"], ".")
@@ -393,13 +542,14 @@ class DispatchTests(unittest.TestCase):
         package = self.root / ".codex/ecosystem"
         shutil.copytree(MODULE / "ecosystem", package,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        self.own_source_manifest(package)
         alias = self.root / ".CODEX/ecosystem/cli.py"
         if not alias.is_file() or not alias.samefile(package / "cli.py"):
             self.skipTest("The fixture volume has case-sensitive path lookup")
         before = self.fingerprints()
-        route = self.run_canonical_cli(alias, "workspace", "route", "Consumer/README.md", cwd=child)
+        route = self.run_canonical_cli(alias, "--source", "workspace", "route", "Consumer/README.md", cwd=child)
         self.assertEqual(route[0]["repository"], "Consumer")
-        policy = self.run_canonical_cli(alias, "agent-policy", "show", "--repo", "Consumer", cwd=child)
+        policy = self.run_canonical_cli(alias, "--source", "agent-policy", "show", "--repo", "Consumer", cwd=child)
         self.assertEqual(policy["repositories"][0]["max_concurrent_threads_per_session"], 8)
         self.assertEqual(self.fingerprints(), before)
 
@@ -408,6 +558,7 @@ class DispatchTests(unittest.TestCase):
         package = self.root / ".codex/ecosystem"
         shutil.copytree(MODULE / "ecosystem", package,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "tests"))
+        self.own_source_manifest(package)
         genuine = builder.build_bundle(self.base / "genuine-bundle", modules=["coding"], source_root=MODULE)
         marker = package.parent / "bundle.json"
         records = ("{invalid", json.dumps({"schema": 1, "modules": ["coding"], "files": {}}),
@@ -416,16 +567,17 @@ class DispatchTests(unittest.TestCase):
             with self.subTest(marker=content[:45]):
                 marker.write_text(content)
                 before = self.fingerprints()
-                route = self.run_canonical_cli(package / "cli.py", "workspace", "route", "Consumer/README.md", cwd=child)
+                route = self.run_canonical_cli(package / "cli.py", "--source", "workspace", "route", "Consumer/README.md", cwd=child)
                 self.assertEqual(route[0]["repository"], "Consumer")
-                policy = self.run_canonical_cli(package / "cli.py", "agent-policy", "show", "--repo", "Consumer", cwd=child)
+                policy = self.run_canonical_cli(package / "cli.py", "--source", "agent-policy", "show", "--repo", "Consumer", cwd=child)
                 self.assertEqual(policy["repositories"][0]["max_concurrent_threads_per_session"], 8)
                 self.assertEqual(self.fingerprints(), before)
 
     def test_cli_is_readonly_and_returns_json(self):
         self.plan(["Provider/lib.py"])
         before = self.fingerprints()
-        result = subprocess.run([sys.executable, "-B", str(MODULE / "ecosystem/cli.py"), "workspace", "--root", str(self.root),
+        result = subprocess.run([sys.executable, "-B", str(MODULE / "ecosystem/cli.py"),
+                                 *(["--source"] if cli._source_checkout() else []), "workspace", "--root", str(self.root),
                                  "--session", self.workspace.session, "dispatch", "--capacity", "2"],
                                 capture_output=True, text=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -674,14 +826,20 @@ class DispatchTests(unittest.TestCase):
         self.review_current_plan()
         original = ws.Workflow.publish
 
-        def mutate(flow):
-            result = original(flow)
+        observed_publications = []
+
+        def mutate(flow, *, whole_head=False):
+            self.assertFalse(whole_head)
+            result = original(flow, whole_head=whole_head)
+            observed_publications.append(result)
             (flow.root / "unexpected.py").write_text("pass\n")
             return result
 
         with patch.object(ws.Workflow, "publish", mutate):
             with self.assertRaisesRegex(ws.Blocked, "New undeclared files"):
                 self.workspace.publish("Provider")
+        self.assertEqual(len(observed_publications), 1)
+        self.assertTrue((self.root / "Provider/unexpected.py").is_file())
         self.assertIsNone(ws.Workflow(self.root / "Provider", self.workspace.session).load().get("publication"))
 
     def test_publish_cli_verifies_head_without_an_empty_commit(self):

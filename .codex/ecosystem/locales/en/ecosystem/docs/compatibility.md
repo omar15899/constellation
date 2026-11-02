@@ -1,18 +1,22 @@
 # Compatibility and evidence
 
-The active layout belongs to `1.4.0-rc.1`: four skills, eight roles and 82
-resources in the full distribution. Targets are `posix` and `windows-claude`.
+The `1.4.0` distribution includes four general methods and eight roles.
+On POSIX Codex, the optional `omaros` module adds the vault engine and seven
+skills. The built package inventory identifies the selected resources. Targets are `posix` and `windows-claude`.
 A valid inventory does not establish execution, native trust or response quality.
 
 ## Platforms and limits
 
 | Scope | Status and limit |
 | --- | --- |
+| Codex CLI and desktop app with local execution | The client supports locally installed plugins. A new session can inspect the refreshed catalogue and hook trust. [Codex plugins](https://learn.chatgpt.com/docs/plugins) |
+| IDE extension and cloud-orchestrated ChatGPT Work | The IDE extension does not load plugins. Cloud-orchestrated Work does not execute the local plugin's hooks. [Plugin support](https://learn.chatgpt.com/docs/plugins) · [Hooks](https://learn.chatgpt.com/docs/hooks) |
 | macOS/Linux | POSIX target, Python 3.11+, compatible client and filesystem supporting exclusive promotion. |
+| Git publication on POSIX | Requires Git 2.48 or later. Before transfer, the engine verifies it can replace the remote URL list with the sole authorized endpoint. A push was verified with Git 2.50.1. |
 | Native Windows Claude | Candidate adaptation without WSL; actual execution remains pending and the user has deferred it. |
 | Native Windows Codex | Outside this delivery's Windows target. |
 | Hook trust | Native client review; neither installation nor retained paths grant it. |
-| OmarOS | Active adapter with four verified resources pinned to 1.2.0; retains its own contract. |
+| OmarOS | The central `omaros` profile uses the local contract, vault restrictions and per-owner publication. |
 
 The [Windows guide](windows.md) distinguishes installation, isolated backend
 checks, direct replays, events in a real client, Git and PowerShell. The latter

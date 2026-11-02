@@ -107,6 +107,84 @@ class FilesystemContractTests(_FilesystemFixture, unittest.TestCase):
         self.assertEqual((target / "user.txt").read_text(encoding="utf-8"), "preserve")
         self.assertTrue(stage.is_dir())
 
+    @unittest.skipIf(subject.IS_WINDOWS, "Codex file exchange is a POSIX operation")
+    def test_file_swap_retains_both_inodes_and_rejects_vacant_or_aliased_operands(self) -> None:
+        stage, target = self.root / "prepared", self.root / "live"
+        stage.write_bytes(b"new release")
+        with self.assertRaises(subject.PlatformError):
+            subject.exchange_files(stage, target)
+        target.write_bytes(b"independently changed")
+        identities = stage.stat().st_ino, target.stat().st_ino
+        subject.exchange_files(stage, target)
+        self.assertEqual((stage.stat().st_ino, target.stat().st_ino), identities[::-1])
+        self.assertEqual((stage.read_bytes(), target.read_bytes()), (b"independently changed", b"new release"))
+        alias = self.root / "alias"
+        alias.symlink_to(stage)
+        with self.assertRaises(subject.PlatformError):
+            subject.exchange_files(alias, target)
+        self.assertEqual(stage.read_bytes(), b"independently changed")
+
+    @unittest.skipIf(subject.IS_WINDOWS, "Codex file promotion is a POSIX operation")
+    def test_file_promotion_preserves_racing_destination(self) -> None:
+        stage, target = self.root / "prepared", self.root / "live"
+        stage.write_bytes(b"new release")
+        native = subject._ps_posix_rename
+        def race(source, destination, **kwargs):
+            target.write_bytes(b"foreign data")
+            native(source, destination, **kwargs)
+        with mock.patch.object(subject, "_ps_posix_rename", side_effect=race):
+            with self.assertRaises(FileExistsError):
+                subject.promote_file(stage, target)
+        self.assertEqual((stage.read_bytes(), target.read_bytes()), (b"new release", b"foreign data"))
+        target.unlink()
+        subject.promote_file(stage, target)
+        self.assertEqual(target.read_bytes(), b"new release")
+        self.assertFalse(stage.exists())
+
+    @unittest.skipIf(subject.IS_WINDOWS, "Codex file exchange is a POSIX operation")
+    def test_file_swap_pins_parent_before_intervening_symlink_replacement(self) -> None:
+        live = self.root / "managed"
+        live.mkdir()
+        displaced = self.root / "moved"
+        foreign = self.root / "foreign"
+        foreign.mkdir()
+        (foreign / "run").write_bytes(b"foreign")
+        (live / "run").write_bytes(b"old")
+        stage = self.root / "prepared"
+        stage.write_bytes(b"new")
+        native = subject._ps_posix_rename
+        def race(source, destination, **kwargs):
+            live.rename(displaced)
+            live.symlink_to(foreign, target_is_directory=True)
+            native(source, destination, **kwargs)
+        with mock.patch.object(subject, "_ps_posix_rename", side_effect=race):
+            subject.exchange_files(stage, live / "run")
+        self.assertEqual((foreign / "run").read_bytes(), b"foreign")
+        self.assertEqual((displaced / "run").read_bytes(), b"new")
+        self.assertEqual(stage.read_bytes(), b"old")
+
+    @unittest.skipIf(subject.IS_WINDOWS, "Pinned directory handles require POSIX")
+    def test_directory_publication_uses_the_pinned_parent_and_preserves_a_competing_tree(self) -> None:
+        parent, elsewhere, moved = (self.root / name for name in ("session", "elsewhere", "moved"))
+        parent.mkdir()
+        elsewhere.mkdir()
+        (parent / "draft").mkdir()
+        (parent / "draft/video.tex").write_bytes(b"complete")
+        descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, descriptor)
+        parent.rename(moved)
+        parent.symlink_to(elsewhere, target_is_directory=True)
+        (moved / "video").mkdir()
+        (moved / "video/authored.tex").write_bytes(b"preserve")
+        with self.assertRaises(FileExistsError):
+            subject.promote_directory_at(descriptor, "draft", descriptor, "video")
+        self.assertEqual((moved / "video/authored.tex").read_bytes(), b"preserve")
+        with self.assertRaises(subject.PlatformError):
+            subject.promote_directory_at(descriptor, "draft", descriptor, "../escape")
+        subject.promote_directory_at(descriptor, "draft", descriptor, "another-video")
+        self.assertEqual((moved / "another-video/video.tex").read_bytes(), b"complete")
+        self.assertEqual(list(elsewhere.iterdir()), [])
+
     def test_new_directory_promotion_preserves_payload(self) -> None:
         stage, target = self.root / "staging", self.root / "installed"
         subject.secure_mkdir(stage, 0o755)
@@ -349,14 +427,14 @@ class PosixRenameSelectionTests(unittest.TestCase):
             return -1
         function = mock.Mock(side_effect=unsupported)
         library = mock.Mock()
-        library.renamex_np = function
+        library.renameatx_np = function
         subject._ps_posix_rename_api.cache_clear()
         with (mock.patch.object(subject.sys, "platform", "darwin"),
               mock.patch.object(subject.ctypes, "CDLL", return_value=library),
               mock.patch.object(Path, "rename") as fallback):
             with self.assertRaisesRegex(subject.PlatformError, "unsupported"):
                 subject._ps_posix_rename_exclusive(PurePosixPath("/fixed/source"), PurePosixPath("/fixed/target"))
-        function.assert_called_once_with(b"/fixed/source", b"/fixed/target", 4)
+        function.assert_called_once_with(-2, b"/fixed/source", -2, b"/fixed/target", 4)
         fallback.assert_not_called()
 
 

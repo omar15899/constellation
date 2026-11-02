@@ -31,6 +31,7 @@ from install import InstallError, _replace_bytes
 
 storage = importlib.import_module("ecosystem.storage")
 core = importlib.import_module("ecosystem.core")
+from ecosystem.cli import _source_checkout
 from test_core import FixtureCase
 from helpers import DEFAULT_PROFILE, Scenario
 
@@ -121,7 +122,7 @@ class PublicUtf8BoundaryTests(unittest.TestCase):
         untrusted = b'{"session_id":"UNTRUSTED-RAW-PAYLOAD-\xff","task_id":"fixture-task","agent_id":"fixture-coordinator"}'
         result = subprocess.run(
             [sys.executable, "-I", "-B", str(ECOSYSTEM / "cli.py"),
-             "--root", str(root), "--state-dir", str(state), "status"],
+             *(["--source"] if _source_checkout() else []), "--root", str(root), "--state-dir", str(state), "status"],
             input=untrusted, capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stderr, b"")

@@ -1,6 +1,6 @@
 # Claude Code on native Windows
 
-The `1.4.0-rc.1` English package has a native Windows target for Claude Code.
+The `1.4.0` English package has a native Windows target for Claude Code.
 It uses Windows file locks, private access controls and an exec-form Python
 hook command. It does not require WSL or a Bash shell for those hooks.
 **Native Windows acceptance is pending until the supplied checks have actually
@@ -45,8 +45,8 @@ but the isolated portable acceptance below does not need a corporate repository.
 If building from the canonical source checkout, choose new output paths:
 
 ```powershell
-python .codex/ecosystem/build.py --language en --target windows-claude --output C:\Temp\constellation-1.4.0-rc.1-en-windows --archive C:\Temp\constellation-1.4.0-rc.1-en-windows.zip
-Get-FileHash C:\Temp\constellation-1.4.0-rc.1-en-windows.zip -Algorithm SHA256
+python .codex/ecosystem/build.py --language en --target windows-claude --output C:\Temp\constellation-1.4.0-en-windows --archive C:\Temp\constellation-1.4.0-en-windows.zip
+Get-FileHash C:\Temp\constellation-1.4.0-en-windows.zip -Algorithm SHA256
 ```
 
 For a delivered ZIP, compare its SHA-256 with the supplied delivery checksum
@@ -54,9 +54,9 @@ before extraction. Use a new destination; the example assumes the ZIP is in
 the current directory:
 
 ```powershell
-Get-FileHash .\constellation-1.4.0-rc.1-en-windows.zip -Algorithm SHA256
-$package = Join-Path $env:USERPROFILE 'Downloads\constellation-1.4.0-rc.1-en-windows'
-Expand-Archive -LiteralPath .\constellation-1.4.0-rc.1-en-windows.zip -DestinationPath $package
+Get-FileHash .\constellation-1.4.0-en-windows.zip -Algorithm SHA256
+$package = Join-Path $env:USERPROFILE 'Downloads\constellation-1.4.0-en-windows'
+Expand-Archive -LiteralPath .\constellation-1.4.0-en-windows.zip -DestinationPath $package
 ```
 
 A checksum detects differences from the delivered artifact; it does not by itself

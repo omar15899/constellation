@@ -1,52 +1,45 @@
 ---
 name: "writter"
-description: "Draft, revise, and review substantive articles, reports, essays, creative prose, and explanations for a defined audience and purpose. Use when prose, argument, or conceptual exposition is the deliverable; handle isolated rewording directly. Use a format skill as well for Word, PDF, or slides."
+description: "Draft, revise, and review articles, reports, essays, creative prose and explanations for a defined audience. Use for substantive writing or conceptual exposition from first principles. Handle isolated rewording directly. Combine with a format skill for Word, PDF or slides."
 ---
 
 # Writter
 
-Produce a text that fulfills its purpose and maintains a coherent voice. Infer
-the audience, language, depth, length, output surface and degree of intervention;
-ask only when a missing decision would materially change the result.
-An explanation in conversation does not authorize creating a file. When editing,
-preserve the author's intention and distinguish expression from a change of
-thesis. Choose the smallest change that fulfills the task; a request for
-reconstruction or a substantial gap may require rebuilding the structure.
+Write so the reader can do what prompted the request. Infer what they already
+know, what they need to understand or decide, and the requested voice, language
+and medium. In a revision, distinguish improving the wording from changing
+the thesis. Honor explicit limits on scope. If the request asks only for agreement to be
+corrected, return the corrected sentence. A short fictional scene can be
+handled directly.
 
-Handle a brief correction or simple creative piece directly, without a
-persistent contract or routine delegation. For a substantial article, report,
-essay or revision, consult the [editorial workflow](references/workflow.md).
-Compare structures when they affect the argument; an integrator maintains
-coherence and delegates research, drafting or review when useful.
+When the purpose is to explain, start with the question that gives the
+construction a purpose. Establish what kind of thing the explanation concerns,
+which objects are involved and which relationships characterize them. Introduce
+each structure when it enables an operation the argument needs. The reader can
+then distinguish the initial data, the author's choices and the consequences
+that follow. In a technical explanation, state the domains, assumptions and
+scope before the step that depends on them.
 
-Review content, structure and support before polishing sentences. Check
-figures, quotations, attributions and claims whose accuracy matters to the task;
-each source must support the specific claim. Do not invent sources, DOIs, data
-or review coverage. Qualify, remove or leave unsupported material pending
-according to the intent. Fiction does not require citations merely because it
-is writing.
+Develop the subtleties that affect the meaning, validity or use of the
+conclusion. If a formula or table represents an object, explain how to obtain
+it, what it preserves and whether the object can be reconstructed from it.
+Carry an example through the argument. Vary a choice or remove an assumption
+so the reader can see what survives and where a particular inference fails.
+Honor a request to begin with a calculation or case. The
+[shared ontology](../../ecosystem/references/ontology.md) develops these
+distinctions, and the [examples](../../ecosystem/references/ontology-examples.md)
+show how to apply them. Match the depth to the question and genre.
 
-Verify the mathematical or computational content that supports the conclusions;
-combine `mathematics` or `coding` where appropriate. Editorial correctness,
-mathematical proof and behavioral testing have distinct obligations. In an
-explanation, construct objects before operating on them and present the general
-framework useful for deriving the requested cases. Notation must clarify
-relationships, not replace their explanation. Consult the
-[shared ontology](../../ecosystem/references/ontology.md) when distinguishing
-objects, spaces, functions, values or representations supports the argument;
-load only the [example](../../ecosystem/references/ontology-examples.md) that
-resolves a specific difficulty.
+For a substantive article, report or revision, use the
+[editorial workflow](references/workflow.md). Check the argument and the
+support for each essential claim before polishing the style. In factual writing,
+distinguish observations, inferences, approximations and open questions. If a
+conclusion requires a proof or a test of behavior, combine with `mathematics`
+or `coding` as appropriate.
 
-A significant delivery needs observable requirements, checks and independent
-review proportional to risk, with the receiving project's current minimum.
-Consult the [common protocol](../../ecosystem/references/protocol.md) when
-persistent evidence is needed: an ordinary Git edit uses the receiving contract;
-a delivery without Git can use the portable engine. A mixed result links the
-necessary evidence without registering the entire task twice. A mechanical
-control does not replace editorial judgment.
-
-For Word, PDF or slides, use the available format skill and check the rendered
-result. If a necessary capability is missing, explain the limitation and deliver
-the usable part without pretending to produce the format or execute an
-operation. Publishing or sending the result requires the corresponding
-authorization within the task.
+A significant delivery receives proportionate checks and independent review
+at the receiving project's required level. The
+[common protocol](../../ecosystem/references/protocol.md) distinguishes the Git
+lifecycle from portable delivery. Deliver an explanation requested in chat in
+that conversation. For Word, PDF or slides, use the available format skill and
+inspect the rendered result. Publishing and sending follow the authorized scope.

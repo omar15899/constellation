@@ -60,7 +60,7 @@ class EnglishPackagingTests(unittest.TestCase):
 
     def test_english_uses_complete_overlays_and_one_canonical_agent_body(self) -> None:
         bundle = self.build("english")
-        self.assertEqual(len(subject.verify_bundle(bundle)["files"]), 82)
+        self.assertEqual(set(subject.verify_bundle(bundle)["files"]), subject.allowed_files(subject.MODULES))
         self.assertEqual(validate(bundle), [])
         for relative in subject.allowed_files(subject.MODULES):
             canonical = subject.source_path(relative)

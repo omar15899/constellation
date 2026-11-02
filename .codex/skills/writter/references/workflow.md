@@ -103,6 +103,42 @@ el hueco con una referencia inventada. Si la ausencia impide satisfacer un
 requisito esencial, entrega el estado parcial y su consecuencia con claridad.
 No declares una revisión exhaustiva después de comprobar solo una muestra.
 
+## Explicar desde los fundamentos
+
+La pregunta rectora decide hasta dónde hay que retroceder. Antes de operar,
+establece qué entidades intervienen, qué relaciones se definen entre ellas y
+qué datos bastan para que la operación tenga sentido. Explica el motivo de
+cada construcción en el punto donde el lector la necesita. Una definición fija
+el objeto. La existencia de un objeto que satisface una condición, su unicidad
+y la independencia respecto de una elección requieren argumentos distintos.
+
+Mantén un ejemplo a través de dos cambios que puedan confundirse. En un espacio
+real de dimensión finita, cambiar la base puede modificar las componentes con
+las que describimos un vector y un funcional lineal. El escalar que se obtiene al evaluar el mismo
+funcional sobre el mismo vector se conserva. Elegir un producto interno añade
+otra operación. Permite representar el funcional por el vector cuyo producto
+interno con cada argumento reproduce su valor. Si duplicamos el producto
+interno, el vector representante se divide por dos. El funcional sigue
+asignando los mismos valores. Esta variación indica al lector exactamente qué
+dependía de la geometría. La [ontología](../../../ecosystem/references/ontology.md)
+y sus [ejemplos](../../../ecosystem/references/ontology-examples.md) desarrollan
+la construcción y las hipótesis de casos más generales.
+
+En otros dominios, usa las entidades y las preguntas propias del tema. Una
+imagen en escala de grises asigna un nivel a cada posición. Su histograma
+cuenta cuántas posiciones tienen cada nivel. Intercambiar dos píxeles de
+niveles distintos conserva esos recuentos y cambia la imagen. Los recuentos
+bastan para calcular el nivel medio, pero recuperar la imagen requiere
+información espacial. El ejemplo localiza la información que pierde la
+representación y muestra por qué la pérdida importa para una pregunta concreta.
+
+Al escribir una fórmula, anticipa qué relación pretende expresar y después
+interpreta qué autoriza a concluir. Cuando un resultado requiera hipótesis
+nuevas, identifica el paso exacto que las utiliza. Una intuición ayuda si el
+lector puede volver por ella al argumento. Conserva el orden de entrada pedido
+y dedica espacio a una sutileza cuando resolverla cambie la comprensión o el
+uso de la conclusión.
+
 ## Contenido técnico y entregables mixtos
 
 Para un argumento matemático esencial, verifica hipótesis, tipos, cuantificadores
@@ -120,29 +156,6 @@ pueden avanzar en paralelo con escritores distintos. No cargues habilidades ajen
 al encargo ni repitas todos los ciclos por cada skill seleccionada. En el informe
 existente basta indicar qué capacidad se usó, para qué, con qué evidencia y qué
 falló; no crees un registro separado de selección ni guardes conversaciones.
-
-En una explicación técnica, parte de la pregunta y de la clase de objeto que
-puede responderla. Presenta el marco general que permita obtener los casos
-pedidos y explicita qué añade cada especialización. Un ejemplo puede abrir el
-texto o venir primero si se pide así; debe permitir volver a la regla general
-sin confundir el caso finito, euclídeo o matricial con la definición. Escoge la
-generalidad que explique las dependencias reales, sin imponer un recorrido
-axiomático ajeno al alcance.
-
-Consulta la [ontología](../../../ecosystem/references/ontology.md) cuando las
-distinciones entre objetos, espacios, funciones, valores o representaciones
-sostengan el argumento. Aplícala para justificar qué estructura habilita cada
-operación y qué hipótesis necesita el paso decisivo; carga únicamente el
-[ejemplo](../../../ecosystem/references/ontology-examples.md) pertinente. En otros
-temas, distingue entidades, relaciones y afirmaciones según su propio marco;
-no les impongas formalismo matemático.
-
-Introduce símbolos cuando permitan expresar una relación o una distinción que
-el texto necesite. Explica antes los ingredientes, presenta la fórmula y lee
-después su consecuencia. Conserva nombres estables y evita cadenas de símbolos
-que obliguen a descifrar lo que la prosa puede decir mejor. La profundidad no
-se mide por cantidad de notación ni por longitud. Usa ejemplos transferibles:
-al variar una hipótesis o representación, muestra qué cambia y qué se conserva.
 
 En un informe con texto, demostración y código, declara las obligaciones que
 correspondan a cada entregable y, si comparten archivo, a cada requisito del

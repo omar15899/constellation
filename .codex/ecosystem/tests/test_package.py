@@ -6,6 +6,7 @@ has a separate test using only a temporary CODEX_HOME and no conversation/thread
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import hashlib
 from itertools import combinations
 import json
@@ -42,6 +43,8 @@ ALL_MODULES = ("coding", "mathematics", "quant-research", "writter")
 IS_DISTRIBUTED = (CODEX_DIR / "bundle.json").is_file()
 MODULES = (tuple(json.loads((CODEX_DIR / "bundle.json").read_text())["modules"])
            if IS_DISTRIBUTED else ALL_MODULES)
+METHODS = tuple(module for module in MODULES if module in ALL_MODULES)
+SKILLS = tuple(builder.skill_names(MODULES))
 PLUGIN_ID = "constellation@constellation"
 PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 CLAUDE_PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
@@ -199,7 +202,7 @@ class BundleCase(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="constellation-package-test-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
-        self.module = MODULES[0]
+        self.module = METHODS[0]
         self.bundle = self.root / "bundle"
         self.manifest = build_bundle(self.bundle, source_root=CODEX_DIR)
         self.current_version = json.loads((self.bundle / PLUGIN_MANIFEST).read_text())["version"]
@@ -487,8 +490,8 @@ class BuildTests(BundleCase):
                 (unpacked / info.filename).chmod((info.external_attr >> 16) & 0o777)
         self.assertEqual(verify_bundle(unpacked), manifest)
 
-    def test_each_module_is_independent_and_keeps_the_common_engine(self) -> None:
-        for module in MODULES:
+    def test_each_general_method_is_independent_and_keeps_the_common_engine(self) -> None:
+        for module in METHODS:
             with self.subTest(module=module):
                 target = self.root / module
                 manifest = build_bundle(target, [module], source_root=self.bundle)
@@ -515,7 +518,8 @@ class BuildTests(BundleCase):
     def test_installed_markdown_resources_close_inside_every_subset(self) -> None:
         for module in MODULES:
             target = self.root / ("links-" + module)
-            build_bundle(target, [module], source_root=self.bundle)
+            selection = [*METHODS, module] if module == "omaros" else [module]
+            build_bundle(target, selection, source_root=self.bundle)
             docs = list((target / "skills").rglob("*.md")) + list((target / "ecosystem/references").glob("*.md"))
             for path in docs:
                 text = path.read_text()
@@ -776,14 +780,14 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(receipt["cache"]["ecosystem/agents/reviewer.toml"]["mode"], 0o755)
         self.assertEqual(receipt["agents"]["constellation-reviewer.toml"]["mode"], 0o644)
         self.assertEqual(self.install(bundle, check=True)["status"], "checked")
-        self.assertEqual(self.install(bundle)["status"], "updated")
+        self.assertEqual(self.install(bundle)["status"], "current")
 
     def test_install_repeat_and_update_use_native_registration_and_preserve_unrelated_files(self) -> None:
         first = self.install()
         self.assertEqual(first["status"], "installed")
         before = snapshot(self.home)
         repeated = self.install()
-        self.assertIn(repeated["status"], {"updated", "unchanged"})
+        self.assertEqual(repeated["status"], "current")
         self.assertEqual(snapshot(self.home), before)
         self.assertEqual(self.backend.mutations.count("add_marketplace"), 1)
         self.assertEqual(len([row for row in self.backend.plugins() if row["pluginId"] == PLUGIN_ID]), 1)
@@ -796,8 +800,13 @@ class SyntheticInstallationTests(BundleCase):
     def test_receipt_hashes_actual_owned_files_and_has_no_duplicate_global_skills(self) -> None:
         self.install()
         receipt = self.receipt()
-        self.assertEqual(receipt["schema"], 3)
+        self.assertEqual(receipt["schema"], 4)
         entry = self.home / "constellation/hook.py"
+        launcher = self.home / "constellation/run"
+        self.assertEqual(receipt["python"], sys.executable)
+        self.assertEqual(receipt["launcher"]["mode"], 0o700)
+        self.assertEqual(stat.S_IMODE(launcher.stat().st_mode), 0o700)
+        self.assertEqual(receipt["launcher"]["sha256"], hashlib.sha256(launcher.read_bytes()).hexdigest())
         self.assertEqual(receipt["hook"], installer.file_record(entry))
         self.assertEqual(receipt["hook"]["mode"], 0o644)
         self.assertEqual(entry.read_bytes(), (self.cache() / "ecosystem/hook_entry.py").read_bytes())
@@ -809,80 +818,85 @@ class SyntheticInstallationTests(BundleCase):
                 self.assertEqual(record["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
                 self.assertEqual(record["mode"], stat.S_IMODE(path.stat().st_mode))
         self.assertEqual(sorted(path.name for path in (self.home / "skills").iterdir()), ["user-skill"])
-        self.assertEqual(sorted(path.name for path in (self.cache() / "skills").iterdir()), list(MODULES))
+        self.assertEqual(sorted(path.name for path in (self.cache() / "skills").iterdir()), sorted(SKILLS))
 
     def test_stable_entry_foreign_files_and_links_are_never_adopted(self) -> None:
         managed = self.home / "constellation"
         managed.mkdir()
-        entry = managed / "hook.py"
-        for kind in ("file", "symlink", "directory"):
-            with self.subTest(kind=kind):
-                if kind == "file":
-                    entry.write_text("Independently owned entry.\n")
-                elif kind == "symlink":
-                    entry.symlink_to(self.home / "AGENTS.md")
-                else:
-                    entry.mkdir()
-                before = snapshot(self.home)
-                with self.assertRaises(InstallError):
-                    self.install()
-                self.assertEqual(snapshot(self.home), before)
-                self.assertEqual(self.backend.mutations, [])
-                if kind == "directory":
-                    entry.rmdir()
-                else:
-                    entry.unlink()
+        for name in ("hook.py", "run"):
+            entry = managed / name
+            for kind in ("file", "symlink", "directory"):
+                with self.subTest(entry=name, kind=kind):
+                    if kind == "file":
+                        entry.write_text("Independently owned entry.\n")
+                    elif kind == "symlink":
+                        entry.symlink_to(self.home / "AGENTS.md")
+                    else:
+                        entry.mkdir()
+                    before = snapshot(self.home)
+                    with self.assertRaises(InstallError):
+                        self.install()
+                    self.assertEqual(snapshot(self.home), before)
+                    self.assertEqual(self.backend.mutations, [])
+                    if kind == "directory":
+                        entry.rmdir()
+                    else:
+                        entry.unlink()
 
     def test_stable_entry_changed_hash_mode_missing_or_link_blocks_update(self) -> None:
         self.install()
-        entry = self.home / "constellation/hook.py"
-        content = entry.read_bytes()
-        for damage in ("content", "mode", "missing", "symlink"):
-            with self.subTest(damage=damage):
-                if damage == "content":
-                    entry.write_text("Changed entry.\n")
-                elif damage == "mode":
-                    entry.chmod(0o755)
-                else:
-                    entry.unlink()
-                    if damage == "symlink":
-                        entry.symlink_to(self.home / "AGENTS.md")
-                before, mutations = snapshot(self.home), list(self.backend.mutations)
-                with self.assertRaises(InstallError):
-                    self.install()
-                self.assertEqual(snapshot(self.home), before)
-                self.assertEqual(self.backend.mutations, mutations)
-                entry.unlink(missing_ok=True)
-                entry.write_bytes(content)
-                entry.chmod(0o644)
+        for name, valid_mode in (("hook.py", 0o644), ("run", 0o700)):
+            entry = self.home / "constellation" / name
+            content = entry.read_bytes()
+            for damage in ("content", "mode", "missing", "symlink"):
+                with self.subTest(entry=name, damage=damage):
+                    if damage == "content":
+                        entry.write_text("Changed entry.\n")
+                    elif damage == "mode":
+                        entry.chmod(0o755)
+                    else:
+                        entry.unlink()
+                        if damage == "symlink":
+                            entry.symlink_to(self.home / "AGENTS.md")
+                    before, mutations = snapshot(self.home), list(self.backend.mutations)
+                    with self.assertRaises(InstallError):
+                        self.install()
+                    self.assertEqual(snapshot(self.home), before)
+                    self.assertEqual(self.backend.mutations, mutations)
+                    entry.unlink(missing_ok=True)
+                    entry.write_bytes(content)
+                    entry.chmod(valid_mode)
 
     def test_receipt_failure_after_atomic_write_restores_entry_and_previous_receipt(self) -> None:
         self.install()
         before = snapshot(self.home)
         update = self.changed_bundle(change_entry=True)
-        original_write = installer._write_json
+        original_publish = installer._publish_receipt
 
-        def write_then_fail(path: Path, value: dict) -> None:
-            original_write(path, value)
-            self.assertIn(b"Updated synthetic stable entry release", (path.parent / "hook.py").read_bytes())
-            raise OSError("Synthetic lost acknowledgement after receipt replacement")
+        def publish_then_fail(home: Path, *args, forward: bool, **kwargs) -> None:
+            original_publish(home, *args, forward=forward, **kwargs)
+            if forward:
+                self.assertIn(b"Updated synthetic stable entry release", (home / "constellation/hook.py").read_bytes())
+                raise OSError("Synthetic lost acknowledgement after receipt replacement")
 
-        with patch.object(installer, "_write_json", side_effect=write_then_fail):
+        with patch.object(installer, "_publish_receipt", side_effect=publish_then_fail):
             with self.assertRaisesRegex(InstallError, "previous owned files.*restored"):
                 self.install(update)
         self.assertEqual(snapshot(self.home), before)
 
     def test_first_install_receipt_failure_removes_new_stable_entry(self) -> None:
-        original_write = installer._write_json
+        original_publish = installer._publish_receipt
 
-        def write_then_fail(path: Path, value: dict) -> None:
-            original_write(path, value)
-            raise OSError("Synthetic failure after receipt replacement")
+        def publish_then_fail(home: Path, *args, forward: bool, **kwargs) -> None:
+            original_publish(home, *args, forward=forward, **kwargs)
+            if forward:
+                raise OSError("Synthetic failure after receipt replacement")
 
-        with patch.object(installer, "_write_json", side_effect=write_then_fail):
+        with patch.object(installer, "_publish_receipt", side_effect=publish_then_fail):
             with self.assertRaisesRegex(InstallError, "previous owned files.*restored"):
                 self.install()
         self.assertFalse((self.home / "constellation/hook.py").exists())
+        self.assertFalse((self.home / "constellation/run").exists())
         self.assertFalse((self.home / "constellation/receipt.json").exists())
         self.assertFalse((self.home / "constellation/catalog").exists())
         self.assert_unrelated_preserved()
@@ -902,11 +916,11 @@ class SyntheticInstallationTests(BundleCase):
 
     def test_selected_modules_install_check_and_upgrade_preserve_owned_subset(self) -> None:
         updated = self.changed_bundle(version="1.2.1")
-        for modules in [*([module] for module in MODULES), list(MODULES)]:
+        for modules in [*([module] for module in METHODS), list(MODULES)]:
             with self.subTest(modules=modules):
                 self.install(modules=modules)
                 self.assertEqual(self.receipt()["modules"], modules)
-                self.assertEqual(sorted(path.name for path in (self.cache() / "skills").iterdir()), modules)
+                self.assertEqual(sorted(path.name for path in (self.cache() / "skills").iterdir()), sorted(builder.skill_names(modules)))
                 self.assertTrue(CORE_FILES <= set(verify_bundle(self.cache())["files"]))
                 actual_agents = {path.name for path in (self.home / "agents").glob("constellation-*")}
                 self.assertEqual(actual_agents, set(self.receipt()["agents"]))
@@ -915,7 +929,7 @@ class SyntheticInstallationTests(BundleCase):
                 self.assertEqual(snapshot(self.home), before)
                 self.assertEqual(self.backend.mutations, mutations)
                 self.assertEqual(self.install(updated, modules=modules)["status"], "updated")
-                self.assertEqual(self.receipt()["schema"], 3)
+                self.assertEqual(self.receipt()["schema"], 4)
                 self.assertEqual(verify_bundle(self.cache())["modules"], modules)
                 self.assertEqual(self.install(updated, modules=modules, check=True)["status"], "checked")
                 self.assert_unrelated_preserved()
@@ -1006,12 +1020,16 @@ class SyntheticInstallationTests(BundleCase):
         updated = self.changed_bundle(change_agent=True)
         updated_content = (updated / "ecosystem/agents/reviewer.toml").read_bytes()
 
-        def fail_receipt(_path: Path, _value: dict) -> None:
-            self.assertEqual(managed.read_bytes(), updated_content)
-            os.link(managed, external)
-            raise OSError("Synthetic receipt failure after agent replacement")
+        original_publish = installer._publish_receipt
 
-        with patch.object(installer, "_write_json", side_effect=fail_receipt):
+        def fail_receipt(home: Path, *args, forward: bool, **kwargs) -> None:
+            if forward:
+                self.assertEqual(managed.read_bytes(), updated_content)
+                os.link(managed, external)
+                raise OSError("Synthetic receipt failure after agent replacement")
+            original_publish(home, *args, forward=False, **kwargs)
+
+        with patch.object(installer, "_publish_receipt", side_effect=fail_receipt):
             with self.assertRaisesRegex(InstallError, "restored"):
                 self.install(updated)
         self.assertTrue(external.is_file())
@@ -1141,6 +1159,11 @@ class SyntheticInstallationTests(BundleCase):
             value = json.loads(json.dumps(original))
             value["cache"][extra] = {"sha256": "0" * 64, "mode": 0o644}
             variants.append(value)
+        # A schema-3 shape alone proves no ownership of this installed release.
+        variants.append({**{key: value for key, value in original.items() if key not in {"python", "launcher"}},
+                         "schema": 3})
+        variants.extend([{**original, "launcher": {**original["launcher"], "mode": 0o644}},
+                         {**original, "python": "python3"}])
         texts = [json.dumps(value) for value in variants]
         texts.append('{"schema": 999,' + json.dumps(original)[1:])
         for text in texts:
@@ -1232,15 +1255,22 @@ class SyntheticInstallationTests(BundleCase):
         self.assertEqual(self.receipt()["version"], self.current_version)
         self.assert_unrelated_preserved()
 
-    def test_native_cache_mismatch_is_rejected_and_compensated(self) -> None:
-        before = snapshot(self.home)
+    def test_unexpected_native_cache_bytes_remain_available_for_recovery(self) -> None:
         self.backend.corrupt_cache_once = True
-        with self.assertRaises(InstallError):
-            self.install()
-        after = snapshot(self.home)
-        after.pop("constellation/.install.lock", None)
-        self.assertEqual(after, before)
-        self.assertFalse((self.home / "constellation/receipt.json").exists())
+        retained = self.cache(self.current_version) / "ecosystem/runtime/review-policy.json"
+        with patch.object(self.backend, "remove_plugin", wraps=self.backend.remove_plugin) as remove:
+            with self.assertRaises(InstallError):
+                self.install()
+            self.assertEqual(retained.read_bytes(), b"{}\n")
+            self.assertTrue((self.home / "constellation/.transition").exists())
+            self.assertFalse((self.home / "constellation/receipt.json").exists())
+            self.assertEqual(self.install(check=True)["status"], "recovery_required")
+            with self.assertRaises(InstallError):
+                self.install()
+            self.assertEqual(retained.read_bytes(), b"{}\n")
+            self.assertFalse((self.home / "constellation/receipt.json").exists())
+            remove.assert_not_called()
+        self.assert_unrelated_preserved()
 
     def test_native_retaining_an_old_cache_cannot_report_a_successful_update(self) -> None:
         self.install()
@@ -1397,6 +1427,49 @@ class NativeAdapterSubprocessTests(unittest.TestCase):
         self.assertTrue(all(row["home"] == str(self.home) and row["cwd"] == str(self.root) for row in calls))
         self.assertTrue(all(row["thread_present"] is False for row in calls))
 
+    def test_name_rule_covers_distinct_source_aliases_with_the_same_native_name(self) -> None:
+        primary = str(self.root / "skills/primary/SKILL.md")
+        alias = str(self.root / "skills/older-name/SKILL.md")
+        names = {primary: "scholar", alias: "scholar"}
+        config = self.home / "config.toml"
+        config.write_text(f'[[skills.config]]\nname = "scholar"\nenabled = true\n'
+                          f'[[skills.config]]\npath = {json.dumps(primary)}\nenabled = false\n')
+        before = config.read_bytes()
+        with self.assertRaisesRegex(NativeError, "Explicit user preference enables"):
+            native_adapter._configured_exclusions(self.home, self.root / "project", set(names), names_by_path=names)
+        self.assertEqual(config.read_bytes(), before)
+        # The explicit path exception applies only to the first alias.
+        self.assertEqual(native_adapter._configured_exclusions(
+            self.home, self.root / "project", {primary}, names_by_path={primary: "scholar"}), {primary})
+
+    def test_only_scoped_install_mutations_inherit_the_device_lock(self) -> None:
+        # The probe reports whether this child holds the actual lock inode. Its
+        # executable and home are independent fixtures; no system config is read.
+        probe = self.root / "descriptor-probe"
+        probe.write_text("#!" + sys.executable + "\n" + textwrap.dedent('''\
+            import json, os, pathlib, sys
+            lock = (pathlib.Path(os.environ["CODEX_HOME"]) / "constellation/.install.lock").stat()
+            found = False
+            for item in os.listdir("/dev/fd"):
+                try:
+                    found |= os.path.samestat(lock, os.fstat(int(item)))
+                except (OSError, ValueError):
+                    pass
+            result = {"inherited": found, "marketplaces": [], "installed": []}
+            print(json.dumps(result))
+        '''))
+        probe.chmod(0o700)
+        client = NativeClient(self.home, str(probe), self.root)
+        with installer._lock(self.home) as descriptor:
+            self.assertFalse(client.add_plugin()["inherited"])
+            with client.inherit_install_lock(descriptor):
+                self.assertFalse(client._run_json("plugin", "list")["inherited"])
+                self.assertTrue(client.add_marketplace(self.root)["inherited"])
+                self.assertTrue(client.remove_marketplace()["inherited"])
+                self.assertTrue(client.add_plugin()["inherited"])
+                self.assertTrue(client.remove_plugin()["inherited"])
+            self.assertFalse(client.remove_plugin()["inherited"])
+
     def test_cli_failure_and_invalid_json_are_rejected_without_echoing_output(self) -> None:
         for flag in ("fail", "bad-json"):
             (self.home / flag).touch()
@@ -1483,7 +1556,7 @@ class RealNativeInstallationTests(BundleCase):
         discovery = client.inspect(receiver, Path(installed["catalog"]) / ".agents/plugins/marketplace.json")
         self.assertEqual(discovery["errors"], 0)
         skills = discovery["skills"]
-        self.assertEqual(sorted(skill["name"] for skill in skills), ["constellation:" + module for module in MODULES])
+        self.assertEqual(sorted(skill["name"] for skill in skills), sorted("constellation:" + name for name in SKILLS))
         self.assertTrue(all(skill["enabled"] for skill in skills))
         self.assertTrue(all(Path(skill["path"]).is_relative_to(home / "plugins/cache") for skill in skills))
         self.assertEqual(discovery["plugin"]["id"], PLUGIN_ID)
@@ -1507,7 +1580,7 @@ class RealNativeInstallationTests(BundleCase):
         cache = home / "plugins/cache/constellation/constellation" / updated["version"]
         self.assertEqual(self.engine_request(home, cache, "status", identity)["revision"], revision)
         self.assertEqual(snapshot(state), state_before)
-        self.assertTrue(all(not (home / "skills" / module).exists() for module in MODULES))
+        self.assertTrue(all(not (home / "skills" / name).exists() for name in SKILLS))
         self.assertFalse((receiver / ".git").exists())
 
 
@@ -1569,13 +1642,13 @@ class RealNativeSourceExclusionTests(BundleCase):
 
     def test_native_exclusion_disables_only_source_preserves_foreign_preferences_and_repeats(self) -> None:
         source, home, client, foreign = self.prepare_source()
-        source_paths = {source / "skills" / module / "SKILL.md" for module in MODULES}
+        source_paths = {source / "skills" / name / "SKILL.md" for name in SKILLS}
         before_rows = self.skill_rows(client, source.parent)
         self.assertTrue(all(before_rows[path]["enabled"] is True for path in source_paths))
         self.assertFalse(before_rows[foreign]["enabled"])
         plugin_paths = {path for path, row in before_rows.items()
-                        if row["name"] in {"constellation:" + module for module in MODULES}}
-        self.assertEqual(len(plugin_paths), len(MODULES))
+                        if row["name"] in {"constellation:" + name for name in SKILLS}}
+        self.assertEqual(len(plugin_paths), len(SKILLS))
         self.assertTrue(all(before_rows[path]["enabled"] is True for path in plugin_paths))
         source_before, cache_before = snapshot(source), snapshot(home / "plugins/cache")
         agents_before = snapshot(home / "agents")
@@ -1599,7 +1672,7 @@ class RealNativeSourceExclusionTests(BundleCase):
         configuration_after = tomllib.loads((home / "config.toml").read_text())
         excluded_rules = [row for row in configuration_after["skills"]["config"]
                           if Path(row["path"]) in source_paths]
-        self.assertEqual(len(excluded_rules), len(MODULES))
+        self.assertEqual(len(excluded_rules), len(SKILLS))
         self.assertTrue(all(row["enabled"] is False for row in excluded_rules))
         configuration_after["skills"]["config"] = [row for row in configuration_after["skills"]["config"]
                                                     if Path(row["path"]) not in source_paths]
@@ -1635,12 +1708,330 @@ class RealNativeSourceExclusionTests(BundleCase):
         self.assertEqual([Path(row["path"]) for row in result["paths"]],
                          [source / "skills" / self.module / "SKILL.md"])
         rows = self.skill_rows(client, source.parent)
-        for module in MODULES:
-            self.assertIs(rows[source / "skills" / module / "SKILL.md"]["enabled"], module != self.module)
+        for name in SKILLS:
+            self.assertIs(rows[source / "skills" / name / "SKILL.md"]["enabled"], name != self.module)
         self.assertFalse(rows[foreign]["enabled"])
         plugin_rows = [row for row in rows.values() if row["name"].startswith("constellation:")]
         self.assertEqual([row["name"] for row in plugin_rows], ["constellation:" + self.module])
         self.assertTrue(plugin_rows[0]["enabled"])
+
+    def test_previously_suppressed_sources_can_stay_on_previous_revision(self) -> None:
+        source, home, client, foreign = self.prepare_source()
+        first = client.exclude_source_skills(source)
+        self.assertEqual(first["status"], "excluded", first)
+        self.assertTrue(first["source_identity_checked"])
+        updated = self.changed_bundle("2.3.4")
+        install_bundle(updated, home, client=client)
+        before = self.preference_snapshot(home)
+        desired_digest = hashlib.sha256((updated / "bundle.json").read_bytes()).hexdigest()
+        self.assertNotEqual(desired_digest, first["bundle_sha256"])
+        with self.assertRaisesRegex(NativeError, "expected digest"):
+            client.exclude_source_skills(source, expected_bundle_sha256=first["bundle_sha256"])
+        self.assertEqual(self.preference_snapshot(home), before)
+
+        with patch.object(native_adapter, "_require_source_identity",
+                          side_effect=AssertionError("confirmation does not claim source identity")), \
+             patch.object(native_adapter._Rpc, "call", autospec=True,
+                          side_effect=native_adapter._Rpc.call) as calls:
+            repeated = client.exclude_source_skills(source, expected_bundle_sha256=desired_digest)
+        self.assertEqual(repeated["bundle_sha256"], desired_digest)
+        self.assertEqual(repeated["status"], "excluded", repeated)
+        self.assertEqual(repeated["operation"], "already_confirmed")
+        self.assertFalse(repeated["source_identity_checked"])
+        self.assertFalse(any(call.args[1] == "skills/config/write" for call in calls.call_args_list))
+        self.assertTrue(all(item["verified"] for item in repeated["paths"]))
+        self.assertEqual(self.preference_snapshot(home), before)
+        self.assertFalse(self.skill_rows(client, source.parent)[foreign]["enabled"])
+
+        # One new write must revalidate all selected resources, even if other
+        # paths were already explicitly excluded and the plugin is enabled.
+        other = self.source_copy("other-checkout/.codex")
+        for name in SKILLS:
+            if name != self.module:
+                self.rpc(client, "skills/config/write",
+                         {"path": str(other / "skills" / name / "SKILL.md"), "enabled": False})
+        before = self.preference_snapshot(home)
+        with self.assertRaisesRegex(NativeError, "Source and installed resource differ"):
+            client.exclude_source_skills(other)
+        self.assertEqual(self.preference_snapshot(home), before)
+
+    def test_user_and_project_enabled_source_settings_are_preserved_before_any_write(self) -> None:
+        source, home, client, _foreign = self.prepare_source()
+        selected = str(source / "skills" / SKILLS[-1] / "SKILL.md")
+        for origin, config in (("project", source / "config.toml"), ("user", home / "config.toml")):
+            original = config.read_bytes() if config.exists() else None
+            for selector, value in (("path", selected), ("name", SKILLS[-1])):
+                table = f"\n[[skills.config]]\n{selector} = {json.dumps(value)}\nenabled = true\n".encode()
+                config.write_bytes((original or b"") + table)
+                before = self.preference_snapshot(home)
+                with self.subTest(origin=origin, selector=selector):
+                    with self.assertRaisesRegex(NativeError, f"Explicit {origin} preference enables"):
+                        client.exclude_source_skills(source)
+                self.assertEqual(config.read_bytes(), (original or b"") + table)
+                self.assertEqual(self.preference_snapshot(home), before)
+            if original is None:
+                config.unlink()
+            else:
+                config.write_bytes(original)
+        self.assertEqual(client.exclude_source_skills(source)["status"], "excluded")
+
+    @unittest.skipUnless(len(METHODS) >= 2, "The UI override test needs one protected and one new source")
+    def test_native_ui_clear_protects_prior_source_before_candidate_or_write(self) -> None:
+        source, home, client, _foreign = self.prepare_source()
+        name = self.module
+        path = str(source / "skills" / name / "SKILL.md")
+        before_exclusion = (home / "config.toml").read_bytes()
+        first = client.exclude_source_skills(source, [name])
+        self.assertEqual(first["status"], "excluded")
+        # The current native UI removes a redundant rule when enabling a source;
+        # clients that keep an explicit true rule must preserve that choice too.
+        self.rpc(client, "skills/config/write", {"path": path, "enabled": True})
+        self.assertTrue(self.skill_rows(client, source.parent)[Path(path)]["enabled"])
+        before = self.preference_snapshot(home)
+        with self.assertRaisesRegex(NativeError, "Previously excluded|Explicit user preference enables"):
+            client.exclude_source_skills(source, protect_exclusions=[name])
+        self.assertEqual(self.preference_snapshot(home), before)
+
+        # This is the exact no-rule state even when running a client that stores true.
+        (home / "config.toml").write_bytes(before_exclusion)
+        before = self.preference_snapshot(home)
+        command = [sys.executable, "-I", "-B", str(SOURCE_DIR / "native.py"), "--codex-home", str(home),
+                   "--codex", str(self.root / "not-a-codex-executable"),
+                   "--exclude-source-root", str(source), "--check-protected-only", "--protect-exclusion", name]
+        check = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(check.returncode, 0)
+        self.assertIn("Previously excluded", check.stderr)
+        self.assertEqual(self.preference_snapshot(home), before)
+
+        self.rpc(client, "skills/config/write", {"path": path, "enabled": False})
+        check = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertEqual(json.loads(check.stdout)["status"], "protected")
+        result = client.exclude_source_skills(source, protect_exclusions=[name])
+        self.assertEqual(result["status"], "excluded", result)
+        self.assertEqual(result["protected_exclusions"], [name])
+        attempts = {item["name"]: item["write_attempted"] for item in result["paths"]}
+        self.assertFalse(attempts[name])
+        self.assertTrue(any(attempts.values()))
+
+    @unittest.skipUnless(len(METHODS) >= 3, "Mid-batch operator change needs two prospective writes")
+    def test_ui_clear_during_batch_stops_remaining_new_source_writes(self) -> None:
+        source, home, client, _foreign = self.prepare_source()
+        selected = METHODS[:3]
+        name = selected[0]
+        path = str(source / "skills" / name / "SKILL.md")
+        self.rpc(client, "skills/config/write", {"path": path, "enabled": False})
+        original = native_adapter._Rpc.call
+        reenabled = False
+
+        def operator_change(connection, method, params):
+            nonlocal reenabled
+            response = original(connection, method, params)
+            if method == "skills/config/write" and not reenabled:
+                reenabled = True
+                self.rpc(client, "skills/config/write", {"path": path, "enabled": True})
+            return response
+
+        with patch.object(native_adapter._Rpc, "call", new=operator_change):
+            result = client.exclude_source_skills(source, selected, protect_exclusions=[name])
+        self.assertTrue(reenabled)
+        self.assertEqual(result["status"], "partial")
+        self.assertRegex(result["error"], "Previously excluded|Explicit user preference enables")
+        writes = {item["name"]: item["write_attempted"] for item in result["paths"]}
+        self.assertEqual(writes, {name: False, selected[1]: True, selected[2]: False})
+        rows = self.skill_rows(client, source.parent)
+        self.assertTrue(rows[Path(path)]["enabled"])
+        self.assertFalse(rows[source / "skills" / selected[1] / "SKILL.md"]["enabled"])
+        self.assertTrue(rows[source / "skills" / selected[2] / "SKILL.md"]["enabled"])
+
+    def test_native_enable_conflicting_with_configured_exclusion_requires_resolution(self) -> None:
+        source, home, client, _foreign = self.prepare_source()
+        path = str(source / "skills" / SKILLS[-1] / "SKILL.md")
+        self.rpc(client, "skills/config/write", {"path": path, "enabled": False})
+        before = self.preference_snapshot(home)
+        actual_snapshot = native_adapter._skill_snapshot
+
+        def effective_enable(rpc: object, cwd: Path) -> dict:
+            result = actual_snapshot(rpc, cwd)
+            result[path]["enabled"] = True
+            return result
+
+        with patch.object(native_adapter, "_skill_snapshot", side_effect=effective_enable), \
+             self.assertRaisesRegex(NativeError, "Configured exclusion is not effective"):
+            client.exclude_source_skills(source)
+        self.assertEqual(self.preference_snapshot(home), before)
+
+    def test_ambiguous_explicit_path_overrides_cannot_be_confirmed(self) -> None:
+        source, home, client, _foreign = self.prepare_source()
+        self.assertEqual(client.exclude_source_skills(source)["status"], "excluded")
+        skill = source / "skills" / self.module / "SKILL.md"
+        with (home / "config.toml").open("a", encoding="utf-8") as stream:
+            stream.write(f"\n[[skills.config]]\npath = {json.dumps(str(skill))}\nenabled = false\n")
+        before = self.preference_snapshot(home)
+        with self.assertRaises(NativeError):
+            client.exclude_source_skills(source)
+        self.assertEqual(self.preference_snapshot(home), before)
+
+    @unittest.skipUnless((CODEX_DIR / "skills/fast-finder/SKILL.md").is_file(),
+                         "This distribution does not include the optional OmarOS skills")
+    def test_excluding_omaros_checks_every_specialist_before_writing(self) -> None:
+        self.bundle = self.root / "personal"
+        build_bundle(self.bundle, [*METHODS, "omaros"], source_root=CODEX_DIR)
+        source, home, client, foreign = self.prepare_source()
+        names = tuple(builder.skill_names(["omaros"]))
+        self.assertIn("scholar", names)
+        specialist = source / "skills/scholar/SKILL.md"
+        original = specialist.read_bytes()
+        specialist.write_bytes(original + b"\nIndependently changed specialist.\n")
+        before = self.preference_snapshot(home)
+        with self.assertRaises(NativeError):
+            client.exclude_source_skills(source, modules=["omaros"])
+        self.assertEqual(self.preference_snapshot(home), before)
+        specialist.write_bytes(original)
+        prerequisite = source / "skills" / self.module / "SKILL.md"
+        original = prerequisite.read_bytes()
+        prerequisite.write_bytes(original + b"\nIndependent general method.\n")
+        with self.assertRaises(NativeError):
+            client.exclude_source_skills(source, modules=["omaros"])
+        self.assertEqual(self.preference_snapshot(home), before)
+        prerequisite.write_bytes(original)
+        result = client.exclude_source_skills(source, modules=["omaros"])
+        self.assertEqual(result["status"], "excluded", result)
+        self.assertEqual({item["name"] for item in result["paths"]}, set(names))
+        rows = self.skill_rows(client, source.parent)
+        self.assertTrue(rows[source / "skills" / self.module / "SKILL.md"]["enabled"])
+        self.assertFalse(rows[foreign]["enabled"])
+        self.assertTrue(all(not rows[source / "skills" / name / "SKILL.md"]["enabled"] for name in names))
+
+    @unittest.skipUnless((CODEX_DIR / "skills/fast-finder/SKILL.md").is_file(),
+                         "This distribution does not include the optional OmarOS skills")
+    def test_older_method_only_checkout_does_not_receive_phantom_overrides(self) -> None:
+        self.bundle = self.root / "personal"
+        build_bundle(self.bundle, [*METHODS, "omaros"], source_root=CODEX_DIR)
+        source, home, client, _foreign = self.prepare_source()
+        specialists = builder.skill_names(["omaros"])
+        prior_path = str(source / "skills" / specialists[0] / "SKILL.md")
+        self.rpc(client, "skills/config/write", {"path": prior_path, "enabled": False})
+        for name in specialists:
+            shutil.rmtree(source / "skills" / name)
+        before = self.preference_snapshot(home)
+        check = client.check_protected_sources(source, ["omaros"], specialists)
+        self.assertEqual(check["present"], [])
+        self.assertEqual(check["absent"], sorted(specialists))
+        with self.assertRaisesRegex(NativeError, "selected skill"):
+            client.check_protected_sources(source, ["omaros"], ["../unknown"])
+        none = client.exclude_source_skills(source, ["omaros"], protect_exclusions=specialists)
+        self.assertEqual(none["operation"], "no_source_paths")
+        self.assertEqual(none["paths"], [])
+        self.assertEqual(none["status"], "excluded", none)
+        self.assertEqual(self.preference_snapshot(home), before)
+
+        result = client.exclude_source_skills(source)
+        self.assertEqual(result["status"], "excluded", result)
+        self.assertEqual(set(result["absent_sources"]), set(specialists))
+        self.assertEqual({item["name"] for item in result["paths"]}, set(METHODS))
+        user_flags = {entry["path"]: entry["enabled"]
+                      for entry in tomllib.loads((home / "config.toml").read_text())["skills"]["config"]}
+        self.assertIs(user_flags[prior_path], False)
+        self.assertTrue(all(str(source / "skills" / name / "SKILL.md") not in user_flags for name in specialists[1:]))
+        method = source / "skills" / self.module / "SKILL.md"
+        method.write_bytes(method.read_bytes() + b"\nChanged local method.\n")
+        before = self.preference_snapshot(home)
+        self.assertEqual(client.exclude_source_skills(source)["operation"], "already_confirmed")
+        self.assertEqual(self.preference_snapshot(home), before)
+
+        missing = source / "skills" / specialists[0]
+        missing.symlink_to(self.root / "missing-target")
+        with self.assertRaises(NativeError):
+            client.exclude_source_skills(source)
+        self.assertEqual(self.preference_snapshot(home), before)
+        missing.unlink()
+        missing.write_text("An independently owned file is not a skill directory.")
+        with self.assertRaises(NativeError):
+            client.exclude_source_skills(source)
+        self.assertEqual(self.preference_snapshot(home), before)
+
+    def test_exclusion_rejects_concurrent_install_before_changing_source_flags(self) -> None:
+        source, home, client, _foreign = self.prepare_source()
+        before = self.preference_snapshot(home)
+        with installer._lock(home), self.assertRaisesRegex(NativeError, "Installation is in progress"):
+            client.exclude_source_skills(source)
+        self.assertEqual(self.preference_snapshot(home), before)
+        result = client.exclude_source_skills(source)
+        self.assertEqual(result["status"], "excluded", result)
+
+    def test_orphaned_source_preference_writer_pins_release_until_exit(self) -> None:
+        """Actual discovery uses Codex; only the long in-flight write is a subprocess fixture."""
+        import select
+
+        source, home, client, _foreign = self.prepare_source()
+        proxy = self.root / "codex-with-blocked-write"
+        # Only the writer has the device lock inode. Read-only CLI and RPC
+        # operations run through the real executable with no inherited lock.
+        proxy.write_text("#!" + sys.executable + "\n" + textwrap.dedent('''\
+            import json, os, pathlib, select, sys
+            root = pathlib.Path(__file__).parent
+            home = pathlib.Path(os.environ["CODEX_HOME"])
+            lock = (home / "constellation/.install.lock").stat()
+            inherited = False
+            for item in os.listdir("/dev/fd"):
+                try:
+                    inherited |= os.path.samestat(lock, os.fstat(int(item)))
+                except (OSError, ValueError):
+                    pass
+            if sys.argv[1:] != ["app-server", "--stdio"] or not inherited:
+                real = (root / "real-codex").read_text()
+                os.execv(real, [real, *sys.argv[1:]])
+            for line in sys.stdin:
+                request = json.loads(line)
+                if "id" not in request:
+                    continue
+                if request["method"] == "skills/config/write":
+                    (root / "orphan-write-ready").write_bytes(b"R")
+                    with (root / "orphan-write-release").open("rb", buffering=0) as release:
+                        if not select.select([release], [], [], 20)[0] or release.read(1) != b"X":
+                            os._exit(2)
+                    (root / "orphan-write-done").write_bytes(b"D")
+                    os._exit(0)
+                print(json.dumps({"id": request["id"], "result": {}}), flush=True)
+            '''))
+        proxy.chmod(0o700)
+        (self.root / "real-codex").write_text(client.executable)
+        with ExitStack() as stack:
+            fds = []
+            for name in ("orphan-write-ready", "orphan-write-release", "orphan-write-done"):
+                path = self.root / name
+                os.mkfifo(path, 0o600)
+                descriptor = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+                stack.callback(os.close, descriptor)
+                fds.append(descriptor)
+            ready, release, done = fds
+            process = subprocess.Popen(
+                [sys.executable, "-I", "-B", str(SOURCE_DIR / "native.py"), "--codex-home", str(home),
+                 "--codex", str(proxy), "--cwd", str(source.parent), "--exclude-source-root", str(source)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            active = False
+            try:
+                self.assertTrue(select.select([ready], [], [], 15)[0], "source writer did not reach mutation")
+                self.assertEqual(os.read(ready, 1), b"R")
+                active = True
+                process.kill()
+                process.wait(timeout=10)
+                with self.assertRaisesRegex(InstallError, "running"):
+                    install_bundle(self.bundle, home, client=client)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+                os.write(release, b"X")
+                if active:
+                    self.assertTrue(select.select([done], [], [], 10)[0], "orphaned source writer did not finish")
+                    self.assertEqual(os.read(done, 1), b"D")
+        # The write barrier precedes the process's exit; wait for descriptor close.
+        subprocess.run([sys.executable, "-I", "-c",
+                        "import fcntl,sys; f=open(sys.argv[1],'rb'); fcntl.flock(f,fcntl.LOCK_EX)",
+                        str(home / "constellation/.install.lock")], check=True, timeout=10)
+        self.assertEqual(install_bundle(self.bundle, home, client=client)["status"], "current")
 
     def test_lost_native_write_acknowledgement_reports_partial_and_verifies_persisted_flags(self) -> None:
         source, home, client, foreign = self.prepare_source()
@@ -1665,9 +2056,9 @@ class RealNativeSourceExclusionTests(BundleCase):
         self.assertTrue(result["paths"][0]["verified"])
         self.assertTrue(all(not row["write_attempted"] for row in result["paths"][1:]))
         rows = self.skill_rows(client, source.parent)
-        self.assertFalse(rows[source / "skills" / MODULES[0] / "SKILL.md"]["enabled"])
+        self.assertFalse(rows[source / "skills" / SKILLS[0] / "SKILL.md"]["enabled"])
         self.assertTrue(all(rows[source / "skills" / module / "SKILL.md"]["enabled"] is True
-                            for module in MODULES[1:]))
+                            for module in SKILLS[1:]))
         self.assertTrue(all(row["enabled"] is True for row in rows.values()
                             if row["name"].startswith("constellation:")))
         self.assertFalse(rows[foreign]["enabled"])
@@ -1737,7 +2128,7 @@ class RealNativeSourceExclusionTests(BundleCase):
         self.assertEqual(self.preference_snapshot(home), before)
         rows = self.skill_rows(client, source.parent)
         self.assertTrue(all(rows[source / "skills" / module / "SKILL.md"]["enabled"] is True
-                            for module in MODULES))
+                            for module in SKILLS))
 
     def assert_resource_divergence_is_rejected(self, relative: str) -> None:
         source, home, client, _foreign = self.prepare_source()
@@ -1756,13 +2147,22 @@ class RealNativeSourceExclusionTests(BundleCase):
             self.assertEqual(self.preference_snapshot(home), before)
             rows = self.skill_rows(client, source.parent)
             self.assertTrue(all(rows[source / "skills" / module / "SKILL.md"]["enabled"] is True
-                                for module in MODULES))
+                                for module in SKILLS))
         finally:
             path.write_bytes(original)
         self.assertEqual(client.exclude_source_skills(source)["status"], "excluded")
 
     def test_changed_workflow_with_identical_skill_metadata_cannot_be_excluded(self) -> None:
         self.assert_resource_divergence_is_rejected(f"skills/{self.module}/references/workflow.md")
+
+    def test_changed_executable_permission_cannot_be_excluded(self) -> None:
+        source, home, client, _foreign = self.prepare_source()
+        resource = source / "ecosystem/cli.py"
+        resource.chmod(stat.S_IMODE(resource.stat().st_mode) ^ 0o111)
+        before = self.preference_snapshot(home)
+        with self.assertRaises(NativeError):
+            client.exclude_source_skills(source)
+        self.assertEqual(self.preference_snapshot(home), before)
 
     def test_changed_shared_protocol_with_identical_skill_metadata_cannot_be_excluded(self) -> None:
         self.assert_resource_divergence_is_rejected("ecosystem/references/protocol.md")
@@ -1803,8 +2203,8 @@ class RealNativeSourceExclusionTests(BundleCase):
                          "An unselected source module requires at least two distributed modules")
     def test_changed_unselected_module_does_not_prevent_excluding_the_installed_subset(self) -> None:
         source, home, client, _foreign = self.prepare_source(modules=[self.module])
-        unselected = next(module for module in MODULES if module != self.module)
-        path = source / "skills" / unselected / "references/workflow.md"
+        unselected = next(name for name in SKILLS if name != self.module)
+        path = source / "skills" / unselected / "SKILL.md"
         path.write_bytes(path.read_bytes() + b"\nUnselected source workflow change.\n")
         result = client.exclude_source_skills(source)
         self.assertEqual(result["status"], "excluded", result)
@@ -1820,7 +2220,8 @@ class DistributedSuiteTests(unittest.TestCase):
     def test_full_and_each_module_run_their_shipped_suites_without_mutating_bundle(self) -> None:
         with tempfile.TemporaryDirectory(prefix="constellation-distributed-suite-") as temporary:
             root = Path(temporary).resolve()
-            selections = [("full", ALL_MODULES), *((module, (module,)) for module in ALL_MODULES)]
+            selections = [("full", ALL_MODULES), ("personal", builder.AVAILABLE_MODULES),
+                          *((module, (module,)) for module in ALL_MODULES)]
             cases = []
             for name, modules in selections:
                 bundle = root / name
@@ -1837,13 +2238,14 @@ class DistributedSuiteTests(unittest.TestCase):
                 cases.append((name, bundle, manifest, before, receiver, environment))
 
             # Each child has its own receiver, native home and default state.
-            # Run bounded independent processes; inspect every result in order.
+            # A full exported run starts hundreds of tests and real native subprocesses.
+            # Keep a finite bound that accommodates all six editions under host load.
             with ThreadPoolExecutor(max_workers=2) as executor:
                 pending = [executor.submit(
                     subprocess.run,
                     [sys.executable, "-I", "-B", "-m", "unittest", "discover", "-s",
                      str(bundle / "ecosystem/tests"), "-q"], cwd=receiver, env=environment,
-                    capture_output=True, text=True, timeout=300,
+                    capture_output=True, text=True, timeout=900,
                 ) for _, bundle, _, _, receiver, environment in cases]
                 for (name, bundle, manifest, before, receiver, _), future in zip(cases, pending):
                     with self.subTest(distribution=name):

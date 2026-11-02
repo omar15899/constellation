@@ -17,7 +17,7 @@ sys.dont_write_bytecode = True
 
 from . import workspace_root
 from .. import platform_support as ps
-from .workflow import _read_private_text, _write_private, _windows_case_path, git_state_home, Blocked, Workflow, changed, digest, git, now, private_path, record_stop, safe_path, staged_gate, staged_paths, stop_replay
+from .workflow import _read_private_text, _write_private, _windows_case_path, git_state_home, Blocked, Workflow, changed, digest, git, now, incomplete_stop, prepare_stop, private_path, safe_path, staged_gate, staged_paths
 
 
 def names(value: Any, label: str) -> list[str]:
@@ -71,8 +71,9 @@ class Workspace:
     def __init__(self, root: Path, session: str):
         if ps.IS_WINDOWS:
             ps.validate_lookup(root)
-        self.root = root.resolve()
-        if Path(git(self.root, "rev-parse", "--show-toplevel")).resolve() != self.root:
+        requested = root.resolve()
+        self.root = Path(git(requested, "rev-parse", "--show-toplevel")).resolve()
+        if not requested.samefile(self.root):
             raise Blocked("The workspace root must itself be a Git repository root.")
         self.session = session
         self.key = digest(session.encode())[:24]
@@ -276,9 +277,7 @@ class Workspace:
             state = self.load()
             if active_only and state.get("finished"):
                 return {}
-            replay = stop_replay(state, request_id)
-            if replay is not None:
-                return replay
+            key, migrated = prepare_stop(state, request_id)
             try:
                 with self.flows(state["roots"]) as flows:
                     self.validate(state, flows)
@@ -288,21 +287,18 @@ class Workspace:
                     raise Blocked(f"Repository lifecycle incomplete: {', '.join(pending)}. Inspect workspace.py status.")
                 if not state.get("finished"):
                     raise Blocked("Run workspace.py finish to verify the entire workspace task.")
-                result = record_stop(state, request_id, {})
-                if request_id is not None:
+            except Blocked as exc:
+                reason = str(exc)
+                result, charged = incomplete_stop(state, key, reason, label="Workspace",
+                    continuation=f"[CONSTELLATION-CONTINUE:{self.key}] {reason}")
+                if charged or migrated or state.get("finished"):
+                    state["finished"] = None
                     self.save(state)
                 return result
-            except Blocked as exc:
-                state["finished"] = None
-                state["stop_attempts"] = state.get("stop_attempts", 0) + 1
-                if state["stop_attempts"] > 2:
-                    result = {"continue": False, "stopReason": f"Workspace task incomplete: {exc}",
-                            "systemMessage": f"Workspace: INCOMPLETE. {exc}"}
-                else:
-                    result = {"decision": "block", "reason": f"[CONSTELLATION-CONTINUE:{self.key}] {exc}"}
-                record_stop(state, request_id, result)
+            if migrated:
                 self.save(state)
-                return result
+            return {}
+
 
     @staticmethod
     def signature(spec: dict[str, Any]) -> str:
@@ -580,7 +576,7 @@ class Workspace:
                             # Retrying the batch publishes it without an empty
                             # duplicate commit or losing the task's evidence.
                             contract = flow.load()
-                            publication = flow.publish()
+                            publication = flow.publish(whole_head=(operation == "publish" and not contract["paths"]))
                             flow.reviewed(contract)
                             if not selected[current]:
                                 flow.checked_scope(contract)

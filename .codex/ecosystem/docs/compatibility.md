@@ -1,7 +1,8 @@
 # Compatibilidad y evidencia
 
-La estructura activa corresponde a `1.4.0-rc.1`: cuatro skills, ocho roles y 82
-recursos en la distribución completa. Los destinos son `posix` y
+La distribución `1.4.0` incluye cuatro métodos generales y ocho roles.
+En Codex POSIX, el módulo opcional `omaros` añade el motor del vault y siete
+skills. El inventario del paquete identifica los recursos seleccionados. Los destinos son `posix` y
 `windows-claude`. Un inventario válido no demuestra ejecución, confianza nativa
 ni calidad de respuestas.
 
@@ -9,11 +10,14 @@ ni calidad de respuestas.
 
 | Ámbito | Estado y límite |
 | --- | --- |
+| Codex CLI y aplicación de escritorio con ejecución local | El cliente reconoce plugins de la instalación del equipo. Una sesión nueva puede consultar el catálogo actualizado y la confianza de los hooks. [Plugins en Codex](https://learn.chatgpt.com/docs/plugins) |
+| Extensión IDE y ChatGPT Work en la nube | La extensión IDE no carga plugins. Work orquestado en la nube no ejecuta los hooks del plugin local. [Soporte de plugins](https://learn.chatgpt.com/docs/plugins) · [Hooks](https://learn.chatgpt.com/docs/hooks) |
 | macOS/Linux | Destino POSIX, Python 3.11+, cliente compatible y filesystem con promoción exclusiva soportada. |
+| Publicación Git en POSIX | Requiere Git 2.48 o posterior. Antes de transferir, el motor comprueba que puede sustituir la lista de URL del remoto por el único destino autorizado. Se comprobó un push con Git 2.50.1. |
 | Claude en Windows nativo | Adaptación candidata sin WSL; la ejecución real permanece pendiente y el usuario la ha diferido. |
 | Codex en Windows nativo | Fuera del destino Windows de esta entrega. |
 | Confianza de hooks | Revisión del cliente; no la concede la instalación ni la conservación de rutas. |
-| OmarOS | Adaptador activo con cuatro recursos verificados fijados en 1.2.0; conserva su propio contrato. |
+| OmarOS | Perfil `omaros` de la instalación central, con contrato local, restricciones del vault y publicación por dueño. |
 
 La [guía Windows](windows.md) distingue instalación, pruebas aisladas de backend,
 replays directos, eventos en un cliente real, Git y PowerShell. Los últimos

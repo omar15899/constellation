@@ -3,7 +3,8 @@
 Constellation coordinates requirements, evidence, review and publication on
 Codex and Claude Code. The clients run models, tools and agents; each project
 retains its files, permissions and Git ownership. Current distribution
-`1.4.0-rc.1` combines four skills and eight roles with one runtime.
+`1.4.0` combines four general methods and eight roles. The personal edition
+adds seven skills and the OmarOS profile to the same installed runtime.
 
 The coordinator consults its session's catalogue and loads relevant instructions.
 Discovery, enablement, authorization, execution and result quality are distinct
@@ -29,7 +30,7 @@ and does not prove correct skill selection.
 
 | Source | Responsibility |
 | --- | --- |
-| `.codex/skills/` | Instructions and specific references for the four skills. |
+| `.codex/skills/` | Canonical sources for the four general methods and the seven OmarOS module skills. |
 | `.codex/ecosystem/runtime/` | Git, workspace, dispatch, review and progress. |
 | `core.py`, `storage.py`, `cli.py` | Portable contracts, private persistence and public entry point. |
 | `platform_support.py` | Platform-specific filesystem and access primitives. |
@@ -54,9 +55,9 @@ From canonical sources, choose a new destination:
 
 ```sh
 python3 .codex/ecosystem/build.py --language en \
-  --output /tmp/constellation-1.4.0-rc.1-en \
-  --archive /tmp/constellation-1.4.0-rc.1-en.zip
-shasum -a 256 /tmp/constellation-1.4.0-rc.1-en.zip
+  --output /tmp/constellation-1.4.0-en \
+  --archive /tmp/constellation-1.4.0-en.zip
+shasum -a 256 /tmp/constellation-1.4.0-en.zip
 ```
 
 The default edition retains the Spanish sources. Both editions use the same
@@ -70,13 +71,18 @@ Installing or retaining a path does not grant hook trust.
 
 ## Work and check
 
-In the checkout, use `.codex/ecosystem/cli.py git --session ID` or
-`.codex/ecosystem/cli.py workspace --session ID`. From a package:
+On a configured device the stable entry verifies the installed release and holds
+its lock while using the workspace, the project Git contract or a skill:
 
 ```sh
-python3 /path/to/package/ecosystem/cli.py git --root /path/to/project --session ID begin
-python3 /path/to/package/ecosystem/cli.py git --root /path/to/project --session ID plan < contract.json
+entry="${CODEX_HOME:-$HOME/.codex}/constellation/run"
+"$entry" cli workspace route Shared/README.md
+"$entry" cli git --root /path/to/project --session ID begin
+"$entry" cli skill-read writter
 ```
+
+The source CLI accepts `--source` for development within the owning checkout.
+The portable API remains available from a verified extracted distribution.
 
 The [protocol](references/protocol.md) separates Git and portable delivery. In
 Claude, the lifecycle identity is `claude-<session_id>`; authors and reviewers

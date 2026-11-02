@@ -1,0 +1,4 @@
+interface:
+  display_name: "Brainteasers Quant · Hespérides"
+  short_description: "Asíncronas V12 con presentaciones autocontenidas"
+  default_prompt: "Usa $brainteasers-quant para crear o mejorar esta sesión asíncrona desde el syllabus y los apuntes V12, con el diseño Hespérides, presentaciones autocontenidas que pueda enseñar sin leer ni memorizar el teleprompter, una página estática por diapositiva con todo visible y fijo, sin apariciones ni desapariciones, y revisión del PDF primero sin guion."

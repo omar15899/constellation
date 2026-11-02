@@ -309,6 +309,8 @@ def install_bundle(bundle: Path, claude_home: Path, *, check: bool = False) -> d
     """Deploy verified code only, refusing unowned payloads and preserving settings."""
     source = _anchor(bundle)
     manifest = verify_bundle(source)
+    if "omaros" in manifest["modules"]:
+        raise InstallError("The personal OmarOS profile requires the Codex installer")
     _runtime_preflight(source)
     desired = _receipt(source, manifest)
     home = _anchor(claude_home)

@@ -29,7 +29,10 @@ _BUILD_SPEC.loader.exec_module(_BUILDER)
 
 # This fixture describes the distribution contract independently of the validator.
 CORE_RESOURCES = (
-    "ecosystem/platform_support.py", "ecosystem/docs/windows.md",
+    "ecosystem/platform_support.py", "ecosystem/docs/windows.md", "ecosystem/sync.py",
+    "ecosystem/tests/test_install_upgrade.py", "ecosystem/tests/test_sync.py",
+    "ecosystem/install_recovery.py", "ecosystem/tests/test_install_recovery.py",
+    "ecosystem/updates.py", "ecosystem/docs/updates.md", "ecosystem/tests/test_updates.py",
     "ecosystem/tests/test_platform_support.py", "ecosystem/tests/test_windows_claude.py",
     "ecosystem/tests/windows_acceptance.py",
     "ecosystem/claude.py", "ecosystem/claude_hooks.py", "ecosystem/claude-hooks.json",
@@ -103,8 +106,8 @@ class PackageFixture:
         for event in LIFECYCLE_EVENTS:
             group = {"hooks": [{
                 "type": "command",
-                "command": f'python3 -I "${{CODEX_HOME:-$HOME/.codex}}/constellation/hook.py" {event}',
-                "timeout": 10,
+                "command": f'"${{CODEX_HOME:-$HOME/.codex}}/constellation/run" {event}',
+                "timeout": 60 if event == "UserPromptSubmit" else 10,
             }]}
             if event == "PreToolUse":
                 group["matcher"] = r"^(?:[A-Za-z0-9_]+[.:])*(?:apply_patch|Edit|Write)$"

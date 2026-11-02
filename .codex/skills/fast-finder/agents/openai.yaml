@@ -1,0 +1,6 @@
+interface:
+  display_name: "Fast Finder"
+  short_description: "Búsqueda acotada de archivos y contenido en OmarOS"
+  default_prompt: "Usa $fast-finder para localizar los archivos pertinentes y verificar los pasajes en OmarOS."
+policy:
+  allow_implicit_invocation: true

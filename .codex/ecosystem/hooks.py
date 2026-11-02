@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""One Codex lifecycle adapter for explicitly registered Git or portable tasks.
+"""Dispatch native events to a registered Git, portable, or vault workflow.
 
-The command loads only its installed sibling engine. Event data selects registered
-state and never executable code. Neither prompt nor transcript fields are used.
-Discovery never starts a contract, fetches Git or loads code from a project.
-Tool coverage is limited to apply_patch; this is not a sandbox for shell or MCP.
+Ordinary projects select an existing task through its local metadata. A vault
+enrolled on this device also starts or steers its task on UserPromptSubmit.
+The executable modules come from the verified package. The event contributes
+structural identifiers and proposed edits. Shell and MCP writes remain governed
+by the client's permissions.
 """
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ import re
 import signal
 import stat
 import sys
+import subprocess
+import tempfile
 import time
 from typing import Any, BinaryIO
 
@@ -26,7 +29,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ecosystem.platform_support import (
-    IS_WINDOWS, PlatformError, is_reparse, open_regular, validate_windows_relative,
+    IS_WINDOWS, PlatformError, is_reparse, open_regular, sync_directory, sync_file, validate_windows_relative,
+    promote_file,
 )
 
 MAX_INPUT_BYTES = 1024 * 1024
@@ -113,6 +117,127 @@ def _cwd(value: Any) -> Path:
     if not root.is_dir():
         raise HookError("event working directory is not a directory")
     return root
+
+
+def _registered_vault(home: Path) -> dict[str, Any] | None:
+    """Read only device-owned enrollment data. Local projects cannot activate hooks."""
+    record = home / "constellation-vault.json"
+    if not record.exists() and not is_reparse(record):
+        return None
+    descriptor = open_regular(record, os.O_RDONLY, private=True)
+    with os.fdopen(descriptor, "rb") as stream:
+        data = read_payload(stream, max_bytes=8192, context="vault registration")
+    name = data.get("root")
+    if (set(data) != {"schema", "root", "owner", "git_dir"} or type(data.get("schema")) is not int
+            or data["schema"] != 1 or not isinstance(name, str) or not Path(name).is_absolute()
+            or len(name) > 4096 or any(ord(char) < 32 for char in name)
+            or str(Path(name)) != name or ".." in Path(name).parts):
+        raise HookError("invalid device vault registration")
+    for key in ("owner", "git_dir"):
+        value = data[key]
+        if not isinstance(value, list) or len(value) != 2 or not all(type(n) is int and n >= 0 for n in value):
+            raise HookError("invalid device vault identity")
+    return data
+
+
+def _vault_binding(root: Path) -> dict[str, Any]:
+    marker = root / ".git"
+    if root != root.resolve(strict=True) or not root.is_dir() or is_reparse(marker) or not marker.exists():
+        raise ValueError("the vault must be its canonical Git owner")
+    # Git hooks and callers can carry GIT_DIR, GIT_WORK_TREE or config overrides
+    # belonging to a different repository. This probe asks about the filesystem
+    # owner only, using the same system command path as native event dispatch.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(PATH=os.defpath, GIT_TERMINAL_PROMPT="0")
+    result = subprocess.run(["git", "rev-parse", "--show-toplevel", "--absolute-git-dir"], cwd=root,
+                            env=env, capture_output=True, text=True, timeout=5)
+    lines = result.stdout.splitlines()
+    if result.returncode or len(lines) != 2 or Path(lines[0]) != root:
+        raise ValueError("the vault must be its canonical Git owner")
+    git_dir = Path(lines[1])
+    if not git_dir.is_dir() or git_dir != git_dir.resolve(strict=True):
+        raise ValueError("the vault must use its canonical Git directory")
+    owner, repository = root.stat(), git_dir.stat()
+    return {"schema": 1, "root": str(root),
+            "owner": [owner.st_dev, owner.st_ino], "git_dir": [repository.st_dev, repository.st_ino]}
+
+
+def check_vault_registration(home: Path, name: str, *, require_bound: bool) -> dict[str, Any]:
+    """Validate an explicit operator command before changing any project setting."""
+    root = _cwd(name)
+    if str(root) != name:
+        raise ValueError("the project root must be the canonical absolute Git owner")
+    bound = _registered_vault(home)
+    binding = _vault_binding(root)
+    if bound != binding and (bound is not None or require_bound):
+        raise ValueError("vault command requires the enrolled root")
+    return binding
+
+
+def save_vault_registration(home: Path, binding: dict[str, Any]) -> None:
+    """Publish a complete device binding without overwriting an existing registration.
+
+    The POSIX Codex entry holds the exclusive installation lock through setup.
+    The same no-replace rename primitive as package promotion preserves another
+    writer's file and gives a process interruption exactly one complete outcome.
+    """
+    if check_vault_registration(home, binding["root"], require_bound=False) != binding:
+        raise ValueError("the Git owner changed during vault enrollment")
+    if _registered_vault(home) == binding:
+        return
+    record = home / "constellation-vault.json"
+    descriptor, temporary = tempfile.mkstemp(prefix=".constellation-vault-", dir=home)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(binding, stream)
+            stream.write("\n")
+            stream.flush()
+            sync_file(stream.fileno())
+        promote_file(Path(temporary), record)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    sync_directory(home)
+
+
+def _vault_for_event(binding: dict[str, Any] | None, cwd: Path) -> Path | None:
+    if binding is None:
+        return None
+    registered = Path(binding["root"])
+    if not cwd.is_relative_to(registered):
+        return None
+    if _vault_binding(registered) != binding:
+        raise HookError("the enrolled vault is no longer its original Git root")
+    # A nested repository and its task belong to their own Git owner.
+    owner = next((path for path in (cwd, *cwd.parents)
+                  if (path / ".git").exists() or is_reparse(path / ".git")), None)
+    return registered if owner == registered else None
+
+
+def _patch_reaches_vault(payload: dict[str, Any], cwd: Path, registration: dict[str, Any]) -> bool:
+    """Recognize paths entering the enrolled Git owner from another workspace."""
+    tool = payload.get("tool_name")
+    if not isinstance(tool, str) or not PATCH_TOOL.fullmatch(tool):
+        return False
+    if tool.endswith("apply_patch"):
+        names = patch_paths(_patch_command(payload))
+    else:
+        data = payload.get("tool_input")
+        if not isinstance(data, dict) or not isinstance(data.get("file_path"), str) or not data["file_path"]:
+            raise HookError("edit target cannot be verified")
+        names = [data["file_path"]]
+    root = Path(registration["root"])
+    for name in names:
+        path = cwd / name
+        physical = path.resolve()
+        lexical = Path(os.path.normpath(path))
+        if lexical.is_relative_to(root) and not physical.is_relative_to(root):
+            raise HookError("vault edit traverses a linked path")
+        if not physical.is_relative_to(root):
+            continue
+        # A nested Git repository retains its own contract and scope.
+        if _vault_for_event(registration, physical.parent) is not None or physical == root:
+            return True
+    return False
 
 
 def _warning(reason: str) -> dict[str, Any]:
@@ -393,12 +518,16 @@ def _guard_omaros(contract: dict[str, Any], actions: list[tuple[str, Path]]) -> 
         # These private export boundaries belong to the current OmarOS receiver.
         # No knowledge content or baseline-private inventory is consulted.
         private = name.lower()
-        if (private.startswith((".claude/logs/", "09_data_sources/email_exports/by_message/",
+        if (private == "06_knowledge_base/mathematics/finance/engie/private"
+                or private.startswith(("06_knowledge_base/mathematics/finance/engie/private/", ".claude/logs/", "09_data_sources/email_exports/by_message/",
                                 "09_data_sources/email_exports/snapshots/", "09_data_sources/email_exports/backfill/",
                                 "11_documents_and_reports/email/"))
                 or private == "09_data_sources/email_exports/index.json"):
             raise HookError("OmarOS receiver path is private")
-        if name not in paths or (name in deletions and action != "Delete File"):
+        renames = state.get("renames", {})
+        if (not isinstance(renames, dict) or name not in paths
+                or (action == "Delete File" and name not in deletions and name not in renames)
+                or (name in deletions and name not in renames and action != "Delete File")):
             raise HookError("OmarOS receiver path is outside its declared scope")
         # OmarOS does not allow symlink artifacts, including deletion targets.
         safe_path(root, name)
@@ -511,7 +640,7 @@ def _observe_agent(payload: dict[str, Any], task: dict[str, Any], cwd: Path,
 
 
 def handle_event(payload: dict[str, Any], state_dir: Path | None = None,
-                 expected_event: str | None = None) -> dict[str, Any]:
+                 expected_event: str | None = None, *, vault_home: Path | None = None) -> dict[str, Any]:
     """Handle a documented event without assuming a role absent from its schema."""
     if not isinstance(payload, dict):
         raise HookError("hook input must be a JSON object")
@@ -529,6 +658,24 @@ def handle_event(payload: dict[str, Any], state_dir: Path | None = None,
     # work must not inherit it; reopening a task is an explicit CLI operation.
     tasks = [task for task in discovered["tasks"] if task["status"] == "active"]
     git_contracts = _git_contracts(cwd, session)
+    binding = _registered_vault(vault_home) if vault_home is not None else None
+    vault = _vault_for_event(binding, cwd)
+    if vault is not None:
+        if git_contracts or tasks:
+            return _failure(event, "another lifecycle already owns this vault session; inspect both contracts")
+        from ecosystem.vault.workflow import handle_hook_event
+        # Pass exactly the structural data handled by the lifecycle. User text,
+        # transcripts and fields supplied by other clients are not part of enrollment.
+        allowed = ("hook_event_name", "session_id", "turn_id", "cwd", "tool_name", "tool_input",
+                   "stop_hook_active", "agent_id", "agent_type")
+        result = handle_hook_event({key: payload[key] for key in allowed if key in payload},
+                                   project_root=vault)
+        if event == "UserPromptSubmit" and "hookSpecificOutput" in result:
+            result["hookSpecificOutput"]["additionalContext"] += " " + METHOD_GUIDANCE
+        return result
+    if (event == "PreToolUse" and binding is not None and _patch_reaches_vault(payload, cwd, binding)
+            and not git_contracts):
+        return _deny("external edits to the enrolled vault require an active Git owner contract")
     if len(git_contracts) > 1 or (git_contracts and tasks):
         return _failure(event, "multiple independent lifecycle contracts match this session and directory; "
                         "inspect and reconcile them explicitly; no lifecycle was selected")
@@ -623,7 +770,14 @@ def main(argv: list[str] | None = None) -> int:
             previous_handler = signal.signal(signal.SIGALRM, _timed_out)
             signal.setitimer(signal.ITIMER_REAL, 8.0)
             timer_armed = True
-        result = handle_event(read_payload(sys.stdin.buffer), args.state_dir, args.event)
+        home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").absolute()
+        payload = read_payload(sys.stdin.buffer)
+        # Keep stdin bounded even for a prompt. Its registered workflow may
+        # synchronize Git, so only processing fully received prompts gets the
+        # longer budget reserved by the native manifest.
+        if timer_supported and args.event == "UserPromptSubmit":
+            signal.setitimer(signal.ITIMER_REAL, 55.0)
+        result = handle_event(payload, args.state_dir, args.event, vault_home=home)
     except HookError as exc:
         result = _failure(args.event, str(exc))
     except Exception:

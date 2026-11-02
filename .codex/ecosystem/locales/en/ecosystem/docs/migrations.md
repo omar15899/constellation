@@ -1,6 +1,6 @@
 # Installation and maintenance
 
-This guide describes Constellation's active `1.4.0-rc.1` format. The package has
+This guide describes Constellation's active `1.4.0` format. The package has
 one allowlisted layout. Retired formats are rejected without executing or
 replacing their files; they are not silently converted.
 
@@ -22,9 +22,9 @@ From canonical sources, choose new paths:
 
 ```sh
 python3 .codex/ecosystem/build.py --language en \
-  --output /tmp/constellation-1.4.0-rc.1-en \
-  --archive /tmp/constellation-1.4.0-rc.1-en.zip
-shasum -a 256 /tmp/constellation-1.4.0-rc.1-en.zip
+  --output /tmp/constellation-1.4.0-en \
+  --archive /tmp/constellation-1.4.0-en.zip
+shasum -a 256 /tmp/constellation-1.4.0-en.zip
 ```
 
 `--language en --target windows-claude` selects the English native Windows
@@ -62,12 +62,84 @@ python3 /path/to/package/ecosystem/install.py \
   --bundle /path/to/package --codex-home ~/.codex
 ```
 
-Codex uses native registration, a schema-3 receipt and the stable entry point
-`CODEX_HOME/constellation/hook.py`. The installer preserves unrelated
+Codex uses a schema-4 receipt. The stable launcher
+`$CODEX_HOME/constellation/run` has mode 0700 and a digest recorded in that
+receipt. It invokes `hook.py` with the absolute Python used for installation,
+including the original virtual environment spelling. The installer verifies
+the prior version's receipt before migrating it. The installer preserves unrelated
 configuration and registers the roles needed by the selected modules. If source
 and plugin copies are active together, native source exclusion requires exact
 identity between them. Spanish sources are not identical to the English package:
 use the extracted package outside the checkout in that case.
+
+### Install one published revision across devices
+
+Constellation publishes its code on `main` in `omar15899/constellation`. From
+a trusted checkout or verified package, explicitly select and promote the
+latest published commit once per device:
+
+```sh
+python3 -I -B .codex/ecosystem/sync.py --latest --vault-root "$ABSOLUTE_OMAROS_ROOT" \
+  --workspace-root "$ABSOLUTE_CONSTELLATION_ROOT"
+```
+
+An existing install provides the same command at
+`~/.codex/constellation/catalog/plugins/constellation/ecosystem/sync.py`.
+`--vault-root` selects the four general methods and the optional `omaros`
+module. This profile requires Python 3.11+ with PyYAML and the absolute path
+to this device's OmarOS Git root. Vault search tools require `rg`; Brainteasers
+compilation uses the project's TeX distribution. `--general` explicitly selects the four
+general methods. The default language is Spanish. `--language en` selects
+available English overlays. `--codex-home` and `--codex` select the native
+installation and executable for the device.
+
+`--latest` trusts the main branch of the fixed canonical repository, freezes its
+SHA in a private temporary copy and builds that exact revision. To require an
+independently approved SHA, use `--revision "$APPROVED_REVISION"` in place of
+`--latest`. If `main` has advanced, the pinned check exits before installing. `--check` verifies the package and installation
+preflight without changing the installation or registering the vault. Git probes the canonical HTTPS URL outside every project, rejects URL
+rewrites, then uses independent HTTPS-only configuration with TLS verification
+and redirects disabled. Recognized standard credential helpers or the GitHub
+CLI integration explicitly configured for GitHub are supported. At promotion,
+the installer checks under its lock that the receipt still matches the one
+observed before downloading. If another process already installed a different
+state, retry the synchronization against the newly observed state. Output
+includes the Git SHA, inventory digest and modules. Installation uses the
+installer's lock, integrity checks and recovery. Repeating an installed
+revision and selection returns `current` after checking its inventory and
+native registration.
+
+On a verified installation, `"$HOME/.codex/constellation/run" install-vault --project-root "$ABSOLUTE_OMAROS_ROOT"` prepares the personal profile
+with the same Codex executable. It installs the owned Git guards, configures
+applicable native exclusions and registers the exact root on success. A vault
+setup failure reports the completed package installation separately. Correct
+the reported condition and retry the same SHA. Folders on the device share its installed
+package. Open a fresh session if the client needs to reload its catalogue and
+review hook trust in `/hooks`. To promote a revision across devices, run the
+command with the same approved SHA on each. Verify receipt and native
+activation separately on each device. [Periodic updates](updates.md) are opt-in
+per device. `updates plan` previews the definition to be installed.
+
+The optional `--workspace-root` excludes duplicates in the actual source
+checkout at the end of installation. Its sources must correspond to the
+selected package. If this folder is missing, has local edits to the relevant
+resources, or belongs to another revision, the command distinguishes the
+completed installation from the pending exclusion. Preserve local work,
+compare that revision and retry. `--check` skips exclusion writes.
+
+You can also finish this step separately with the installed native diagnostic.
+`CONSTELLATION_ROOT` identifies the permanent checkout on this device:
+
+```sh
+python3 -I -B "$HOME/.codex/constellation/catalog/plugins/constellation/ecosystem/native.py" \
+  --codex-home "$HOME/.codex" --cwd "$CONSTELLATION_ROOT" \
+  --exclude-source-root "$CONSTELLATION_ROOT/.codex"
+```
+
+The operation compares source and installed resources, including contents and
+permissions, scopes changes to the selected paths, and checks discovery with
+a fresh native client. These exclusions refer to the checkout that the device's
+client discovers.
 
 ### Codex diagnostic
 
@@ -86,7 +158,7 @@ actually executed are distinct states.
 
 ## Integrity, updates and recovery
 
-Current formats are bundle inventory 1, Codex receipt 3, Claude receipt 1 and
+Current formats are bundle inventory 1, Codex receipt 4, Claude receipt 1 and
 review policy/ledger 2. A version number does not replace validation of schema,
 inventory, hashes, permissions and identity. An incompatible format, unknown
 file or modified copy blocks the operation while preserving files for explicit
@@ -116,9 +188,9 @@ bytecode outside its inventory.
 
 ## Receivers and evidence
 
-The active OmarOS adapter retains four verified resources pinned to 1.2.0 and
-its own workflow. It is not a retired format. Installing the plugin does not
-authorize overwriting that receiver or changing its pin.
+The optional OmarOS profile executes the vault lifecycle from the verified
+Constellation package. Exact-root registration is local to each device. Project
+context, data and publication permissions belong to their Git owner.
 
 [Compatibility](compatibility.md) separates evidence by snapshot and platform;
 [evaluation](evaluation.md) distinguishes mechanism checks from substantive
