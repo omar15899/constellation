@@ -33,3 +33,9 @@ constellation git --root "$HOME/.codex" --session ID status
 La [guía de operación y desarrollo](.codex/README.md), el
 [contrato entre propietarios](.codex/WORKSPACE.md) y los
 [criterios de revisión](REVIEW.md) describen cómo comprobar y publicar cambios.
+
+Los [perfiles portables de Codex y Claude](.codex/profiles/README.md) versionan
+las instrucciones globales, las guías y la herramienta de documentación oficial.
+Su instalador prepara ambos homes en macOS/Linux, protege conflictos y conserva
+la recuperación. Las cuentas, configuraciones efectivas, conversaciones, recibos,
+copias documentales y demás estado de cada dispositivo permanecen locales.
