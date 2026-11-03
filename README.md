@@ -39,3 +39,6 @@ las instrucciones globales, las guías y la herramienta de documentación oficia
 Su instalador prepara ambos homes en macOS/Linux, protege conflictos y conserva
 la recuperación. Las cuentas, configuraciones efectivas, conversaciones, recibos,
 copias documentales y demás estado de cada dispositivo permanecen locales.
+
+El [mapa completo del HOME de Codex](.codex/profiles/codex/layout.md) atribuye
+cada archivo y carpeta a su propietario y explica su utilidad y mantenimiento.

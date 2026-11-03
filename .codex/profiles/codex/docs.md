@@ -1,5 +1,8 @@
 # Codex: mapa y documentación local
 
+El [mapa de cada archivo y carpeta]({{SOURCE_ROOT}}/.codex/profiles/codex/layout.md)
+explica quién lo crea, para qué sirve y qué se puede limpiar.
+
 | Capa | Ubicación |
 | --- | --- |
 | Instrucciones globales | `~/.codex/AGENTS.md` |
