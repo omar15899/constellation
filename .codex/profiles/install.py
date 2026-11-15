@@ -92,7 +92,7 @@ def check_directory(path: Path, *, create: bool = False) -> None:
             raise ProfileError("Managed directory contains a symbolic link or non-directory")
 
 
-def read_file(path: Path) -> FileState | None:
+def read_file(path: Path, *, allow_linked: bool = False) -> FileState | None:
     """Read only regular, singly linked files, without following a leaf link."""
     check_directory(path.parent)
     try:
@@ -101,7 +101,7 @@ def read_file(path: Path) -> FileState | None:
         return None
     with os.fdopen(descriptor, "rb") as stream:
         info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        if not stat.S_ISREG(info.st_mode) or (info.st_nlink != 1 and not allow_linked):
             raise ProfileError("Managed file is not regular and singly linked")
         if info.st_size > MAX_BYTES:
             raise ProfileError("Managed file exceeds the profile size limit")
@@ -230,7 +230,7 @@ def _restore_captured(captured: Path, destination: Path) -> bool:
         pending.unlink()
 
 
-def _capture_file(path: Path, expected: FileState, recovery: Path) -> Path:
+def _capture_file(path: Path, expected: FileState, recovery: Path, *, allow_linked: bool = False) -> Path:
     """Move the actual destination into unique, private, retained recovery.
 
     POSIX has no compare-and-swap replacement for arbitrary writers. Capturing
@@ -244,7 +244,7 @@ def _capture_file(path: Path, expected: FileState, recovery: Path) -> Path:
     captured = container / "original"
     os.rename(path, captured)
     try:
-        current = read_file(captured)
+        current = read_file(captured, allow_linked=allow_linked)
         if not _same_state(expected, current):
             _restore_captured(captured, path)
             raise ProfileError(f"Destination changed during staging; captured bytes preserved at: {captured}")
@@ -257,7 +257,8 @@ def _capture_file(path: Path, expected: FileState, recovery: Path) -> Path:
 
 def replace_file(path: Path, data: bytes, mode: int, *, expected: FileState | None = None,
                  recovery: Path | None = None,
-                 on_replace: Callable[[FileState], None] | None = None) -> FileState:
+                 on_replace: Callable[[FileState], None] | None = None,
+                 allow_linked: bool = False) -> FileState:
     """Capture an existing file, then publish staged bytes without clobbering.
 
     Existing destinations require their observed state and a recovery directory.
@@ -271,7 +272,7 @@ def replace_file(path: Path, data: bytes, mode: int, *, expected: FileState | No
         if expected is not None:
             if recovery is None:
                 raise ProfileError("Replacing an existing profile requires retained recovery")
-            captured = _capture_file(path, expected, recovery)
+            captured = _capture_file(path, expected, recovery, allow_linked=allow_linked)
         check_directory(path.parent)
         try:
             os.link(pending, path, follow_symlinks=False)
@@ -398,15 +399,116 @@ def install(source_root: Path, home: Path, *, apply: bool = False, backup_existi
         return result
 
 
+def install_instructions(source_root: Path, codex_home: Path, *, revision: str,
+                         apply: bool = False, expected_sha256: str | None = None,
+                         recover_sha256: str | None = None) -> dict:
+    """Install only Codex's global instructions from a pinned release.
+
+    Uses the profile installer's capture/no-clobber primitives. Existing local
+    edits require deliberate reconciliation; neither Claude nor settings are
+    part of this operation. A private receipt binds the installed bytes to Git.
+    """
+    if revision != "unknown" and not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ProfileError("Instructions require a full lowercase Git revision")
+    if recover_sha256 is not None and (recover_sha256 != "absent" and not re.fullmatch(r"[0-9a-f]{64}", recover_sha256)
+                                      or recover_sha256 != expected_sha256):
+        raise ProfileError("Instruction recovery requires the same explicit current and expected digest")
+    source_root, codex_home = absolute(source_root), absolute(codex_home)
+    source = read_file(source_root / "AGENTS.md")
+    if source is None:
+        raise ProfileError("Published global instructions are missing")
+    path = codex_home / "AGENTS.md"
+    receipt_path = codex_home / "docs/maintenance/instructions.json"
+
+    def preflight() -> tuple[FileState | None, FileState | None]:
+        # An interrupted exclusive hard-link publication may leave its staging
+        # name alive. Explicit recovery admits only the intent's exact bytes;
+        # capturing that inode preserves every remaining alias and open writer.
+        current = read_file(path, allow_linked=recover_sha256 is not None)
+        recorded = read_file(receipt_path, allow_linked=recover_sha256 is not None)
+        owned = False
+        if recorded is not None:
+            try:
+                value = json.loads(recorded.data)
+                if (recorded.mode != 0o600 or set(value) != {"schema", "revision", "sha256"}
+                        or value["schema"] != 1 or (value["revision"] is not None and not re.fullmatch(r"[0-9a-f]{40}", value["revision"]))
+                        or not re.fullmatch(r"[0-9a-f]{64}", value["sha256"])):
+                    raise ValueError
+                owned = current is not None and current.sha256 == value["sha256"] and current.mode == 0o644
+            except (TypeError, ValueError, KeyError) as exc:
+                raise ProfileError("Global instruction receipt is invalid; preserve it") from exc
+        elif codex_home.name == ".codex":
+            legacy = _read_receipt(read_file(codex_home.parent / RECEIPT))
+            record = legacy.get("files", {}).get(".codex/AGENTS.md", {})
+            owned = current is not None and current.sha256 == record.get("installed_sha256") and current.mode == record.get("mode")
+        recovering = current is not None and current.sha256 == recover_sha256 and current.mode == 0o644
+        if current is not None and (current.data != source.data or current.mode != 0o644) and not owned and not recovering:
+            raise ProfileError("Global instructions have local or unowned changes; reconcile them before sync")
+        return current, recorded
+
+    current, recorded = preflight()
+    provenance = None if revision == "unknown" else revision
+    result = {"status": "checked", "revision": provenance, "sha256": source.sha256,
+              "current_sha256": current.sha256 if current is not None else "absent",
+              "current_receipt_sha256": recorded.sha256 if recorded is not None else "absent",
+              "path": str(path), "receipt": str(receipt_path)}
+    if not apply:
+        return result
+    check_directory(receipt_path.parent, create=True)
+    descriptor = os.open(receipt_path.parent / ".instructions.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "r+b") as lock:
+        if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode) or os.fstat(lock.fileno()).st_nlink != 1:
+            raise ProfileError("Global instruction lock is unsafe")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        current, recorded = preflight()
+        if expected_sha256 is not None and expected_sha256 != (current.sha256 if current is not None else "absent"):
+            raise ProfileError("Global instructions changed after preflight; run sync again")
+        receipt_data = (json.dumps({"schema": 1, "revision": provenance, "sha256": source.sha256}, sort_keys=True) + "\n").encode()
+        linked_current = current is not None and path.stat().st_nlink != 1
+        linked_receipt = recorded is not None and receipt_path.stat().st_nlink != 1
+        if current is not None and current.data == source.data and current.mode == 0o644 and recorded is not None and recorded.data == receipt_data and not linked_current and not linked_receipt:
+            return {**result, "status": "current"}
+        recovery_parent = codex_home / "backups/instructions"
+        check_directory(recovery_parent, create=True)
+        recovery = Path(tempfile.mkdtemp(prefix="update-", dir=recovery_parent))
+        written = None
+        try:
+            if current is None or current.data != source.data or current.mode != 0o644 or linked_current:
+                written = replace_file(path, source.data, 0o644, expected=current, recovery=recovery,
+                                       allow_linked=recover_sha256 is not None)
+            replace_file(receipt_path, receipt_data, 0o600, expected=recorded, recovery=recovery,
+                         allow_linked=recover_sha256 is not None)
+        except BaseException:
+            if written is not None and read_file(path) == written:
+                if current is None:
+                    _capture_file(path, written, recovery)
+                else:
+                    replace_file(path, current.data, current.mode, expected=written, recovery=recovery)
+            raise
+        return {**result, "status": "installed", "recovery": str(recovery)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--source-root", type=Path, default=Path(__file__).absolute().parents[2])
     parser.add_argument("--apply", action="store_true", help="Write the checked profile destinations")
     parser.add_argument("--backup-existing", action="store_true", help="Preserve and adopt unowned or edited profile files")
+    parser.add_argument("--instructions-only", action="store_true", help="Install only pinned Codex global instructions")
+    parser.add_argument("--codex-home", type=Path)
+    parser.add_argument("--revision")
+    parser.add_argument("--expected-sha256")
+    parser.add_argument("--recover-sha256", help="Recover exactly these previously admitted interrupted bytes")
     args = parser.parse_args()
     try:
-        result = install(args.source_root, args.home, apply=args.apply, backup_existing=args.backup_existing)
+        if args.instructions_only:
+            if args.codex_home is None or args.revision is None or args.backup_existing:
+                raise ProfileError("Instructions-only requires --codex-home and --revision, without adoption")
+            result = install_instructions(args.source_root, args.codex_home, revision=args.revision,
+                                          apply=args.apply, expected_sha256=args.expected_sha256,
+                                          recover_sha256=args.recover_sha256)
+        else:
+            result = install(args.source_root, args.home, apply=args.apply, backup_existing=args.backup_existing)
     except (OSError, ValueError, ProfileError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 2

@@ -495,10 +495,22 @@ def _command(package: Path, home: Path, command: str, args: list[str], *,
         from ecosystem.cli import main as cli_main
         return cli_main(args, installation_home=home)
 
-    if command not in ("vault", "register-vault", "install-vault"):
+    if command not in ("vault", "register-vault", "install-vault", "renew-vault"):
         raise EntryError("unknown entry point")
     if len(args) < 2 or args[0] != "--project-root":
         raise EntryError("supply --project-root and the absolute Git owner")
+    if command == "renew-vault":
+        if len(args) not in (2, 4) or (len(args) == 4 and args[2] != "--expected-registration-sha256"):
+            raise EntryError("renew-vault accepts only --expected-registration-sha256 after the root")
+        if not (package / "ecosystem/vault/workflow.py").is_file():
+            raise EntryError("install the omaros module to use this command")
+        from ecosystem.hooks import HookError, renew_vault_registration
+        try:
+            result = renew_vault_registration(home, args[1], expected_sha256=args[3] if len(args) == 4 else None)
+        except (OSError, ValueError, HookError) as exc:
+            raise EntryError(str(exc)) from exc
+        print(json.dumps(result))
+        return 0
     codex = "codex"
     if command == "install-vault":
         options = dict(zip(args[2::2], args[3::2]))
@@ -541,9 +553,9 @@ def _command(package: Path, home: Path, command: str, args: list[str], *,
 
 def dispatch_installed(home: Path, mode: str, args: list[str]) -> int:
     """Run an operator command from an explicitly verified installation home."""
-    if mode not in ("cli", "vault", "register-vault", "install-vault"):
+    if mode not in ("cli", "vault", "register-vault", "install-vault", "renew-vault"):
         raise EntryError("unknown operator command")
-    exclusive = mode in ("register-vault", "install-vault")
+    exclusive = mode in ("register-vault", "install-vault", "renew-vault")
     with _locked_package(home, home / "constellation/hook.py", exclusive=exclusive) as (package, descriptor):
         # Only the enrollment's actual native writer may inherit this already
         # locked open-file description. Readers and other commands get no fd.
@@ -585,6 +597,33 @@ def _run_updates(code: bytes, sync_source: bytes, verifier_source: bytes, args: 
         sys.modules.pop(module.__name__, None)
 
 
+def _run_sync(code: bytes, args: list[str], home: Path) -> int:
+    """Run the verified updater snapshot with this launcher's fixed Codex home."""
+    options = [index for index, arg in enumerate(args)
+               if arg == "--codex-home" or arg.startswith("--codex-home=")]
+    if len(options) > 1:
+        raise EntryError("sync requires one unambiguous Codex home")
+    if options:
+        index = options[0]
+        if args[index] == "--codex-home":
+            if index + 1 == len(args):
+                raise EntryError("--codex-home requires this launcher's home")
+            selected = args[index + 1]
+        else:
+            selected = args[index].partition("=")[2]
+        if Path(selected).expanduser().absolute() != home:
+            raise EntryError("sync cannot override this launcher's Codex home")
+    module = ModuleType("_constellation_verified_sync")
+    filename = "<verified Constellation sync>"
+    module.__file__ = filename
+    sys.modules[module.__name__] = module
+    try:
+        exec(compile(code, filename, "exec"), module.__dict__)
+        return module.main([*args, "--codex-home", str(home)])
+    finally:
+        sys.modules.pop(module.__name__, None)
+
+
 def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     native = mode in EVENTS
@@ -595,7 +634,7 @@ def main() -> int:
             signal.setitimer(signal.ITIMER_REAL, CHECK_SECONDS)
         entry = Path(__file__).absolute()
         home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").absolute()
-        if not native and mode != "updates":
+        if not native and mode not in ("updates", "sync"):
             if entry != _path(home, "constellation/hook.py"):
                 raise EntryError("stable entry is outside the installation")
             return dispatch_installed(home, mode, sys.argv[2:])
@@ -609,8 +648,13 @@ def main() -> int:
                 runpy.run_path(str(hook), run_name="__main__")
                 return 0
             records = _object(_path(home, "constellation/receipt.json"))["cache"]
-            code, sync_source, verifier_source = (
-                _standalone_snapshot(package, records, name) for name in ("updates.py", "sync.py", "hook_entry.py"))
+            if mode == "sync":
+                code = _standalone_snapshot(package, records, "sync.py")
+            else:
+                code, sync_source, verifier_source = (
+                    _standalone_snapshot(package, records, name) for name in ("updates.py", "sync.py", "hook_entry.py"))
+        if mode == "sync":
+            return _run_sync(code, sys.argv[2:], home)
         return _run_updates(code, sync_source, verifier_source, sys.argv[2:], home)
     except EntryError as exc:
         reason = str(exc)

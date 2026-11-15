@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -30,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ecosystem.platform_support import (
     IS_WINDOWS, PlatformError, is_reparse, open_regular, sync_directory, sync_file, validate_windows_relative,
-    promote_file,
+    exchange_files, promote_file, secure_mkdir,
 )
 
 MAX_INPUT_BYTES = 1024 * 1024
@@ -124,9 +125,20 @@ def _registered_vault(home: Path) -> dict[str, Any] | None:
     record = home / "constellation-vault.json"
     if not record.exists() and not is_reparse(record):
         return None
+    return _registration_snapshot(record)[0]
+
+
+def _registration_snapshot(record: Path) -> tuple[dict[str, Any], bytes, tuple[int, ...]]:
+    """Read bounded private registration bytes and their stable file identity."""
     descriptor = open_regular(record, os.O_RDONLY, private=True)
     with os.fdopen(descriptor, "rb") as stream:
-        data = read_payload(stream, max_bytes=8192, context="vault registration")
+        before = os.fstat(stream.fileno())
+        raw = stream.read(8193)
+        after = os.fstat(stream.fileno())
+    identity = lambda info: (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_mode)
+    if identity(before) != identity(after) or identity(after) != identity(record.lstat()):
+        raise HookError("vault registration changed while being read")
+    data = read_payload(io.BytesIO(raw), max_bytes=8192, context="vault registration")
     name = data.get("root")
     if (set(data) != {"schema", "root", "owner", "git_dir"} or type(data.get("schema")) is not int
             or data["schema"] != 1 or not isinstance(name, str) or not Path(name).is_absolute()
@@ -137,7 +149,7 @@ def _registered_vault(home: Path) -> dict[str, Any] | None:
         value = data[key]
         if not isinstance(value, list) or len(value) != 2 or not all(type(n) is int and n >= 0 for n in value):
             raise HookError("invalid device vault identity")
-    return data
+    return data, raw, identity(after)
 
 
 def _vault_binding(root: Path) -> dict[str, Any]:
@@ -197,6 +209,96 @@ def save_vault_registration(home: Path, binding: dict[str, Any]) -> None:
     finally:
         Path(temporary).unlink(missing_ok=True)
     sync_directory(home)
+
+
+def renew_vault_registration(home: Path, name: str, *, expected_sha256: str | None = None) -> dict[str, Any]:
+    """Inspect or explicitly renew the same vault path after filesystem drift.
+
+    The installed operator dispatcher holds the exclusive installation lock.
+    With no expected hash this is read-only. Applying requires the observed
+    registration's exact SHA-256 and preserves its actual displaced inode in a
+    private recovery directory. Only device identifiers may change; both root
+    and Git-directory inodes must match the prior registration. An atomic exchange
+    keeps a complete registration present even if the process stops during
+    publication. A root relocation is
+    deliberately outside this command's authority.
+
+    Args:
+        home: The verified device's canonical Codex home.
+        name: The canonical absolute Git root already recorded by the device.
+        expected_sha256: Hash returned by a prior inspection; absent means preview.
+
+    Returns:
+        Current registration state, expected hash and retained recovery location.
+
+    Raises:
+        ValueError: The root, hash or registration changed or belongs elsewhere.
+        OSError: Required filesystem publication or durability operations fail.
+        HookError: The existing private registration cannot be safely read.
+    """
+    root = _cwd(name)
+    if str(root) != name:
+        raise ValueError("the project root must be the canonical absolute Git owner")
+    record = home / "constellation-vault.json"
+    previous, original, identity = _registration_snapshot(record)
+    if previous["root"] != name:
+        raise ValueError("renewal cannot change the enrolled vault path")
+    binding = _vault_binding(root)
+    if any(previous[key][1] != binding[key][1] for key in ("owner", "git_dir")):
+        raise ValueError("renewal preserves vault and Git-directory inodes; a replacement needs explicit migration")
+    digest = hashlib.sha256(original).hexdigest()
+    result = {"status": "current" if previous == binding else "renewal_required",
+              "registered": previous == binding, "root": name,
+              "expected_registration_sha256": digest, "recovery": None}
+    if expected_sha256 is None:
+        return result
+    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise ValueError("renewal requires the inspected registration SHA-256")
+    if expected_sha256 != digest:
+        raise ValueError("vault registration changed since inspection; inspect again")
+    if previous == binding:
+        return result
+    base = home / "constellation-vault-recovery"
+    secure_mkdir(base, mode=0o700, exist_ok=True)
+    recovery = Path(tempfile.mkdtemp(prefix="renew-", dir=base))
+    captured = recovery / "registration.json"
+    candidate = (json.dumps(binding, sort_keys=True) + "\n").encode("utf-8")
+    descriptor = open_regular(captured, os.O_WRONLY | os.O_CREAT | os.O_EXCL, private=True)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(candidate)
+        stream.flush()
+        sync_file(stream.fileno())
+    proposed = _registration_snapshot(captured)
+    sync_directory(recovery)
+    sync_directory(base)
+    sync_directory(home)
+    exchanged = False
+    try:
+        if _registration_snapshot(record) != (previous, original, identity) or _vault_binding(root) != binding:
+            raise ValueError("vault or registration changed before renewal")
+        exchange_files(captured, record)
+        exchanged = True
+        if _registration_snapshot(captured) != (previous, original, identity):
+            raise ValueError("vault registration changed during renewal")
+        if _registration_snapshot(record) != proposed or _vault_binding(root) != binding:
+            raise ValueError("renewed vault changed before verification")
+        sync_directory(home)
+        sync_directory(recovery)
+    except BaseException as failure:
+        # Preserve both inodes. Restore only if this attempt still owns the
+        # active candidate; an unrelated writer's current record stays in place.
+        if exchanged:
+            try:
+                if _registration_snapshot(record) == proposed:
+                    exchange_files(captured, record)
+                    sync_directory(home)
+                    sync_directory(recovery)
+            except (OSError, ValueError, HookError):
+                pass
+        raise ValueError(f"vault renewal failed; inspect retained recovery at {recovery}") from failure
+    result.update(status="renewed", registered=True, recovery=str(captured),
+                  expected_registration_sha256=hashlib.sha256(candidate).hexdigest())
+    return result
 
 
 def _vault_for_event(binding: dict[str, Any] | None, cwd: Path) -> Path | None:

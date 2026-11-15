@@ -34,6 +34,32 @@ class HomeProfilesTests(unittest.TestCase):
     def install(self, **kwargs):
         return profiles.install(self.source, self.home, **kwargs)
 
+    def test_pinned_instructions_only_preserves_claude_and_settings(self):
+        codex = self.home / ".codex"
+        result = profiles.install_instructions(self.source, codex, revision="a" * 40)
+        self.assertEqual(result["status"], "checked")
+        self.assertFalse(self.home.exists())
+        profiles.install_instructions(self.source, codex, revision="a" * 40, apply=True)
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertEqual((codex / "AGENTS.md").read_bytes(), (self.source / "AGENTS.md").read_bytes())
+        self.assertEqual(profiles.install_instructions(self.source, codex, revision="a" * 40, apply=True)["status"], "current")
+        (codex / "AGENTS.md").chmod(0o600)
+        with self.assertRaisesRegex(profiles.ProfileError, "local or unowned"):
+            profiles.install_instructions(self.source, codex, revision="a" * 40, apply=True)
+
+    def test_instruction_recovery_requires_exact_interrupted_bytes_and_cas(self):
+        codex = self.home / ".codex"
+        profiles.install_instructions(self.source, codex, revision="a" * 40, apply=True)
+        (codex / "AGENTS.md").write_bytes(b"interrupted next rules")
+        interrupted = profiles.read_file(codex / "AGENTS.md").sha256
+        with self.assertRaisesRegex(profiles.ProfileError, "local or unowned"):
+            profiles.install_instructions(self.source, codex, revision="a" * 40, apply=True)
+        profiles.install_instructions(self.source, codex, revision="a" * 40, apply=True,
+                                      expected_sha256=interrupted, recover_sha256=interrupted)
+        with self.assertRaisesRegex(profiles.ProfileError, "changed after preflight"):
+            profiles.install_instructions(self.source, codex, revision="a" * 40, apply=True,
+                                          expected_sha256=interrupted)
+
     def test_read_only_preview_creates_nothing(self):
         result = self.install()
         self.assertEqual(result["status"], "planned")

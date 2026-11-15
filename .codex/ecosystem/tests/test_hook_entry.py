@@ -19,6 +19,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 import unittest
@@ -177,6 +178,23 @@ class HookEntryTests(BundleCase):
         command("register-vault", *options)
         self.assertEqual(binding.read_bytes(), original)
         self.assertEqual(binding.stat().st_nlink, 1)
+
+        # A disk identity change requires an explicit inspected hash; normal
+        # registration remains fail-closed until the operator renews it.
+        stale = json.loads(original)
+        stale["owner"][0] += 1
+        stale["git_dir"][0] += 1
+        binding.write_text(json.dumps(stale))
+        stale_bytes = binding.read_bytes()
+        inspected = command("renew-vault", *options)
+        self.assertEqual(inspected["status"], "renewal_required")
+        command("register-vault", *options, expected=2)
+        renewed = command("renew-vault", *options, "--expected-registration-sha256",
+                          inspected["expected_registration_sha256"])
+        self.assertEqual(renewed["status"], "renewed")
+        self.assertEqual(Path(renewed["recovery"]).read_bytes(), stale_bytes)
+        self.assertEqual(command("renew-vault", *options)["status"], "current")
+        original = binding.read_bytes()
 
         prompt = event("UserPromptSubmit", prompt="synthetic-secret-never-read")
         self.assertIn("OmarOS", prompt["hookSpecificOutput"]["additionalContext"])
@@ -830,3 +848,137 @@ class HookEntryTests(BundleCase):
         self.assertEqual(snapshot(home), before)
         self.assertEqual(foreign.read_bytes(), b"Synthetic unrelated profile, preserved verbatim.\n")
         self.assertEqual(held.read_bytes(), source.read_bytes())
+
+    def test_sync_launcher_runs_authenticated_snapshot_after_releasing_install_lock(self):
+        source = self.source_copy("sync-launcher-source")
+        (source / "ecosystem/sync.py").write_text(textwrap.dedent("""\
+            import fcntl, json, os
+            from pathlib import Path
+            def main(args):
+                home = Path(args[-1])
+                assert args[-2] == '--codex-home'
+                with (home / 'constellation/.install.lock').open('rb') as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    Path(os.environ['CONSTELLATION_TEST_MARKER']).write_text('sync')
+                    print(json.dumps({'args': args, 'home': str(home)}))
+                return 0
+            """))
+        bundle = self.root / "sync-launcher-bundle"
+        build_bundle(bundle, MODULES, source_root=source)
+        home, _ = self.installed(bundle)
+        environment = self.environment(home)
+        launcher = home / "constellation/run"
+        result = subprocess.run([str(launcher), "sync", "--restore", "fixture-recovery"],
+                                env=environment, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            "args": ["--restore", "fixture-recovery", "--codex-home", str(home)], "home": str(home)})
+        marker = Path(environment["CONSTELLATION_TEST_MARKER"])
+        marker.unlink()
+        result = subprocess.run([str(launcher), "sync", "--codex-home", str(self.root / "other")],
+                                env=environment, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("cannot override", result.stderr)
+        self.assertFalse(marker.exists())
+
+
+@unittest.skipIf(os.name == "nt", "Codex renewal uses POSIX atomic file exchange")
+class VaultRegistrationRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        from helpers import CODEX_DIR
+        with mock.patch.object(sys, "path", [str(CODEX_DIR), *sys.path]):
+            from ecosystem import hooks
+        self.hooks = hooks
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir(mode=0o700)
+        self.vault = self.root / "vault"
+        self.vault.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.vault)], check=True, capture_output=True)
+        self.binding = hooks._vault_binding(self.vault)
+        stale = json.loads(json.dumps(self.binding))
+        stale["owner"][0] += 1
+        stale["git_dir"][0] += 1
+        self.record = self.home / "constellation-vault.json"
+        self.original = (json.dumps(stale) + "\n").encode()
+        self.record.write_bytes(self.original)
+        self.record.chmod(0o600)
+        self.digest = hashlib.sha256(self.original).hexdigest()
+
+    def test_inspection_is_read_only_and_renewal_retains_actual_private_original(self):
+        old_inode = self.record.stat().st_ino
+        inspected = self.hooks.renew_vault_registration(self.home, str(self.vault))
+        self.assertEqual(inspected["status"], "renewal_required")
+        self.assertEqual(inspected["expected_registration_sha256"], self.digest)
+        self.assertEqual(list(self.home.iterdir()), [self.record])
+        renewed = self.hooks.renew_vault_registration(self.home, str(self.vault), expected_sha256=self.digest)
+        recovery = Path(renewed["recovery"])
+        self.assertEqual(renewed["status"], "renewed")
+        self.assertEqual(recovery.read_bytes(), self.original)
+        self.assertEqual(recovery.stat().st_ino, old_inode)
+        self.assertEqual(recovery.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(recovery.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(json.loads(self.record.read_bytes()), self.binding)
+        self.assertEqual(self.hooks.check_vault_registration(self.home, str(self.vault), require_bound=True), self.binding)
+        current = self.hooks.renew_vault_registration(self.home, str(self.vault),
+                                                     expected_sha256=renewed["expected_registration_sha256"])
+        self.assertEqual(current["status"], "current")
+        self.assertIsNone(current["recovery"])
+
+    def test_wrong_root_or_stale_hash_cannot_change_registration(self):
+        other = self.root / "other"
+        other.mkdir()
+        subprocess.run(["git", "init", "-q", str(other)], check=True, capture_output=True)
+        with self.assertRaisesRegex(ValueError, "cannot change"):
+            self.hooks.renew_vault_registration(self.home, str(other), expected_sha256=self.digest)
+        for digest in ("0" * 64, "bad-digest"):
+            with self.subTest(digest=digest), self.assertRaises(ValueError):
+                self.hooks.renew_vault_registration(self.home, str(self.vault), expected_sha256=digest)
+        self.assertEqual(self.record.read_bytes(), self.original)
+        self.assertEqual(list(self.home.iterdir()), [self.record])
+
+    def test_replacing_vault_after_inspection_cannot_enroll_substitute(self):
+        inspected = self.hooks.renew_vault_registration(self.home, str(self.vault))
+        self.vault.rename(self.root / "original-vault")
+        self.vault.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.vault)], check=True, capture_output=True)
+        with self.assertRaisesRegex(ValueError, "preserves.*inodes"):
+            self.hooks.renew_vault_registration(
+                self.home, str(self.vault), expected_sha256=inspected["expected_registration_sha256"])
+        self.assertEqual(self.record.read_bytes(), self.original)
+        self.assertEqual(list(self.home.iterdir()), [self.record])
+
+    def test_exchange_or_postpublication_failure_preserves_or_restores_original(self):
+        with mock.patch.object(self.hooks, "exchange_files", side_effect=OSError("fixture exchange failure")):
+            with self.assertRaisesRegex(ValueError, "retained recovery"):
+                self.hooks.renew_vault_registration(self.home, str(self.vault), expected_sha256=self.digest)
+        self.assertEqual(self.record.read_bytes(), self.original)
+        with mock.patch.object(self.hooks, "sync_directory", side_effect=[
+            None, None, None, OSError("fixture sync failure"), None, None
+        ]):
+            with self.assertRaisesRegex(ValueError, "retained recovery"):
+                self.hooks.renew_vault_registration(self.home, str(self.vault), expected_sha256=self.digest)
+        self.assertEqual(self.record.read_bytes(), self.original)
+        self.assertEqual(self.hooks.renew_vault_registration(self.home, str(self.vault))["status"], "renewal_required")
+
+    def test_registration_change_at_exchange_is_preserved_and_rejected(self):
+        exchange = self.hooks.exchange_files
+        newer = self.original + b" "
+        calls = 0
+
+        def competing_writer(stage, target):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                target.write_bytes(newer)
+            exchange(stage, target)
+
+        with mock.patch.object(self.hooks, "exchange_files", side_effect=competing_writer):
+            with self.assertRaisesRegex(ValueError, "retained recovery"):
+                self.hooks.renew_vault_registration(self.home, str(self.vault), expected_sha256=self.digest)
+        self.assertEqual(self.record.read_bytes(), newer)
+        recovery = tuple((self.home / "constellation-vault-recovery").glob("*/registration.json"))
+        self.assertEqual(len(recovery), 1)
+        self.assertEqual(json.loads(recovery[0].read_bytes()), self.binding)

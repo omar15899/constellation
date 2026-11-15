@@ -6,7 +6,9 @@ Usa el mismo chat para un encargo que abarque OmarOS y código de GitHub. En la
 app de escritorio puedes abrir **Editar proyecto** en un proyecto local,
 añadir ambas carpetas y elegir una principal. Los chats nuevos, Git por defecto
 y el descubrimiento automático de instrucciones, skills y configuración
-parten de la principal. Elige la carpeta que corresponda al trabajo habitual.
+parten de la principal. Para el trabajo personal de Omar, el proyecto local
+usa **OmarOS como principal** y adjunta `~/GitHub`. Mantén **un chat por
+encargo**, aunque abarque varios repositorios.
 [Proyectos locales de Codex](https://learn.chatgpt.com/docs/projects#use-local-projects-for-folders-and-codebases)
 
 Al trabajar en una carpeta secundaria, lee el `AGENTS.override.md` o
@@ -30,14 +32,14 @@ o verificación y heredan modelo y esfuerzo cuando el cliente lo permite.
 
 ## Operar desde cualquier carpeta
 
-La misma entrada instalada resuelve las operaciones. Mantén el ID del chat en
+El mismo lanzador instalado resuelve las operaciones. Mantén el ID del chat en
 los contratos del encargo y selecciona la raíz explícita de cada dueño.
 
 ```sh
-constellation() { "${CODEX_HOME:-$HOME/.codex}/constellation/run" cli "$@"; }
-constellation workspace --root "$HOME/GitHub" route Shared/README.md
-constellation git --root "$HOME/.codex" --session ID status
-"${CODEX_HOME:-$HOME/.codex}/constellation/run" vault --project-root "$HOME/OmarOS" --session ID status
+constellation_entry="${CODEX_HOME:-$HOME/.codex}/constellation/run"
+"$constellation_entry" cli workspace --root "$HOME/GitHub" route Shared/README.md
+"$constellation_entry" cli git --root "$HOME/.codex" --session ID status
+"$constellation_entry" vault --project-root "$HOME/OmarOS" --session ID status
 ```
 
 Usa [la referencia de publicación](WORKSPACE.md) para un dueño Git o varios

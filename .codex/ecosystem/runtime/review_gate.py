@@ -336,6 +336,39 @@ def _artifacts(root: Path, paths: list[str], deletions: list[str]) -> dict[str, 
     return result
 
 
+def _codex_controls(root: Path, state: dict[str, Any], documentation: dict[str, bool],
+                    artifacts: dict[str, Any], deletions: list[str]) -> bool:
+    """Keep control code and uncertain historical permissions at Deep risk.
+
+    Git contracts supply a frozen starting commit, so removing an executable bit
+    before the first review cannot disguise a script as an informative document.
+    Portable contracts have no Git history; absent documents remain conservative.
+    Only declared path metadata is read, without executing project hooks.
+    """
+    names = [name for name in documentation
+             if ".codex" in (part.lower() for part in Path(name).parts)]
+    if any(not documentation[name] or name in deletions or artifacts[name] is None
+           or artifacts[name].get("mode") != "100644" for name in names):
+        return True
+    initial = state.get("initial_head")
+    if not names or initial is None:
+        return False
+    if not isinstance(initial, str) or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", initial) is None:
+        return True
+    from .workflow import Blocked, git
+    try:
+        baseline = git(root, "--literal-pathspecs", "ls-tree", "-z", initial, "--", *names)
+    except (Blocked, OSError, UnicodeError):
+        return True
+    for record in filter(None, baseline.split("\0")):
+        metadata, separator, name = record.partition("\t")
+        parts = metadata.split()
+        if (not separator or name not in names or len(parts) != 3
+                or parts[0] != "100644" or parts[1] != "blob"):
+            return True
+    return False
+
+
 def _author_bindings(state: dict[str, Any],
                      authors: dict[str, list[str]]) -> dict[str, list[dict[str, Any]]]:
     """Normalize append-only observations without inventing unobserved identities."""
@@ -479,10 +512,18 @@ def prepare(root: Path, state: dict[str, Any], *, policy_path: Path | None = Non
         for name in paths:
             path_validator(root, name)
     artifacts = _artifacts(root, paths, deletions)
-    deep = any(fnmatch.fnmatchcase(path.lower(), pattern.lower())
-               for path in paths for pattern in policy["deep_patterns"])
-    docs_only = all(Path(path).suffix.lower() in policy["documentation_extensions"]
-                    or Path(path).name in policy["documentation_names"] for path in paths)
+    documentation = {
+        path: (Path(path).suffix.lower() in policy["documentation_extensions"]
+               or Path(path).name in policy["documentation_names"])
+        for path in paths
+    }
+    # Codex control code/configuration stays sensitive even under a new name.
+    # Only non-executable documents can escape the former directory blanket;
+    # governing instructions remain Deep through the explicit policy patterns.
+    codex_controls = _codex_controls(root, state, documentation, artifacts, deletions)
+    deep = codex_controls or any(fnmatch.fnmatchcase(path.lower(), pattern.lower())
+                                 for path in paths for pattern in policy["deep_patterns"])
+    docs_only = all(documentation.values())
     mode = "deep" if deep else "quick" if docs_only else "standard"
     risk_floor = state.get("review_risk", "quick")
     previous_mode = ledger.get("mode_floor", "quick") if isinstance(ledger, dict) else "quick"

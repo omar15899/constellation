@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -24,6 +26,12 @@ class ReleaseSyncTests(unittest.TestCase):
         for folder in (".codex/ecosystem", ".codex/skills", "notes"):
             (self.upstream / folder).mkdir(parents=True)
         (self.upstream / "notes/context.md").write_text("out of package scope")
+        (self.upstream / "AGENTS.md").write_text("# Published global rules\n")
+        (self.upstream / ".codex/profiles").mkdir()
+        (self.upstream / ".codex/profiles/install.py").write_bytes((CODEX_DIR / "profiles/install.py").read_bytes())
+        (self.upstream / ".codex/ecosystem/sync.py").write_bytes((CODEX_DIR / "ecosystem/sync.py").read_bytes())
+        (self.upstream / ".codex/ecosystem/hooks.py").write_text(
+            "def check_vault_registration(home, root, require_bound):\n return {'root':root}\n")
         (self.upstream / ".codex/skills/example.md").write_text("published method")
         (self.upstream / ".codex/ecosystem/build.py").write_text(
             "import sys,shutil\nfrom pathlib import Path\n"
@@ -32,7 +40,7 @@ class ReleaseSyncTests(unittest.TestCase):
             "shutil.copytree(Path(__file__).parents[1]/'skills',dest/'skills')\n"
             "shutil.copytree(Path(__file__).parent,dest/'ecosystem')\n")
         (self.upstream / ".codex/ecosystem/install.py").write_text(
-            "import json,hashlib,sys\nfrom pathlib import Path\n"
+            "import json,hashlib,sys,shutil\nfrom pathlib import Path\n"
             "home=Path(sys.argv[sys.argv.index('--codex-home')+1])\n"
             "managed=home/'constellation'; receipt=managed/'receipt.json'\n"
             "bundle=Path(sys.argv[sys.argv.index('--bundle')+1])\n"
@@ -41,6 +49,9 @@ class ReleaseSyncTests(unittest.TestCase):
             " current=hashlib.sha256(receipt.read_bytes()).hexdigest() if receipt.is_file() else 'absent'\n"
             " if expected!=current: raise SystemExit('stale receipt fixture')\n"
             " managed.mkdir(parents=True,exist_ok=True);(managed/'.install.lock').touch()\n"
+            " catalog=managed/'catalog/plugins/constellation'\n"
+            " if catalog.exists():shutil.rmtree(catalog)\n"
+            " shutil.copytree(bundle,catalog)\n"
             " digest=hashlib.sha256((bundle/'bundle.json').read_bytes()).hexdigest()\n"
             " mods=['coding','mathematics','quant-research','writter']\n"
             " if (bundle/'ecosystem/hook_entry.py').is_file():mods.append('omaros')\n"
@@ -61,7 +72,7 @@ class ReleaseSyncTests(unittest.TestCase):
             " digest=sys.argv[sys.argv.index('--expected-bundle-sha256')+1]\n"
             " print(json.dumps({'status':'excluded','source_root':str(cwd/'.codex'),"
             "'bundle_sha256':digest,'fixture_protected':protected}))\n")
-        self.git("add", ".codex", "notes")
+        self.git("add", ".codex", "notes", "AGENTS.md")
         self.revision = self.commit()
 
     def git(self, *args):
@@ -181,7 +192,7 @@ class ReleaseSyncTests(unittest.TestCase):
         self.commit()
         with self.assertRaisesRegex(sync.SyncError, "Published main"):
             self.run_release(self.revision, check=False)
-        self.assertFalse((self.work / "home").exists())
+        self.assertFalse((self.work / "home/constellation/receipt.json").exists())
 
     def test_latest_freezes_one_published_commit_and_reports_it(self):
         (self.upstream / ".codex/skills/example.md").write_text("next method")
@@ -198,7 +209,7 @@ class ReleaseSyncTests(unittest.TestCase):
         revision = self.commit()
         with self.assertRaisesRegex(sync.SyncError, "regular files"):
             self.run_release(revision, check=False)
-        self.assertFalse((self.work / "home").exists())
+        self.assertFalse((self.work / "home/constellation/receipt.json").exists())
 
     def test_vault_setup_uses_selected_native_executable_and_project_root(self):
         executable = self.work / "custom-codex"
@@ -243,7 +254,7 @@ class ReleaseSyncTests(unittest.TestCase):
         request = dict(check=False, workspace_root=self.upstream, protect_exclusions=("removed", "coding"))
         with self.assertRaisesRegex(sync.SyncError, "protected preference was re-enabled"):
             self.run_release(candidate, **request)
-        self.assertFalse((self.work / "home").exists())
+        self.assertFalse((self.work / "home/constellation/receipt.json").exists())
         marker.unlink()
         result = self.run_release(candidate, **request)
         self.assertEqual(result["workspace"]["fixture_protected"], ["coding"])
@@ -265,6 +276,158 @@ class ReleaseSyncTests(unittest.TestCase):
             with self.assertRaisesRegex(sync.SyncError, "installed. Vault setup failed"):
                 self.run_release(self.revision, check=False, vault_root=self.upstream)
         self.assertTrue((self.work / "home").is_dir())
+
+    def update_fixture(self):
+        old = self.run_release(self.revision, check=False)
+        (self.upstream / "AGENTS.md").write_text("# Next global rules\n")
+        (self.upstream / ".codex/skills/example.md").write_text("next method")
+        self.git("add", "AGENTS.md", ".codex/skills/example.md")
+        return old, self.commit()
+
+    def test_same_commit_supplies_global_instructions_and_explicit_restore(self):
+        old, revision = self.update_fixture()
+        (self.upstream / "AGENTS.md").write_text("unpublished global edit")
+        current = self.run_release(revision, check=False)
+        home = self.work / "home"
+        self.assertEqual((home / "AGENTS.md").read_text(), "# Next global rules\n")
+        self.assertEqual(current["instructions"]["revision"], revision)
+        restored = sync.restore(Path(current["recovery"]), home)
+        self.assertEqual(restored["status"], "restored")
+        self.assertEqual((home / "AGENTS.md").read_text(), "# Published global rules\n")
+        receipt = json.loads((home / "constellation/receipt.json").read_bytes())
+        self.assertEqual(receipt["cache"]["bundle.json"]["sha256"], old["bundle_sha256"])
+
+    def test_interruption_at_each_outer_checkpoint_keeps_previous_release_recoverable(self):
+        for checkpoint in (2, 3):
+            with self.subTest(checkpoint=checkpoint):
+                # Each variant uses a fresh device, preserving the published fixture.
+                home = self.work / "home"
+                if home.exists():
+                    import shutil
+                    shutil.rmtree(home)
+                old = self.run_release(self.revision, check=False)
+                (self.upstream / "AGENTS.md").write_text(f"# Revision {checkpoint}\n")
+                (self.upstream / ".codex/skills/example.md").write_text(f"method {checkpoint}")
+                self.git("add", "AGENTS.md", ".codex/skills/example.md")
+                revision = self.commit()
+                save = sync._save_recovery
+                count = 0
+
+                def interrupted(path, manifest):
+                    nonlocal count
+                    count += 1
+                    if count == checkpoint:
+                        raise OSError("simulated process interruption")
+                    return save(path, manifest)
+
+                with patch.object(sync, "_save_recovery", side_effect=interrupted), self.assertRaises(OSError):
+                    self.run_release(revision, check=False)
+                recovery = next((home / "docs/maintenance/updates").iterdir())
+                sync.restore(recovery, home)
+                self.assertEqual((home / "AGENTS.md").read_text(), "# Published global rules\n")
+                self.assertEqual(json.loads((home / "constellation/receipt.json").read_bytes())["cache"]["bundle.json"]["sha256"], old["bundle_sha256"])
+                self.revision = revision
+                # Keep the baseline expectation explicit for the next fresh device.
+                (self.upstream / "AGENTS.md").write_text("# Published global rules\n")
+                (self.upstream / ".codex/skills/example.md").write_text("published method")
+                self.git("add", "AGENTS.md", ".codex/skills/example.md")
+                self.revision = self.commit()
+
+    def test_interrupted_instruction_receipt_and_partial_restore_can_be_retried(self):
+        _, revision = self.update_fixture()
+        current = self.run_release(revision, check=False)
+        home = self.work / "home"
+        recovery = Path(current["recovery"])
+        # The file promotion committed but the instruction receipt did not.
+        record = home / "docs/maintenance/instructions.json"
+        old_digest = hashlib.sha256((recovery / "AGENTS.md").read_bytes()).hexdigest()
+        record.write_text(json.dumps({"schema": 1, "revision": self.revision, "sha256": old_digest}))
+        save = sync._save_recovery
+        with patch.object(sync, "_save_recovery", side_effect=OSError("cut after old bundle restored")), self.assertRaises(OSError):
+            sync.restore(recovery, home)
+        self.assertEqual(sync.restore(recovery, home)["status"], "restored")
+        self.assertEqual((home / "AGENTS.md").read_text(), "# Published global rules\n")
+
+    def test_restore_preserves_local_edits_and_rejects_changed_recovery(self):
+        _, revision = self.update_fixture()
+        current = self.run_release(revision, check=False)
+        home = self.work / "home"
+        original_receipt = (home / "constellation/receipt.json").read_bytes()
+        (home / "AGENTS.md").write_text("personal edit")
+        with self.assertRaisesRegex(sync.SyncError, "Global instructions changed"):
+            sync.restore(Path(current["recovery"]), home)
+        self.assertEqual((home / "constellation/receipt.json").read_bytes(), original_receipt)
+
+    def test_complete_release_lock_serializes_updates_and_restores(self):
+        entered, release, second = threading.Event(), threading.Event(), threading.Event()
+        home = self.work / "home"
+
+        def first():
+            with sync._release_lock(home):
+                entered.set()
+                release.wait(5)
+
+        def following():
+            with sync._release_lock(home):
+                second.set()
+
+        thread = threading.Thread(target=first)
+        contender = threading.Thread(target=following)
+        thread.start()
+        self.assertTrue(entered.wait(5))
+        contender.start()
+        self.assertFalse(second.wait(0.1))
+        release.set()
+        thread.join(5)
+        contender.join(5)
+        self.assertTrue(second.is_set())
+
+    def test_obsolete_vault_binding_blocks_before_installer(self):
+        hooks = self.upstream / ".codex/ecosystem/hooks.py"
+        hooks.write_text("def check_vault_registration(*args, **kwargs):\n raise ValueError('obsolete enrolled root')\n")
+        self.git("add", ".codex/ecosystem/hooks.py")
+        revision = self.commit()
+        with patch("importlib.util.find_spec", return_value=object()), self.assertRaisesRegex(sync.SyncError, "obsolete enrolled root"):
+            self.run_release(revision, check=False, vault_root=self.upstream)
+        self.assertFalse((self.work / "home/constellation/receipt.json").exists())
+
+    def test_recovery_handles_absent_or_linked_instruction_publications(self):
+        _, revision = self.update_fixture()
+        current = self.run_release(revision, check=False)
+        home = self.work / "home"
+        recovery = Path(current["recovery"])
+        instruction = home / "AGENTS.md"
+        instruction.unlink()
+        self.assertEqual(sync.restore(recovery, home)["status"], "restored")
+        # A killed publisher leaves a staging hardlink alive; restore preserves
+        # that inode and publishes a fresh singly linked instruction generation.
+        staging = home / ".profile-next-interrupted"
+        os.link(instruction, staging)
+        self.assertEqual(sync.restore(recovery, home)["status"], "restored")
+        self.assertEqual(staging.read_text(), "# Published global rules\n")
+        self.assertEqual(instruction.stat().st_nlink, 1)
+        # Journal staging lives beside, rather than inside, payload snapshots.
+        (recovery.parent / ".recovery-interrupted").write_text("partial journal")
+        self.assertEqual(sync.restore(recovery, home)["status"], "restored")
+
+    def test_snapshot_rejects_concurrent_global_edit_without_adopting_it(self):
+        self.run_release(self.revision, check=False)
+        retain = sync._retain_previous
+        home = self.work / "home"
+        before_receipt = (home / "docs/maintenance/instructions.json").read_bytes()
+        before_installation = (home / "constellation/receipt.json").read_bytes()
+
+        def edit_then_retain(*args, **kwargs):
+            (home / "AGENTS.md").write_text("personal concurrent edit")
+            return retain(*args, **kwargs)
+
+        with patch.object(sync, "_retain_previous", side_effect=edit_then_retain), self.assertRaisesRegex(sync.SyncError, "changed before recovery snapshot"):
+            self.run_release(self.revision, check=False)
+        self.assertEqual((home / "AGENTS.md").read_text(), "personal concurrent edit")
+        self.assertEqual((home / "docs/maintenance/instructions.json").read_bytes(), before_receipt)
+        self.assertEqual((home / "constellation/receipt.json").read_bytes(), before_installation)
+        with self.assertRaisesRegex(sync.SyncError, "local or unowned"):
+            self.run_release(self.revision, check=False)
 
 
 if __name__ == "__main__":

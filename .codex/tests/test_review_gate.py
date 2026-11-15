@@ -334,6 +334,124 @@ class ReviewFixture(unittest.TestCase):
         self.call("report", self.payload("reviewer-c", focus=["security"]))
         self.call("validate")
 
+    def test_both_profiles_scale_informative_docs_and_preserve_control_review(self):
+        scenarios = {
+            ".codex/reports/findings.md": "quick",
+            "nested/.codex/reports/findings.txt": "quick",
+            ".codex/ecosystem/docs/architecture.rst": "quick",
+            "src/helper.py": "standard",
+            ".codex/new_control": "deep",
+            ".codex/config.toml": "deep",
+            ".codex/settings.json": "deep",
+            ".codex/tests/test_control.py": "deep",
+            ".codex/install.py": "deep",
+            ".codex/ecosystem/hooks.py": "deep",
+            "ecosystem/hooks.py": "deep",
+            ".codex/ecosystem/runtime/review-policy.json": "deep",
+            ".codex/ecosystem/vault/install.py": "deep",
+            "AGENTS.override.md": "deep",
+            "area/AGENTS.override.md": "deep",
+            "area/REVIEW.md": "deep",
+            ".codex/README.md": "deep",
+            "nested/.codex/PROJECT.md": "deep",
+            ".codex/profiles/native/README.md": "deep",
+            "skills/custom/references/method.md": "deep",
+            ".codex/ecosystem/agents/README.md": "deep",
+            ".codex/ecosystem/references/protocol.md": "deep",
+            ".codex/ecosystem/references/ontology.md": "deep",
+            ".codex/ecosystem/docs/progress.md": "deep",
+            ".codex/ecosystem/docs/windows.md": "deep",
+            ".codex/ecosystem/README.md": "deep",
+        }
+        for profile in ("runtime", "vault"):
+            policy = MODULE.parents[1] / profile / "review-policy.json"
+            for name, expected in scenarios.items():
+                with self.subTest(profile=profile, name=name):
+                    target = self.root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text("content\n")
+                    self.state["paths"] = [name]
+                    context = gate.prepare(self.root, self.state, policy_path=policy)
+                    self.assertEqual(context["mode"], expected)
+                    self.assertEqual(context["required_reviewers"],
+                                     {"quick": 1, "standard": 3, "deep": 5}[expected])
+
+    @unittest.skipIf(gate.ps.IS_WINDOWS, "POSIX executable mode distinguishes scripts from informative documents.")
+    def test_executable_codex_document_is_a_control_in_both_profiles(self):
+        name = ".codex/reports/script.md"
+        target = self.root / name
+        target.parent.mkdir(parents=True)
+        target.write_text("#!/bin/sh\nexit 0\n")
+        self.state["paths"] = [name]
+        for profile in ("runtime", "vault"):
+            with self.subTest(profile=profile):
+                policy = MODULE.parents[1] / profile / "review-policy.json"
+                target.chmod(0o644)
+                self.assertEqual(gate.prepare(self.root, self.state, policy_path=policy)["mode"], "quick")
+                target.chmod(0o755)
+                self.assertEqual(gate.prepare(self.root, self.state, policy_path=policy)["mode"], "deep")
+
+    def test_absent_or_deleted_codex_document_stays_deep_without_prior_permissions(self):
+        name = ".codex/reports/script.md"
+        (self.root / name).parent.mkdir(parents=True)
+        self.state["paths"] = [name]
+        for profile in ("runtime", "vault"):
+            policy = MODULE.parents[1] / profile / "review-policy.json"
+            for deletions in ([], [name]):
+                with self.subTest(profile=profile, deletions=deletions):
+                    self.state["deletions"] = deletions
+                    self.assertEqual(gate.prepare(self.root, self.state, policy_path=policy)["mode"], "deep")
+
+    @unittest.skipIf(gate.ps.IS_WINDOWS, "POSIX executable mode is recorded in the Git baseline.")
+    def test_removing_executable_permission_before_first_review_retains_deep(self):
+        name = ".codex/reports/script.md"
+        target = self.root / name
+        target.parent.mkdir(parents=True)
+        target.write_text("#!/bin/sh\nexit 0\n")
+        target.chmod(0o755)
+        informative_name = ".codex/reports/info.md"
+        (self.root / informative_name).write_text("Informative report\n")
+        for args in (("init", "-q"), ("add", name, informative_name),
+                     ("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                      "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+                      "commit", "-qm", "Record executable fixture")):
+            subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+        initial = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
+        target.chmod(0o644)
+        self.state.update(paths=[name], initial_head=initial)
+        new_name = ".codex/reports/new.md"
+        (self.root / new_name).write_text("New informative report\n")
+        for profile in ("runtime", "vault"):
+            policy = MODULE.parents[1] / profile / "review-policy.json"
+            for selected, expected in ((name, "deep"), (informative_name, "quick"), (new_name, "quick")):
+                with self.subTest(profile=profile, path=selected):
+                    self.state["paths"] = [selected]
+                    self.assertEqual(gate.prepare(self.root, self.state, policy_path=policy)["mode"], expected)
+        # A historical metadata failure must not silently grant the exemption.
+        with patch("ecosystem.runtime.workflow.git", side_effect=OSError("unavailable")):
+            self.assertEqual(self.call("prepare")["mode"], "deep")
+
+    def test_sensitive_rename_and_active_risk_cannot_become_informative_docs(self):
+        for profile in ("runtime", "vault"):
+            with self.subTest(profile=profile):
+                policy = MODULE.parents[1] / profile / "review-policy.json"
+                original = self.root / "AGENTS.override.md"
+                original.write_text("Governing instructions\n")
+                self.state = {"requirements": ["Move the instructions"], "paths": [original.name],
+                              "deletions": [], "author": "author-session", "started": "task-start"}
+                gate.start(self.root, self.state, policy_path=policy)
+                renamed_name = f".codex/{profile}_report.md"
+                renamed = self.root / renamed_name
+                renamed.parent.mkdir(exist_ok=True)
+                original.rename(renamed)
+                self.state["paths"] = [original.name, renamed_name]
+                self.state["deletions"] = [original.name]
+                self.assertEqual(gate.prepare(self.root, self.state, policy_path=policy)["mode"], "deep")
+                # Even withdrawing the old name cannot lower an active floor.
+                self.state["paths"] = [renamed_name]
+                self.state["deletions"] = []
+                self.assertEqual(gate.prepare(self.root, self.state, policy_path=policy)["mode"], "deep")
+
     def test_sensitive_documentation_overrides_quick_classification(self):
         for name in ["AGENTS.md", "REVIEW.md", ".github/README.md", "src/auth/README.md", "install.sh"]:
             with self.subTest(name=name):

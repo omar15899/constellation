@@ -81,8 +81,12 @@ python3 -I -B .codex/ecosystem/sync.py --latest --vault-root "$RUTA_ABSOLUTA_OMA
   --workspace-root "$RUTA_ABSOLUTA_CONSTELLATION"
 ```
 
-En una instalación existente, el mismo comando está disponible en
-`~/.codex/constellation/catalog/plugins/constellation/ecosystem/sync.py`.
+En una instalación existente, utiliza la entrada estable del mismo actualizador:
+
+```sh
+"${CODEX_HOME:-$HOME/.codex}/constellation/run" sync --latest \
+  --vault-root "$RUTA_ABSOLUTA_OMAROS" --workspace-root "$RUTA_ABSOLUTA_CONSTELLATION"
+```
 `--vault-root` instala los cuatro métodos generales y el módulo opcional
 `omaros`. Su ejecución requiere Python 3.11+ con PyYAML y la ruta absoluta del
 repositorio OmarOS de ese equipo. Las herramientas de búsqueda del vault usan
@@ -142,6 +146,65 @@ La operación comprueba identidad de contenido y permisos de los recursos de
 origen e instalación, actúa sobre las rutas seleccionadas y verifica el
 resultado con un cliente nuevo. Las exclusiones corresponden al checkout
 descubierto por el cliente del equipo.
+
+### Una revisión para instrucciones y agentes
+
+`sync` obtiene `AGENTS.md`, el instalador de instrucciones y el paquete del mismo
+SHA publicado. El preflight comprueba los conflictos de instrucciones y la
+identidad del vault antes de promover. `--check` no modifica la instalación ni
+el registro. Los perfiles y automatismos de Claude conservan su ciclo propio. Una actualización
+conserva la selección de módulos anterior; cambiar entre el perfil general y
+`omaros` se rechaza antes de promover y requiere su migración específica.
+
+La salida muestra `revision`, `bundle_sha256`, el hash y revisión de
+`instructions`, los roles `installed_agents` verificados y el diagnóstico
+`native` de un cliente nuevo. La lista instalada y su integridad no prueban qué
+agentes ejecuta una sesión abierta. Revisa los cinco estados de confianza en
+`native.hooks` y en `/hooks`; no se conceden aprobaciones automáticamente.
+
+Una actualización conserva la copia anterior bajo el directorio local indicado
+por `recovery`. Para recuperarla sin descargar código:
+
+```sh
+"${CODEX_HOME:-$HOME/.codex}/constellation/run" sync --restore "$RECUPERACION_ABSOLUTA"
+```
+
+La recuperación verifica los archivos retenidos y los estados admitidos de la
+instalación y las instrucciones. Los cambios ajenos bloquean la sustitución y se
+conservan para inspección. No borres el recibo ni la copia anterior para reintentar.
+Si el paquete anterior todavía no incluye `run sync`, reintenta con la copia
+verificada del actualizador retenida en el directorio de recuperación:
+
+```sh
+~/.venvs/omaros/bin/python -I -B "$RECUPERACION_ABSOLUTA/sync.py" \
+  --restore "$RECUPERACION_ABSOLUTA" --codex-home "${CODEX_HOME:-$HOME/.codex}"
+```
+
+Los contratos y publicaciones de los proyectos siguen siendo independientes.
+
+### Renovar el registro del vault
+
+Si cambia el identificador del dispositivo y la raíz registrada deja de ser válida,
+inspecciona primero el registro y el dueño Git de la misma ruta. La renovación
+admite solo la raíz ya registrada y conserva los inodes del vault y de su Git;
+un reemplazo o traslado no equivale a renovar el identificador del dispositivo.
+Obtén una propuesta sin escribir:
+
+```sh
+"${CODEX_HOME:-$HOME/.codex}/constellation/run" renew-vault --project-root "$RUTA_ABSOLUTA_OMAROS"
+```
+
+Comprueba la identidad anterior y la propuesta. Aplica con el hash exacto de la
+lectura, devuelto como `expected_registration_sha256`:
+
+```sh
+"${CODEX_HOME:-$HOME/.codex}/constellation/run" renew-vault \
+  --project-root "$RUTA_ABSOLUTA_OMAROS" --expected-registration-sha256 "$HASH_REGISTRO"
+```
+
+La renovación conserva una copia local del registro anterior y rechaza cambios
+concurrentes. No modifica archivos del vault, permisos ni confianza de hooks.
+Repite la comprobación del vault y la sincronización con el SHA elegido.
 
 ### Diagnóstico de Codex
 
