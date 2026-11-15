@@ -1,63 +1,73 @@
-# Operar y desarrollar Constellation
+# Trabajar con Codex y Constellation
 
-La fuente canónica de este equipo es `~/.codex`, rama `main` del repositorio
-privado `omar15899/constellation`. Su [arquitectura](ecosystem/docs/architecture.md)
-separa la fuente, la instalación verificada y los datos propios de cada proyecto.
-Las instrucciones globales permanecen en [AGENTS.md](../AGENTS.md); el contexto
-específico de desarrollo está en [AGENTS.md](AGENTS.md).
+## Una instalación para todas las carpetas
 
-## Usar la instalación del equipo
+Usa el mismo chat para un encargo que abarque OmarOS y código de GitHub. En la
+app de escritorio puedes abrir **Editar proyecto** en un proyecto local,
+añadir ambas carpetas y elegir una principal. Los chats nuevos, Git por defecto
+y el descubrimiento automático de instrucciones, skills y configuración
+parten de la principal. Elige la carpeta que corresponda al trabajo habitual.
+[Proyectos locales de Codex](https://learn.chatgpt.com/docs/projects#use-local-projects-for-folders-and-codebases)
+
+Al trabajar en una carpeta secundaria, lee el `AGENTS.override.md` o
+`AGENTS.md` aplicable desde su raíz Git hasta la carpeta afectada, y el
+contexto y las restricciones que indique. Cada hijo de `~/GitHub` es una
+raíz Git independiente. Para el vault, empieza por su `AGENTS.md` y
+`.codex/PROJECT.md`. Para el hub, usa su `AGENTS.md` y
+`.codex/WORKSPACE.md` cuando coordines proyectos.
+[Descubrimiento de instrucciones](https://learn.chatgpt.com/docs/agent-configuration/agents-md#how-codex-discovers-guidance)
+
+| Necesidad | Fuente |
+| --- | --- |
+| Preferencias comunes de trabajo y código | [`AGENTS.md`](../AGENTS.md), cargado globalmente desde el directorio de Codex |
+| Método de programación | [`coding`](skills/coding/SKILL.md) para el coordinador y [roles nativos](ecosystem/agents/) para delegar |
+| Datos, pruebas y publicación del proyecto | Instrucciones del dueño Git y del área afectada |
+| Permisos, ajustes y datos de la aplicación | Configuración efectiva del cliente y [rutas nativas](profiles/codex/layout.md) |
+
+Las instrucciones de ingeniería aplican también a agentes sin la skill
+`coding`. Los roles especializados añaden el método de implementación, revisión
+o verificación y heredan modelo y esfuerzo cuando el cliente lo permite.
+
+## Operar desde cualquier carpeta
+
+La misma entrada instalada resuelve las operaciones. Mantén el ID del chat en
+los contratos del encargo y selecciona la raíz explícita de cada dueño.
 
 ```sh
 constellation() { "${CODEX_HOME:-$HOME/.codex}/constellation/run" cli "$@"; }
+constellation workspace --root "$HOME/GitHub" route Shared/README.md
 constellation git --root "$HOME/.codex" --session ID status
-constellation workspace --root "$HOME/GitHub" route Shared/README.md PricingLab/README.md
-constellation agent-policy --root "$HOME/.codex" show
+"${CODEX_HOME:-$HOME/.codex}/constellation/run" vault --project-root "$HOME/OmarOS" --session ID status
 ```
 
-| Operación | Entrada |
-| --- | --- |
-| Un repositorio Git | `constellation git --root RUTA --session ID OPERACION` |
-| Varios dueños en GitHub | `constellation workspace --root "$HOME/GitHub" --session ID OPERACION` |
-| Evidencia portable | `constellation --root RUTA OPERACION` |
+Usa [la referencia de publicación](WORKSPACE.md) para un dueño Git o varios
+dueños del hub. En OmarOS, su adaptador y su contrato gobiernan el contenido
+del vault y los cambios delegados. La [evidencia portable](ecosystem/references/protocol.md)
+sirve para trabajos que la requieren fuera de Git. Un contrato independiente
+por dueño permite conservar el historial, el índice y el destino de cada
+repositorio dentro del mismo chat.
 
-El lanzador usa el intérprete registrado por el instalador y verifica el paquete.
-Los hooks Git y los adaptadores de OmarOS y del workspace consumen esa misma
-instalación. Con el módulo `omaros`, `constellation skill-run --help` enumera los
-auxiliares públicos; finder y la captura requieren la inscripción exacta del vault.
+## Mantener la instalación
 
-El [workspace](WORKSPACE.md) respeta los límites de los dueños Git. `git finish`
-y `workspace finish` requieren publicación verificada. Las consultas locales de
-OmarOS conservan su propio cierre. La evidencia portable sigue el
-[protocolo](ecosystem/references/protocol.md).
-
-## Desarrollar la fuente
-
-Desde `~/.codex`, `python3 .codex/ecosystem/cli.py --source ...` selecciona
-explícitamente el candidato. Sin `--source`, la entrada utiliza la instalación
-verificada y toma esta raíz como workspace predeterminado; para operar en el
-workspace de proyectos proporciona siempre `workspace --root "$HOME/GitHub"`.
+Desarrolla en la [fuente canónica](AGENTS.md) y prueba explícitamente el
+candidato con `python3 .codex/ecosystem/cli.py --source ...` y Python 3.11 o
+posterior. Los hooks Git, el hub y el vault consumen la distribución verificada
+del equipo.
 
 ```sh
 cd "$HOME/.codex"
-python3 -B -m unittest discover -s .codex/tests -v
-python3 -B -m unittest discover -s .codex/ecosystem/tests -v
+python3 -B -m unittest discover -s .codex/tests
+python3 -B -m unittest discover -s .codex/ecosystem/tests
 ```
 
-Construye y comprueba el paquete candidato antes de promoverlo. La
-[guía de instalación](ecosystem/docs/migrations.md) distingue las fuentes, la
-promoción del paquete y la confianza de hooks del cliente. Las
-[actualizaciones](ecosystem/docs/updates.md) siguen el `main` publicado;
-`--workspace-root "$HOME/.codex"` selecciona ahora la fuente cuyas skills deben
-excluirse del descubrimiento duplicado, no el workspace operativo de proyectos.
+Sigue la [guía de instalación y recuperación](ecosystem/docs/migrations.md)
+para construir, validar y promover una revisión. Después comprueba el catálogo
+de un cliente nuevo, las raíces de destino y el estado de confianza de los
+hooks. La evidencia de instalación y la de ejecución nativa se obtienen por
+separado.
 
-Mantén operativa la instalación anterior durante una actualización. Después,
-comprueba el lanzador, el enrutado de un archivo del hub y otro de un hijo, y el
-adaptador de OmarOS. Una sesión abierta conserva su catálogo cargado; revalida
-la ejecución y confianza nativas en una nueva sesión cuando corresponda.
-
-Una distribución extraída puede ejecutar pruebas portables con su propio CLI.
-El nombre reservado `.codex` exige identidad de fuente versionada o un inventario
-coincidente con la instalación; un checkout ambiguo se rechaza antes de importar
-sus módulos. La [política de revisión](../REVIEW.md) y el
-[progreso recuperable](ecosystem/docs/progress.md) completan el flujo de entrega.
+Consulta los [criterios de revisión](../REVIEW.md), la
+[guía de progreso](ecosystem/docs/progress.md) o los
+manuales oficiales en `~/.codex/docs/official/INDEX.md` cuando el
+trabajo los requiera. En otro equipo prepara primero el
+[perfil portable](profiles/README.md).

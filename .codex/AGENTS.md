@@ -1,24 +1,17 @@
-# Fuente de Constellation
+# Desarrollar Constellation
 
-Esta carpeta contiene la fuente canónica del orquestador en `~/.codex`, rama
-`main` de `omar15899/constellation`. Las instrucciones globales del usuario en
-[AGENTS.md](../AGENTS.md) se conservan como tales. El contrato de desarrollo está
-en [README.md](README.md); aplica también [REVIEW.md](../REVIEW.md) y
-[RESEARCH.md](RESEARCH.md) cuando corresponda.
+Esta carpeta mantiene los métodos y las skills en `skills/`, el motor y los
+roles en `ecosystem/`, y las pruebas de la fuente en `tests/`. Usa la
+[guía común](README.md), la [revisión de la fuente](../REVIEW.md) y el
+[contrato de investigación](RESEARCH.md) cuando corresponda.
 
-Mantén los métodos y las skills en `skills/`, el motor y los roles en
-`ecosystem/`, y las pruebas de integración de la fuente en `tests/`. Prueba el
-candidato con `python3 .codex/ecosystem/cli.py --source ...`; las operaciones
-ordinarias usan el lanzador verificado `~/.codex/constellation/run`. No edites
-las copias instaladas como fuente ni alteres recibos para superar comprobaciones.
+Prueba el candidato con `python3 .codex/ecosystem/cli.py --source ...`.
+La copia instalada es una distribución verificada. Actualízala mediante su
+instalador y conserva los recibos.
 
-`~/GitHub` es otro dueño Git, con su registro de proyectos y herramientas de
-Claude en la rama `codex/workspace`. Proporciona `workspace --root ~/GitHub` para
-operar allí. El registro de esta raíz sólo incluye `.`; no amplíes sus límites
-para enrutar carpetas hermanas. OmarOS y cada proyecto conservan sus contratos.
+Registra requisitos, comprobaciones y autores reales. El coordinador obtiene
+revisión independiente y publica las rutas declaradas con la política de esta
+raíz. La [allowlist](../.gitignore) delimita lo que la fuente publica.
 
-Preserva cambios e índices ajenos. Registra requisitos, checks y autores reales,
-obtén revisión independiente y publica únicamente el alcance declarado. La
-allowlist de la raíz excluye configuración efectiva, credenciales, conversaciones,
-estado de aplicación, perfiles privados y recursos instalados. No leas ni
-publiques esos datos como contexto incidental de desarrollo.
+Lee ajustes del dispositivo y datos privados únicamente cuando sean necesarios
+y estén autorizados por el encargo.

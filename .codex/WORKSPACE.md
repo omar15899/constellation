@@ -1,29 +1,21 @@
-# Propietarios y workspaces
+# Publicación entre repositorios
 
-`~/.codex` es el dueño de la fuente de Constellation, en `main`. Su
-[registro](repositories.json) contiene sólo `.`. `~/GitHub` conserva otro dueño
-Git, en `codex/workspace`, con el registro de los proyectos hijos. El remoto
-compartido conserva la historia; cada raíz tiene su contrato, índice y publicación.
+[La guía común](README.md#operar-desde-cualquier-carpeta) define la función
+`constellation`. Conserva el ID del chat y elige la raíz del propietario en
+cada operación. La fuente de Constellation publica en `main`. El hub de GitHub
+publica en `codex/workspace` y mantiene el registro y la coordinación de los
+hijos. Los hijos y OmarOS publican desde sus propias raíces.
 
-Usa la función `constellation` de la [guía de entrada](README.md). Las rutas de
-un workspace son relativas a su raíz, que debe ser un repositorio Git real. El
-motor rechaza enlaces ambiguos y rutas que salgan de esa raíz; el registro de
-Constellation no se usa para incorporar a sus carpetas hermanas.
-
-```sh
-constellation git --root "$HOME/.codex" --session ID status
-constellation workspace --root "$HOME/GitHub" route Shared/README.md PricingLab/README.md
-```
-
-Las entradas históricas en `~/GitHub/.codex/ecosystem/cli.py` conservan el
-workspace de GitHub y remiten al lanzador instalado. El CLI de la fuente en
-`~/.codex/.codex/ecosystem/cli.py` permite `--source` para desarrollo y selecciona
-esta raíz por defecto; proporciona `--root` expresamente al trabajar en GitHub.
+Usa `git --root RUTA --session ID` para un solo dueño con contrato Constellation
+y `workspace --root "$HOME/GitHub" --session ID` para coordinar los dueños
+registrados en el hub. El vault tiene su adaptador y contrato de delegación.
+El adaptador histórico del hub sigue resolviendo al mismo lanzador instalado.
 
 ## Coordinar dos proyectos de GitHub
 
-`plan` comprueba upstreams, fija rutas y prepara el contrato de cada dueño.
-Declara las dependencias en el mismo plan.
+Declara rutas relativas al hub y dependencias entre dueños. El motor determina
+cada raíz Git real y comprueba el upstream. El coordinador asigna rutas
+exclusivas a agentes nativos y valida la evidencia en orden de dependencia.
 
 ```sh
 constellation workspace --root "$HOME/GitHub" --session ID plan <<'JSON'
@@ -38,26 +30,18 @@ constellation workspace --root "$HOME/GitHub" --session ID check --repo Shared -
 constellation workspace --root "$HOME/GitHub" --session ID check --repo PricingLab -- git diff --check
 ```
 
-El reparto entrega paquetes; el coordinador los asigna a agentes nativos reales,
-con rutas exclusivas, y comprueba la evidencia de los proveedores antes de integrar
-sus consumidores. Los trabajadores preservan cambios ajenos y no publican.
-
 ## Revisión independiente
 
-Registra todos los autores con `review-author --repo RUTA`, abre `review-start`
-tras los checks y registra los informes reales para el token vigente. Las cuotas
-y la independencia se aplican por archivo según [REVIEW.md](../REVIEW.md). Otro
-agente verifica cada hallazgo corregido o refutado. `review` documenta la
-evidencia por requisito y propietario; los commits siguen las dependencias.
+Registra a los autores con `review-author --repo RUTA`, abre `review-start`
+tras las comprobaciones y registra los informes del token vigente. Usa
+[REVIEW.md](../REVIEW.md) y la política del dueño para la cobertura de revisión.
+`review` documenta el resultado por requisito y propietario.
 
 ```sh
 constellation workspace --root "$HOME/GitHub" --session ID commit -m 'Aclara el contrato de datos' Shared/README.md PricingLab/README.md
 constellation workspace --root "$HOME/GitHub" --session ID finish
 ```
 
-La publicación de `main` y de `codex/workspace` son operaciones distintas. Usa el
-flujo Git de la raíz correspondiente y comprueba cada SHA remoto. Las operaciones
-se consultan con `constellation workspace --help` y la ayuda de sus subcomandos.
-La instalación, la ejecución real de hooks y su confianza se verifican por separado.
-El progreso personal y la recepción documental de OmarOS conservan sus políticas;
-el registro del workspace no concede esos permisos.
+Comprueba el SHA remoto de cada dueño. El registro de repositorios describe
+el enrutado. Para el acceso a datos y la recepción documental de OmarOS rige
+el alcance autorizado del encargo.

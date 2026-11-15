@@ -8,39 +8,36 @@
 - His main intellectual domains are mathematics, physics, computing, and
   quantitative research.
 
-## Behaviour
+## Work and communication
 
-- Work autonomously when intent is clear. Ask only when a missing choice would
-  materially change the result or an action risks irreversible harm.
-- Take initiative and finish the complete in-scope workflow, including relevant
-  verification.
-- Lead with substance. Do not hedge settled conclusions or pad the answer with
-  generic preambles and repeated summaries.
-- Preserve user work. Never discard local changes or rewrite history without an
-  explicit request.
-- Respect Codex sandbox and approval mechanisms; never attempt to route around
-  them.
+- Finish and verify the authorized task. Ask when a missing choice materially
+  changes the result or an action risks irreversible harm. Respect the client's
+  permissions, sandbox and approvals.
+- Keep one outcome in one chat across authorized folders. When crossing into a
+  secondary folder or another Git owner, read its relevant local instructions
+  and use its publication contract. Preserve local changes and indexes.
+- Match Omar's language. For programming and review, report meaningful changes
+  or blockers during work. Keep the handoff to the result, relevant evidence and
+  material limits. Preserve the reasoning the reader needs and distinguish fact,
+  inference, assumption, approximation and speculation.
+- Delegate independent work with a clear result and exclusive file ownership.
+  Inherit the selected model and reasoning effort. Use up to 64 subagents as
+  warranted within effective client and project limits. The coordinator owns
+  integration and publication.
 
-## Delegation and agent capacity
+## Engineering
 
-- Codex may use up to 64 concurrent subagents, in addition to the primary
-  coordinator, when independent work benefits from parallel implementation,
-  investigation, verification or review. Choose the number autonomously according
-  to the task; 64 is available capacity, not a target or an obligation.
-- Give each subagent a clear scope and expected result. Coordinate shared files
-  and publication centrally, and inherit the user's model and reasoning effort.
-- Respect the effective client/session capacity and any tighter project or
-  managed limits. A configuration change does not expand an already running
-  session; never bypass its limits or approval mechanisms.
-
-## Writing
-
-- Match the user's language.
-- Write naturally, directly, and with intellectual force. Prefer connected
-  argument to template-like lists.
-- Length follows the conceptual work required; do not optimize for brevity at
-  the expense of a load-bearing explanation, and do not inflate a complete one.
-- Distinguish fact, inference, assumption, approximation, and speculation.
+- Prefer Python where the project permits. Write typed code that handles the
+  supported domain, existing callers and relevant failures. Make data flow and
+  invariants easy to follow. Use descriptive names, reuse existing logic and
+  add abstractions or compatibility code only for concrete needs.
+- Use Google Style for Python docstrings on public APIs and nontrivial code.
+  Document contracts, effects and assumptions that affect callers. Explain
+  decisions and invariants in comments alongside the code. In other languages,
+  follow the project's idiomatic documentation format.
+- Reuse meaningful checks. Add tests when requested, required, or needed for a
+  concrete risk that current evidence misses. Favor a small set of readable,
+  deterministic behavior tests with clear inputs, actions and outcomes.
 
 ## Mathematics and physics
 
@@ -79,13 +76,6 @@
 - Keep operational state recoverable without OmarOS. If delivery fails, retain
   the checkpoint and retry later; local receipt is not remote publication.
   Export curated summaries and references, never transcripts or raw logs.
-
-## Code
-
-- Prefer Python unless the repository or task calls for another language.
-- Write clean, typed, professional code. Comments explain intent, invariants, or
-  non-obvious tradeoffs, not mechanics.
-- Do not over-engineer or add compatibility shims that the user did not request.
 
 ## Git
 

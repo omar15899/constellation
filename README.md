@@ -1,44 +1,16 @@
-# Constellation en la raíz de Codex
+# Constellation
 
-`~/.codex` es el repositorio principal del orquestador Constellation, conectado a
-[omar15899/constellation](https://github.com/omar15899/constellation) en `main`.
-La fuente mantiene su estructura interna en `.codex/ecosystem/`,
-`.codex/skills/` y `.codex/tests/`. Esto conserva los contratos de construcción,
-identidad del CLI y distribución, separados de la instalación activa del equipo.
+Una instalación de Codex para trabajar en OmarOS, el hub de GitHub y sus
+repositorios hijos. Este repositorio mantiene las instrucciones, los métodos
+y el motor común. La copia instalada se usa desde cualquier carpeta autorizada
+del equipo.
 
-| Ruta bajo `~/.codex` | Función |
-| --- | --- |
-| `.codex/` | Fuente mantenible, skills, pruebas y controles Git. |
-| `constellation/` | Lanzador, catálogo y recibo de la instalación verificada. |
-| `skills/`, `agents/`, `plugins/` | Recursos instalados por sus proveedores. |
-| `config.toml` y demás estado de la aplicación | Configuración efectiva y datos privados locales. |
+- [Empezar y trabajar entre carpetas](.codex/README.md)
+- [Instrucciones globales de Omar](AGENTS.md)
+- [Instalar el perfil en otro equipo](.codex/profiles/README.md)
+- [Mapa del directorio de Codex](.codex/profiles/codex/layout.md)
 
-Git publica únicamente la fuente y las instrucciones permitidas por
-[.gitignore](.gitignore). Credenciales, conversaciones, perfiles privados,
-memorias, registros y bases de datos permanecen fuera del repositorio.
-[AGENTS.md](AGENTS.md) conserva las instrucciones globales del usuario;
-[.codex/AGENTS.md](.codex/AGENTS.md) contiene las reglas propias de esta fuente.
-
-`~/GitHub` conserva el workspace de software, sus registros, sus herramientas de
-Claude y los repositorios hijos. Su raíz usa la rama `codex/workspace` del mismo
-remoto; cada hijo mantiene su propio dueño Git. OmarOS conserva su repositorio y
-su adaptador. Ambos consumen la instalación compartida del equipo.
-
-```sh
-constellation() { "${CODEX_HOME:-$HOME/.codex}/constellation/run" cli "$@"; }
-constellation workspace --root "$HOME/GitHub" route Shared/README.md PricingLab/README.md
-constellation git --root "$HOME/.codex" --session ID status
-```
-
-La [guía de operación y desarrollo](.codex/README.md), el
-[contrato entre propietarios](.codex/WORKSPACE.md) y los
-[criterios de revisión](REVIEW.md) describen cómo comprobar y publicar cambios.
-
-Los [perfiles portables de Codex y Claude](.codex/profiles/README.md) versionan
-las instrucciones globales, las guías y la herramienta de documentación oficial.
-Su instalador prepara ambos homes en macOS/Linux, protege conflictos y conserva
-la recuperación. Las cuentas, configuraciones efectivas, conversaciones, recibos,
-copias documentales y demás estado de cada dispositivo permanecen locales.
-
-El [mapa completo del HOME de Codex](.codex/profiles/codex/layout.md) atribuye
-cada archivo y carpeta a su propietario y explica su utilidad y mantenimiento.
+La raíz habitual de esta fuente es `~/.codex`. Su Git publica en la rama
+`main` de [omar15899/constellation](https://github.com/omar15899/constellation).
+La [allowlist](.gitignore) limita la publicación al código y las instrucciones
+mantenidas. Los datos y la configuración efectiva del cliente son locales.
