@@ -1,16 +1,31 @@
-# Qué contiene el HOME de Codex
+# Qué contiene el directorio de Codex
 
-El HOME predeterminado es `~/.codex`; un `CODEX_HOME` explícito puede cambiarlo.
-En este equipo también contiene el checkout de Constellation. Por eso conviven
-fuente mantenida, configuración personal, instalaciones y estado creado por el
-cliente. Esta guía atribuye cada nombre observado; no convierte su mera presencia
-en prueba de uso ni recomienda borrar por antigüedad.
+El directorio personal de Codex, o HOME, es `~/.codex` salvo que se elija otro
+mediante `CODEX_HOME`. Codex guarda aquí su configuración y su estado de trabajo.
+En este equipo la misma raíz también es el repositorio de Constellation; su
+fuente está agrupada en `.codex/` y su instalación en `constellation/`.
 
-Para mantener el sistema, empieza por `README.md`, `config.toml`, `AGENTS.md`,
-la fuente `.codex/` y la instalación `constellation/`. El resto tiene dueño y
-función específicos. Los nombres internos se comprobaron con Codex CLI 0.166,
-el CLI 0.165 y la aplicación de escritorio instalada; pueden
-cambiar entre versiones. La evidencia del dispositivo queda en `docs/maintenance/`.
+## Por dónde empezar
+
+| Quieres… | Entrada y responsable |
+| --- | --- |
+| Trabajar con notas o documentos personales | `~/OmarOS/README.md` y `~/OmarOS/Index.md`: conocimiento del vault. |
+| Trabajar con código de un proyecto | Su repositorio en `~/GitHub/`: código y comprobaciones de ese dueño. |
+| Cambiar métodos, agentes o motor compartidos | `.codex/AGENTS.md`: fuente de Constellation. |
+| Operar, actualizar o recuperar Constellation | `.codex/README.md` y el lanzador `constellation/run`: distribución instalada. |
+| Cambiar un ajuste del cliente | `config.toml`: configuración nativa de Codex. |
+| Entender los archivos `.sqlite` | La sección [Bases de datos](#bases-de-datos): persistencia de la aplicación. |
+
+Las notas viven en OmarOS; el código compartido se mantiene en la fuente; el
+cliente conserva su propio estado. La instalación se despliega desde la fuente
+mediante sus herramientas y recibos. Los directorios cumplen funciones distintas
+aunque compartan algunos archivos de código.
+
+El inventario siguiente conserva el detalle de cada nombre observado. Su
+presencia no demuestra uso actual ni autoriza borrarlo por antigüedad. Los nombres
+internos se contrastaron con Codex CLI 0.166, el CLI 0.165 y la aplicación de
+escritorio instalada; pueden cambiar entre versiones. La evidencia del dispositivo
+queda en `docs/maintenance/`.
 
 ## Fuente e instrucciones
 
@@ -97,22 +112,48 @@ del propietario. No se sustituyen estos contratos por enlaces artificiales.
 
 ## Bases de datos
 
+SQLite permite guardar tablas y relaciones dentro de un archivo local. Codex lo
+usa para consultar y actualizar su estado sin necesitar un servidor de bases de
+datos separado. Por ejemplo, al reabrir la aplicación necesita recuperar qué
+hilos existen y qué trabajo sigue pendiente: esa información debe persistir
+después de cerrar el proceso.
+
+Estas bases pertenecen a la aplicación, mientras que tus notas siguen siendo
+archivos de OmarOS y el motor de Constellation sigue siendo código de su fuente.
+Cada base separa una responsabilidad del cliente:
+
 | Archivo o carpeta | Responsabilidad |
 | --- | --- |
-| `state_5.sqlite` | Estado general reanudable del runtime. |
-| `thread_history_1.sqlite` | Historial persistente de hilos. |
-| `goals_1.sqlite` | Estado de objetivos. |
-| `queue_1.sqlite` | Cola persistente de trabajo. |
-| `logs_2.sqlite` | Registros del cliente y su mantenimiento. |
-| `memories_1.sqlite`, `memories_v2_1.sqlite` | Almacenes de memoria soportados por el cliente actual. |
-| `*-wal`, `*-shm` | Escrituras pendientes y memoria compartida de SQLite; se mantienen junto a su base. |
-| `.sqlite-maintenance.lock` | Exclusión del mantenimiento y checkpoints de SQLite. |
-| `sqlite/` | Bases propias del escritorio, con variantes de producción/desarrollo. No duplican automáticamente las bases Rust de la raíz. |
+| `state_5.sqlite` | Estado general de ejecución que permite reanudar el trabajo. |
+| `thread_history_1.sqlite` | Historial persistente de los hilos de conversación. |
+| `goals_1.sqlite` | Estado de los objetivos del cliente. |
+| `queue_1.sqlite` | Cola de trabajo persistente, incluido lo que debe seguir pendiente entre procesos. |
+| `logs_2.sqlite` | Registros de diagnóstico y mantenimiento de la aplicación. |
+| `memories_1.sqlite`, `memories_v2_1.sqlite` | Almacenamiento de las funciones de memoria admitidas por el cliente; su presencia no acredita que estén activadas. |
+| `sqlite/` | Bases del componente de escritorio, con variantes de producción y desarrollo. Tener otro propietario de estado no demuestra duplicación prescindible. |
 
-Los sufijos numéricos de las bases son versiones de esquema usadas por el cliente
-actual, no una lista de archivos antiguos que pueda eliminarse. Se contrastaron
-los nombres con sus funciones nativas de apertura y migración y con los archivos
-abiertos; no fue necesario consultar el contenido privado.
+Un mismo archivo puede ir acompañado de `-wal` y `-shm`. En el modo WAL, SQLite
+anota cambios en el archivo `-wal` antes de incorporarlos a la base principal;
+por eso una copia aislada de `.sqlite` puede omitir cambios ya confirmados.
+El archivo `-shm` facilita la coordinación de accesos al WAL. El cliente y SQLite
+gestionan esos auxiliares mientras usan la base. El archivo
+`.sqlite-maintenance.lock` coordina el mantenimiento y la incorporación de
+cambios a las bases.
+
+Los números como `_5` o `_1` identifican versiones de esquema: la organización
+interna de los datos. No indican que existan cinco copias sobrantes. Del mismo
+modo, dos generaciones de memoria pueden coexistir durante una migración.
+
+El historial, el estado de ejecución y las colas pueden contener información
+única; los registros cumplen una función de diagnóstico. Una caché de catálogo
+regenerable tiene otro criterio de conservación. Por eso la limpieza de residuos
+no trata todos estos archivos como temporales ni traslada las bases abiertas
+para reducir los nombres visibles en la raíz.
+
+La atribución se contrastó con las funciones nativas de apertura y migración y
+con archivos abiertos por el cliente, sin consultar el contenido privado. Codex
+documenta un ajuste `sqlite_home` para su estado de ejecución; ese ajuste no
+acredita por sí solo una migración de todas las bases y componentes del escritorio.
 
 ## Cachés y archivos generados
 
