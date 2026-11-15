@@ -30,7 +30,7 @@ import zipfile
 sys.dont_write_bytecode = True
 
 PROFILE_FILES = (
-    "README.md", "copilot-instructions.md", "docs.md", "runtime.py",
+    "README.md", "copilot-instructions.md", "docs.md", "runtime.py", "acceptance.py",
     "agents/implementer.agent.md", "agents/correctness-reviewer.agent.md",
     "agents/readability-reviewer.agent.md", "agents/robustness-reviewer.agent.md",
     "skills/human-coding/SKILL.md",
@@ -250,7 +250,8 @@ def _installation_files(files: dict[str, bytes], home: Path, commit: str) -> dic
         "(docs.md)", "(../../docs/README.md)").encode("utf-8")
     installed.update({"docs/README.md": files["docs.md"], "constellation/profile/README.md": readme,
                       "tools/official_docs.py": files["official_docs.py"],
-                      "constellation/profile/runtime.py": files["runtime.py"]})
+                      "constellation/profile/runtime.py": files["runtime.py"],
+                      "constellation/profile/acceptance.py": files["acceptance.py"]})
     installed.update({"constellation/" + name: data for name, data in files.items() if name.startswith("bundle/")})
     installed.update({name: data for name, data in files.items() if name.startswith("docs/official/")})
     runtime = copilot / "constellation/profile/runtime.py"
@@ -289,10 +290,20 @@ def install_profile(profile: Path, home: Path, *, apply: bool = False) -> dict:
                  for name, record in bundle_manifest["files"].items()}
         modes["constellation/bundle/bundle.json"] = 0o644
         state = _safe_path(root / "constellation/state")
-        if state.exists():
-            if not state.is_dir():
-                raise InstallError("The private state path must be a directory.")
-            platform.verify_access(state, private=True)
+        directories = {state}
+        for name in installed:
+            directory = _safe_path(root / name).parent
+            while directory == root or root in directory.parents:
+                directories.add(directory)
+                directory = directory.parent
+        for directory in sorted(directories):
+            if not directory.exists():
+                continue
+            if not directory.is_dir():
+                raise InstallError("A managed directory path contains a different object.")
+            # Native agents, hooks and skills are shared configuration. Preserve
+            # their safe existing ACLs; only operational state requires privacy.
+            platform.verify_access(directory, private=directory == state)
         docs_lock = root / "docs/.official.lock" if "docs/official/manifest.json" in installed else None
         if docs_lock is not None:
             _safe_path(docs_lock)
@@ -315,7 +326,7 @@ def install_profile(profile: Path, home: Path, *, apply: bool = False) -> dict:
             # editor or another installer creates after the complete preflight.
             for name in missing:
                 target = root / name
-                platform.secure_mkdir(target.parent, mode=0o700, parents=True, exist_ok=True)
+                platform.secure_mkdir(target.parent, mode=0o755, parents=True, exist_ok=True)
                 mode = modes.get(name, 0o600)
                 descriptor = platform.open_regular(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                                                    mode=mode, private=mode == 0o600)

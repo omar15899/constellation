@@ -39,12 +39,29 @@ py -3 -B .\copilot-profile\install.py --apply
 py -3 -B .\copilot-profile\install.py --check
 ```
 
+Then run the installed destination check:
+
+```powershell
+$Acceptance = Join-Path $env:USERPROFILE '.copilot/constellation/profile/acceptance.py'
+py -3 -I -B $Acceptance
+```
+
+It prints a structured report and returns a nonzero exit code when required
+mechanical checks fail or cannot be completed. Add `--report NEW_REPORT.json`
+to retain a local report at a new path outside the extracted package. Existing
+reports are never overwritten. Run this command again after changing the Python
+installation, native Copilot setup or profile files.
+
 The installer defaults to inspection. It rejects conflicting existing files
 before applying a change and never replaces them automatically. An interrupted
 installation can leave an additive subset; rerunning preserves identical files
 and completes missing files. Review a conflict and retain a backup before
 manually reconciling it. Run the installer while Copilot is closed. Do not enable
 global tool approval or disable native permission prompts to install this profile.
+Safe existing native directories retain their permissions and unrelated files.
+Shared profile directories allow safe read access; the coordination state
+requires private access. Unsafe existing access is rejected before files are
+created, rather than changed automatically.
 If you use a custom `COPILOT_HOME`, configure that client location deliberately;
 the default package targets `.copilot` beneath the supplied `--home`.
 
@@ -54,7 +71,7 @@ the default package targets `.copilot` beneath the supplied `--home`.
 | `agents/*.agent.md` | Implementer and three independent reviewers |
 | `skills/human-coding/SKILL.md` | Focused engineering workflow |
 | `hooks/constellation.json` | Native hooks using exec/args and pinned local paths |
-| `constellation/profile/` | Adapter and this guide |
+| `constellation/profile/` | Adapter, destination acceptance and this guide |
 | `constellation/bundle/` | Verified English coding core |
 | `constellation/state/` | Local private operational evidence, created on demand |
 | `tools/official_docs.py` | Explicit refresh, offline verification and search |
@@ -115,12 +132,38 @@ client ends. No hash or hook proves semantic correctness or code quality.
 
 ## Acceptance on the destination
 
-Native Windows acceptance is pending until these checks run on that host:
+The installed `acceptance.py` checks profile hashes, the bundled engine, native
+hook argument vectors, private state access and included documentation offline.
+In an isolated temporary project with spaces and Unicode in its path, it replays
+the actual installed hook commands and checks allowed/denied paths, unfinished
+work, reviewed closure and stale evidence. Synthetic reviewer identities in that
+probe test the ledger mechanics; they do not count as real agent reviews.
+
+On Windows it also checks Python, Git, PowerShell and Copilot versions, the
+personal instruction's discovered path, and the installed coding skill's path
+and enabled status through native metadata commands. Effective instruction
+enablement and global/project hook settings remain explicit manual checks. It
+issues no model prompts. Captured native output is not copied into the report.
+It cannot impose a network sandbox on the native client. The report keeps
+mechanical Windows acceptance, actual native
+event dispatch, parallel agent execution and model code quality as separate
+states. A successful direct hook replay does not establish live Copilot dispatch.
+Prerequisite lookup uses explicit absolute `PATH` entries and excludes implicit
+current-directory lookup. Those configured absolute entries remain trusted;
+the probe does not authenticate every executable a user places on `PATH`.
+
+For local diagnostics on another platform, `--portable-check` explicitly runs
+the portable mechanics while retaining native Windows acceptance as pending.
+An ordinary invocation on another platform cannot report Windows success.
+
+Native Windows and live Copilot acceptance require these checks on that host:
 
 1. Confirm the prerequisites, run installer inspection/apply/inspection and
    verify the bundled documentation offline.
 2. Start a fresh CLI session and inspect instructions, agents, skill and hook
-   loading. Check for invalid configuration warnings.
+   loading. Check for invalid configuration warnings, instruction overrides and
+   settings that disable hooks. The probe's mechanical pass does not clear its
+   pending configuration or live-session checks.
 3. In a disposable project, request a tiny code change. Confirm that a plan
    precedes create/edit, code and comments are English, the documented contract
    is clear, checks are recorded and three real independent reviewers return.
@@ -130,6 +173,20 @@ Native Windows acceptance is pending until these checks run on that host:
    evidence becomes stale. A partial handoff must stay visibly incomplete.
 5. Review the generated code yourself. Mechanical acceptance does not measure
    how consistently the model meets your readability preference.
+
+For the live check, create a new disposable project and ask Copilot:
+
+> Implement a small Python function `normalize_identifier(value: str) -> str`
+> that strips surrounding whitespace, rejects an empty result with `ValueError`
+> and lowercases valid input. Follow the installed human-coding workflow, use a
+> minimal complete change with an English Google-style contract, and add only a
+> necessary minimal test. Register one Constellation task, run the correctness,
+> readability and robustness reviewers in parallel, and close only with current
+> evidence. Report the actual native reviewer identities and checks performed.
+
+Observe that real reviewers execute; synthetic acceptance reports cannot supply
+that evidence. Project instructions, skills and settings may alter discovery in
+a real project, so recheck conflicts in that project's own session.
 
 VS Code and Copilot cloud agents have different discovery, permissions and
 execution environments. This installer configures the local CLI. New VS Code
