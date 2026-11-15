@@ -10,7 +10,9 @@ sys.dont_write_bytecode = True
 import importlib.util
 import json
 from pathlib import Path
+import stat
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from urllib.request import Request
@@ -166,6 +168,53 @@ class DocumentationTests(unittest.TestCase):
         self.assertEqual(len(docs.search(self.home, "claude", "Guide", limit=1)), 1)
         with self.assertRaises(docs.DocsError):
             docs.search(self.home, "claude", "   ")
+
+    def test_copilot_snapshot_uses_official_markdown_and_is_searchable_offline(self):
+        self.sources.stop()
+        selection = docs.sources("copilot")
+        self.assertGreaterEqual(len(selection), 10)
+        for url in selection.values():
+            docs.validate_url(url, "copilot")
+            self.assertTrue(url.startswith("https://docs.github.com/api/article/body?pathname=/en/copilot/"))
+        with patch.object(docs, "fetch", side_effect=self.fetch):
+            result = docs.refresh(self.home, "copilot")
+        self.assertEqual(Path(result["path"]), self.home / ".copilot/docs/official")
+        with patch.object(docs, "fetch", side_effect=AssertionError("network forbidden")):
+            self.assertEqual(docs.verify(self.home, "copilot")["files"], len(selection))
+            self.assertTrue(docs.search(self.home, "copilot", "Subagents"))
+        with self.assertRaises(docs.DocsError):
+            docs.validate_url("https://github.com/untrusted/docs.md", "copilot")
+
+    def test_windows_reparse_metadata_rejects_directory_and_leaf(self):
+        target = self.home / "junction"
+        target.mkdir()
+        real_lstat = Path.lstat
+
+        def lstat(path):
+            info = real_lstat(path)
+            if path == target:
+                return SimpleNamespace(st_mode=info.st_mode, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+            return info
+
+        with patch.object(Path, "lstat", lstat), self.assertRaises(docs.DocsError):
+            docs.safe_directory(target)
+        target.rmdir()
+        target.write_bytes(b"# Guide\n")
+        with patch.object(Path, "lstat", lstat), self.assertRaises(docs.DocsError):
+            docs.regular_file(target)
+
+    def test_windows_lock_releases_byte_after_operation_failure(self):
+        calls = []
+        windows_lock = SimpleNamespace(LK_LOCK=1, LK_UNLCK=2,
+                                       locking=lambda fd, mode, count: calls.append((mode, count)))
+        with tempfile.TemporaryFile("w+b") as stream:
+            with patch.object(docs, "IS_WINDOWS", True), patch.dict(sys.modules, {"msvcrt": windows_lock}):
+                with self.assertRaisesRegex(ValueError, "operation failed"):
+                    with docs.file_lock(stream, exclusive=False):
+                        raise ValueError("operation failed")
+            stream.seek(0)
+            self.assertEqual(stream.read(), b"\0")
+        self.assertEqual(calls, [(1, 1), (2, 1)])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,11 @@
-# Perfiles portables de Codex y Claude
+# Perfiles portables de Codex, Claude y Copilot
+
+El [perfil de programación de Copilot para Windows](copilot/README.md) añade
+instrucciones en inglés, agentes de implementación y revisión paralela, hooks
+nativos y un instalador/exportador independiente. Reutiliza el motor portable
+de Constellation y la herramienta común de documentación; no modifica los
+instaladores ni la configuración efectiva de Claude o Codex. El soporte nativo
+debe comprobarse en el Windows de destino según su guía de aceptación.
 
 Este directorio es la fuente única de las instrucciones y herramientas personales
 de ambos clientes. Constellation conserva su motor en `../ecosystem/` y sus
@@ -23,8 +30,9 @@ del checkout; las plantillas no contienen rutas absolutas de un dispositivo.
 
 El perfil está probado en macOS/Linux con Python 3.11+ y Git. Instala los clientes
 por sus canales oficiales y autentica cada uno en ese equipo. Este perfil no
-transporta cuentas ni permisos. La herramienta de documentación utiliza `fcntl`;
-este bootstrap no acredita compatibilidad con Windows nativo. Para el paquete
+transporta cuentas ni permisos. Este instalador general conserva dependencias
+POSIX; la herramienta de documentación compartida incluye bloqueo nativo de
+Windows. Para Copilot usa su instalador específico. Para el paquete
 Claude Windows consulta [su guía](../ecosystem/docs/windows.md).
 
 Clona el repositorio en una carpeta nueva, fuera de los homes nativos si ya
