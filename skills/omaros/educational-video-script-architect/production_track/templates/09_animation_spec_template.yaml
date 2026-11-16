@@ -1,0 +1,410 @@
+# 09_animation_spec.yaml — Machine-readable per-shot animation specifications.
+#
+# This is THE binding artefact for Manim implementation. One YAML document per shot.
+# Use `---` separators between documents.
+#
+# Authority: this file binds the manim_implementation_agent. The agent may NOT
+# read 05_narration_script.md to invent visual design. If a field below is
+# missing or contradictory, the agent emits MISSING_SPEC instead of inventing.
+#
+# Schema version: 1.0
+# Companion docs:
+#   production_track/doctrine/02_canonical_pipeline.md
+#   production_track/doctrine/03_semantic_visual_language.md
+#   production_track/doctrine/04_semantic_motion.md
+#   production_track/doctrine/09_synchronization.md
+#   production_track/doctrine/10_negative_constraints.md
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Per-project header (single document at the top of the file)
+project:
+  slug: <topic-slug>
+  schema_version: "1.0"
+  default_canvas:
+    width: 16.0           # Manim canvas units; resolution handled elsewhere
+    height: 9.0
+    aspect: "16:9"
+    safe_area_inset: 0.4
+  default_palette_ref: manim/constants.py   # the single source of truth for colours
+  default_easings:
+    flow: ease_in_out_quad
+    revelation: ease_out_cubic
+    accumulation: linear
+    transformation: ease_in_out_cubic
+    divergence: ease_in_cubic
+  default_durations:
+    transition_in_s: 0.6
+    transition_out_s: 0.6
+    hold_s: 0.4
+  framerate: 60
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# One document per shot. Repeat as needed. Use --- between shots.
+# ─────────────────────────────────────────────────────────────────────────────
+
+shot_id: <shot_id>                        # e.g. IP-S0-F02
+maps_to:                                  # references to upstream artefacts
+  shotlist_row: 08_shotlist.md#<shot_id>
+  scene_id: <scene_id>
+  narration_range:
+    file: 05_narration_script.md
+    rows: ["R004", "R009"]
+time_range:
+  start_in_video: "00:00:08.4"
+  end_in_video:   "00:00:18.1"
+  duration_s: 9.7
+
+doctrine_tags: ["HOOK", "INSTANCE", "BOUNDARY"]
+
+cognitive_goal: |
+  One sentence: what the viewer must come away with from this shot.
+
+viewer_should_notice: |
+  - The basis ticker crosses zero into BASIS_RED.
+  - The two boards visibly separate.
+  - The ghost curve in the background is the same shape as the ticker (foreshadow).
+
+viewer_should_not_notice: |
+  - The exact basis value (label is intentionally small until the next shot).
+  - The historical date in the ticker chrome (read on the next shot).
+
+# ─── Composition & canvas ────────────────────────────────────────────────────
+
+composition:
+  dominant_focal_point: BasisTicker
+  balance: asymmetric_right_heavy
+  depth_layering:
+    - z: 0   # background
+      contents: [DeepBackgroundFill]
+    - z: 1
+      contents: [GhostTimeSeries.basis_history]
+    - z: 2   # mid layer
+      contents: [SplitFlapBoard.left, SplitFlapBoard.right, ZeroReferenceLine]
+    - z: 3   # foreground
+      contents: [BasisTicker, FrameDateChrome]
+  max_visible_words: 35
+  style_reference:
+    positive_anchor: |
+      Institutional financial visualisation — Bloomberg Terminal at rest;
+      restrained, precise, dark canvas.
+    negative_anchor: |
+      A stock-market YouTube intro with floating coins and a climbing arrow.
+    register: precise_institutional_animation
+    prohibited_textures:
+      - particle_field
+      - dropshadow_text
+      - gradient_fills_on_bars
+      - logo_watermark
+
+camera:
+  mode: static
+  shake: none
+  zoom: none
+
+canvas:
+  width: 16.0
+  height: 9.0
+  background_token: DEEP_BACKGROUND
+
+layout:
+  named_anchors:
+    board_left:   { x: -4.5, y:  1.5 }
+    board_right:  { x:  4.5, y:  1.5 }
+    zero_line_y:                       0.0
+    ticker_center: { x:  4.5, y:  3.6 }
+    chrome_date:  { x:  0.0, y: -4.0 }
+
+# ─── Objects ────────────────────────────────────────────────────────────────
+# Each object must be drawable from a component in 11_manim_component_library.md
+# or be a `raw` element (only permitted for trivial primitives — rectangle, line).
+# Hand-drawn shapes that duplicate component capability are rejected.
+
+objects:
+  - id: deep_background_fill
+    component: BackgroundFill
+    inputs:
+      colour_token: DEEP_BACKGROUND
+    z_index: 0
+    semantic_role: structural_background
+    initial_state: { opacity: 1.0 }
+    final_state:   { opacity: 1.0 }
+    persistence_into_next_shot: keep
+
+  - id: ghost_curve
+    component: GhostTimeSeries
+    inputs:
+      data_id: basis_history_2019_to_2024     # → 10b_data_manifest.yaml
+      colour_token: NEUTRAL_GREY
+      opacity: 0.35
+      stroke_width: 1.6
+    z_index: 1
+    semantic_role: foreshadow_anomaly
+    initial_state: { opacity: 0.0 }
+    final_state:   { opacity: 0.35 }
+    persistence_into_next_shot: ghost_at_0_35
+
+  - id: board_left
+    component: SplitFlapBoard
+    inputs:
+      city_label: "NEW YORK"
+      currency: "USD"
+      ticker_value_ref: data.usd_funding_rate
+      colour_token: USD_AMBER
+      anchor: layout.board_left
+      size: { width: 4.2, height: 2.4 }
+    z_index: 2
+    semantic_role: invariant_left_anchor
+    initial_state: { opacity: 0.0, x: layout.board_left.x }
+    final_state:   { opacity: 1.0, x: layout.board_left.x }
+    persistence_into_next_shot: keep
+
+  - id: board_right
+    component: SplitFlapBoard
+    inputs:
+      city_label: "FRANKFURT"
+      currency: "EUR_USD_via_basis"
+      ticker_value_ref: data.eur_funding_via_basis
+      colour_token: EUR_BLUE         # base; will shift to BASIS_RED on negative excursion
+      anchor: layout.board_right
+      size: { width: 4.2, height: 2.4 }
+    z_index: 2
+    semantic_role: anomaly_carrier
+    initial_state:
+      opacity: 0.0
+      x: layout.board_right.x
+      colour_token: EUR_BLUE
+    final_state:
+      opacity: 1.0
+      x: layout.board_right.x + 0.5   # slight drift away from baseline pair position
+      colour_token: BASIS_RED         # final colour after the gap opens
+    persistence_into_next_shot: keep
+
+  - id: zero_reference_line
+    component: ReferenceLine
+    inputs:
+      y: layout.zero_line_y
+      colour_token: WHITE
+      stroke_width: 1.0
+      style: dashed
+    z_index: 2
+    semantic_role: baseline_against_which_deviation_is_measured
+
+  - id: basis_ticker
+    component: BasisTicker
+    inputs:
+      anchor: layout.ticker_center
+      colour_token: BASIS_RED          # only shown in final state; ticker starts neutral
+      data_id: basis_history_2019_to_2024
+      units: bps
+      digits: 3
+    z_index: 3
+    semantic_role: declarative_anomaly_value
+    initial_state: { opacity: 0.0, displayed_value: 0 }
+    final_state:   { opacity: 1.0, displayed_value: -30 }
+
+text:
+  - id: chrome_date
+    content: "2018-Q4"
+    font: monospace
+    weight: regular
+    size_pt: 14
+    colour_token: NEUTRAL_GREY
+    anchor: layout.chrome_date
+    initial_state: { opacity: 0.0 }
+    final_state:   { opacity: 0.6 }
+
+formulas: []          # no formula in this shot — first formula lands in S3
+
+data:
+  references_to_manifest:
+    - data_id: basis_history_2019_to_2024
+    - data_id: usd_funding_rate
+    - data_id: eur_funding_via_basis
+
+# ─── Animation (keyframes) ───────────────────────────────────────────────────
+# Each entry: at time `t`, drive object `id` through `animation` with `duration` and `easing`.
+# Times are seconds from shot start. Use ValueTracker-driven updaters for continuously varying quantities.
+
+animation:
+  keyframes:
+    - t: 0.0
+      action: appear
+      object: deep_background_fill
+      semantic: revelation
+      primitive: instant_fill
+    - t: 0.0
+      action: appear
+      object: ghost_curve
+      semantic: revelation
+      primitive: opacity_morph
+      from: { opacity: 0.0 }
+      to:   { opacity: 0.35 }
+      duration_s: 0.8
+      easing: ease_out_cubic
+    - t: 0.8
+      action: appear
+      object: [board_left, zero_reference_line]
+      semantic: revelation
+      primitive: DrawBorderThenFill
+      duration_s: 1.0
+      easing: ease_out_cubic
+    - t: 1.0
+      action: appear
+      object: board_right
+      semantic: revelation
+      primitive: DrawBorderThenFill
+      duration_s: 1.0
+      easing: ease_out_cubic
+    - t: 3.0
+      action: appear
+      object: basis_ticker
+      semantic: revelation
+      primitive: opacity_morph
+      from: { opacity: 0.0, displayed_value: 0 }
+      to:   { opacity: 1.0, displayed_value: 0 }
+      duration_s: 0.6
+      easing: ease_out_cubic
+    - t: 4.0
+      action: open_gap
+      object: basis_ticker
+      semantic: divergence
+      primitive: value_tracker_driven
+      driving_tracker: ticker_value
+      from: { displayed_value: 0 }
+      to:   { displayed_value: -30 }
+      duration_s: 4.2
+      easing: ease_in_cubic
+    - t: 4.0
+      action: drift_right
+      object: board_right
+      semantic: divergence
+      primitive: position_morph
+      from: { x: layout.board_right.x }
+      to:   { x: layout.board_right.x + 0.5 }
+      duration_s: 4.2
+      easing: ease_in_cubic
+    - t: 6.5
+      action: colour_shift
+      object: board_right
+      semantic: stress
+      primitive: colour_morph
+      from: { colour_token: EUR_BLUE }
+      to:   { colour_token: BASIS_RED }
+      duration_s: 1.0
+      easing: ease_in_cubic
+    - t: 8.2
+      action: hold
+      duration_s: 1.5
+
+# ─── Synchronization ─────────────────────────────────────────────────────────
+synchronization:
+  voiceover_cues:
+    - cue: "Aquí — Nueva York — Y aquí — Frankfurt"
+      voiceover_time: "00:00:09.2"
+      time_in_shot_s: 0.8
+      exact_visual_cue: board_left.DrawBorderThenFill.end
+      allowed_tolerance_s: 0.2
+    - cue: "Algo se rompe entre ellos"
+      voiceover_time: "00:00:13.4"
+      time_in_shot_s: 5.0
+      exact_visual_cue: board_right.colour_morph.start
+      allowed_tolerance_s: 0.2
+    - cue: "Por diseño, no debería ocurrir"
+      voiceover_time: "00:00:16.6"
+      time_in_shot_s: 8.2
+      exact_visual_cue: basis_ticker.displayed_value == -30
+      allowed_tolerance_s: 0.2
+  silence_policy:
+    intervals:
+      - from_s: 8.2
+        to_s:   9.7
+        rationale: hold the divergence state — let it land
+        visual_state: full opacity on everything; no motion
+  pause_policy:
+    during_retrieval_pause: not_applicable
+
+persistence:
+  into_next_shot:
+    keep:
+      - deep_background_fill
+      - ghost_curve
+      - board_left
+      - board_right
+      - zero_reference_line
+      - basis_ticker
+    drop:
+      - chrome_date
+
+# ─── Components used (cross-check with 11_manim_component_library.md) ────────
+manim_components:
+  - BackgroundFill
+  - GhostTimeSeries
+  - SplitFlapBoard
+  - ReferenceLine
+  - BasisTicker
+
+# ─── Assets (cross-check with 10_asset_manifest.yaml) ────────────────────────
+assets: []         # this shot has no external assets
+
+# ─── Quality constraints ─────────────────────────────────────────────────────
+quality_constraints:
+  max_visible_words: 35
+  one_focal_point: true
+  motion_must_have_semantic: true
+  no_FadeIn_for_structural_objects: true
+  forbidden_substitutions:
+    - swap EUR_BLUE for any non-EUR object
+    - swap USD_AMBER for any non-USD object
+    - render basis with a sign that contradicts 13_financial_mathematical_correctness in 10b_data_manifest
+
+rejection_conditions:
+  inherited_from: production_track/doctrine/10_negative_constraints.md
+  exemptions: []         # none for this shot
+
+# ─── Frozen-frame & muted tests ──────────────────────────────────────────────
+frozen_frame_test:
+  key_moment_time_s: 8.2
+  what_a_viewer_should_infer: |
+    Two places, one measure, divergence into a red regime. Even without the
+    name "basis", the viewer infers that something has gone wrong with parity.
+  acceptable_inference_drift: |
+    Viewer may not yet identify the regime as the basis itself; that is fine.
+    The acceptable inference is the divergence-as-anomaly.
+
+muted_test:
+  what_carries_without_voice: |
+    The opening of the gap. The colour shift from neutral / EUR_BLUE to BASIS_RED.
+    The drift of the right board away from baseline.
+  what_does_not_carry_without_voice: |
+    The institutional context (where this is, when, who).
+    The eventual naming of the anomaly as "the basis".
+  acceptable: yes
+
+# ─── Implementation notes (read by manim_implementation_agent) ──────────────
+implementation_notes: |
+  Use ValueTracker for basis_ticker.displayed_value; bind the ticker's text
+  updater to round(tracker.get_value()) and re-render the bps suffix.
+  The colour morph on board_right is a callback on the same tracker:
+  when the tracker value crosses below the threshold (declared in
+  10b_data_manifest as basis_negative_threshold = -10), trigger the
+  colour_morph keyframe. Do not hard-code the threshold in scene code —
+  import it from manim/constants.py via the data manifest.
+
+# ─── Human review ────────────────────────────────────────────────────────────
+human_review_required: true
+human_review_checklist:
+  - The cold-open ghost curve identity matches data manifest basis_history_2019_to_2024 (no resampling, no smoothing).
+  - The right-board basis ticker reaches exactly -30 bps at t=8.2 s.
+  - The colour transition NEUTRAL_GREY/EUR_BLUE → BASIS_RED happens only after the threshold crossing.
+  - The composition's dominant focal point is the basis ticker, not the boards as a whole.
+  - Frozen-frame test at t=8.2 s passes per the description above.
+  - Muted test passes per the description above.
+human_reviewer:
+  name: pending
+  decision: pending
+  decision_timestamp: pending
+  notes: ""
+
+# ─── Assumptions made under PARTIAL_SPEC_WITH_ASSUMPTIONS ────────────────────
+assumptions: []          # none for this shot

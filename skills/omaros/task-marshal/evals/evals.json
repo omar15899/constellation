@@ -1,0 +1,47 @@
+{
+  "skill_name": "task-marshal",
+  "evals": [
+    {
+      "id": 1,
+      "name": "messy-multilang-bullets-with-metadata",
+      "prompt": "Apunta estas tareas por favor:\n- P0 llamar a juan mañana por la mañana #familia #llamada\n- estudiar banach 2h por la tarde #matematicas @reflexiones_a_latex\n  necesito terminar capítulo 3 antes del miércoles\n- comprar pan\n- reunion storengy 10:00 low-energy @work\n- P1 leer paper topos viernes #topologia #paper\n  refs: chat de chatgpt del 2026-04-20 sobre grothendieck",
+      "expected_output": "Exactly 5 tasks logged. #1: title='llamar a juan', when=tomorrow, time_of_day=morning, priority=P0, tags=[familia, llamada]. #2: title='estudiar banach', when=today, time_of_day=afternoon, duration_min=120, project=reflexiones_a_latex, tags=[matematicas], body contains 'capítulo 3 antes del miércoles'. #3: title='comprar pan', all optional fields null, tags=[]. #4: title='reunion storengy', energy=low, project=work, body contains '10:00'. #5: title='leer paper topos', when=next Friday, priority=P1, tags=[topologia, paper], references contains 'chatgpt' and 'grothendieck'. No field invented. No bullet merged or dropped.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "single-prose-no-bullets",
+      "prompt": "escribe un esbozo del ensayo sobre topos de Grothendieck para el viernes que viene, refs: ver mis reflexiones en 04_Research y el libro SGA 4",
+      "expected_output": "Exactly 1 task. title contains 'esbozo' and 'topos' (verbatim from user; no rewriting). when = next Friday ISO date. references contains 'reflexiones en 04_Research' and 'SGA 4'. priority=null, tags=[], project=null, time_of_day=null, duration_min=null.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "numbered-list-english-sparse",
+      "prompt": "todo list:\n1. review PR #342\n2. ping alice about the DB migration\n3. P0 FIX the prod outage\n4. lunch",
+      "expected_output": "Exactly 4 tasks. All with when=today (no date given). #1: title='review PR #342' — note '#342' is NOT a tag (no letter after #), it should be kept in the title verbatim. #2: title='ping alice about the DB migration'. #3: title='FIX the prod outage', priority=P0. #4: title='lunch'. All tags=[], priority=null except #3.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "close-task-by-id",
+      "prompt": "cierra la tarea 2026-04-22-001",
+      "expected_output": "Updates task id=2026-04-22-001 to status=done, stamps closed_at=current ISO datetime. aggregate.py re-runs and Weekly/Monthly reflect the new completion. No new tasks created.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "query-open-P0s",
+      "prompt": "qué tareas P0 tengo abiertas este mes?",
+      "expected_output": "Invokes query_tasks.py with --status open --priority P0 --since <first-of-month>. Returns a markdown table; no writes to the ledger. If no matches, returns '_no matches_'.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "block-with-reason",
+      "prompt": "bloquea la tarea de la migración de la BD, servidor storengy caído desde ayer y no sabemos cuándo vuelve",
+      "expected_output": "Fuzzy-match finds task with title matching 'migración' and 'BD' (or asks to disambiguate if multiple). Sets status=blocked, body appends/sets the blocker description. Never stamps closed_at. aggregate reflects it in Weekly under 'blocked'.",
+      "files": []
+    }
+  ]
+}

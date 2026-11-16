@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.omaros.codex-conversations-sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/omarkhalil/.venvs/omaros/bin/python</string>
+        <string>/Users/omarkhalil/GitHub/Constellation/skills/omaros/codex-conversations-sync/scripts/daemon.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>StandardOutPath</key>
+    <string>__REPO_ROOT__/docs/codex_conversations_sync_daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_ROOT__/docs/codex_conversations_sync_daemon.err</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OMAROS_ROOT</key>
+        <string>__REPO_ROOT__</string>
+        <key>CODEXSYNC_INTERVAL</key>
+        <string>120</string>
+        <key>CODEXSYNC_RAW_DIR</key>
+        <string>__RAW_DIR__</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>

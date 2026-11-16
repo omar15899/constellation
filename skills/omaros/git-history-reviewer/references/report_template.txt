@@ -1,0 +1,2 @@
+DEPRECATED. Reports are now Markdown.
+The canonical template is references/report_template.md.

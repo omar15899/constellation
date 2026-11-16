@@ -1,22 +1,6 @@
-# The Codex home is also the Constellation source repository.
-# Publish only maintained source and instructions; application state stays local.
-/*
-!/.gitignore
-!/AGENTS.md
-!/README.md
-!/REVIEW.md
-!/.codex/
-!/.github/
-/.github/*
-!/.github/pull_request_template.md
-
-# Derived files inside the maintained source subtree.
-**/__pycache__/
+__pycache__/
+.pytest_cache/
 *.pyc
-*.pyo
-**/.DS_Store
-**/.venv/
-**/.mypy_cache/
-**/.pytest_cache/
-**/.ruff_cache/
-**/.playwright-mcp/
+.DS_Store
+/.claude/
+/.agents/

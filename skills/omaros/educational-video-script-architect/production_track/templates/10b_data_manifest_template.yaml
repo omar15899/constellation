@@ -1,0 +1,127 @@
+# 10b_data_manifest.yaml — Every numeric value or data series the video shows.
+#
+# Authority: every number visible on screen must come from a `data_id` declared
+# here. Inline magic numbers in scene code are rejected at the render_review stage.
+#
+# Each entry classifies the data as `exact` (verified, citable), `illustrative`
+# (chosen for pedagogical clarity, not a real measurement), or `stylized`
+# (rounded / simplified from a real source with a documented simplification).
+#
+# Companion docs:
+#   production_track/doctrine/13_financial_mathematical_correctness.md
+#   production_track/doctrine/10_negative_constraints.md  (#3: no on-screen number outside the data manifest)
+# ─────────────────────────────────────────────────────────────────────────────
+
+project:
+  slug: <topic-slug>
+  schema_version: "1.0"
+
+constants:                  # scalar constants visible on screen or used as thresholds
+  - data_id: basis_negative_threshold
+    value: -10
+    units: bps
+    source_or_assumption: pedagogical_threshold
+    classification: illustrative
+    display_format: "%.0f bps"
+    rounding_policy: na
+    update_keyframes: []
+    citation_required: false
+    notes: |
+      The threshold at which the right-board colour shifts from EUR_BLUE
+      to BASIS_RED in shot IP-S0-F02. Not a market-defined level —
+      chosen to make the regime shift visually salient.
+
+  - data_id: cold_open_basis_climax_value
+    value: -30
+    units: bps
+    source_or_assumption: 2018_Q4_real_world_basis_was_in_-25_to_-35_range
+    classification: stylized
+    display_format: "%.0f bps"
+    rounding_policy: round_to_nearest_5
+    update_keyframes: []
+    citation_required: true
+    citation: |
+      Approximate value from EUR/USD 1Y XCCY basis in late 2018. Stylized
+      to -30 bps for cold-open clarity.
+    notes: |
+      The final value of the basis_ticker at t=8.2s in shot IP-S0-F02.
+
+series:                      # time-indexed series; referenced by component data_id
+  - data_id: basis_history_2019_to_2024
+    type: time_series
+    values_source: assets/data/eurusd_xccy_1y_basis_2019_2024.csv
+    units:
+      time: month_end
+      value: bps
+    source_or_assumption: bloomberg_eurusd_basis_1y
+    classification: exact            # the underlying series is real
+    display_format: "%.1f bps"
+    rounding_policy: round_to_one_decimal
+    update_keyframes:                # if the value is animated, where in shots
+      - shot_id: IP-S0-F02
+        from_time_s: 4.0
+        to_time_s:   8.2
+        from_index:  0
+        to_index:    59             # full 60-month sweep
+        interpolation: linear_in_index
+    citation_required: true
+    citation: |
+      Source data series: see assets/data/eurusd_xccy_1y_basis_2019_2024.csv.
+      Bloomberg ticker EURUSDBS Curncy, monthly, period 2019-01 to 2024-01.
+    notes: |
+      Used both as the ghost-curve shape (full timeline) and as the value
+      stream for the basis_ticker (animated from start to end during S0).
+      MUST NOT be resampled, smoothed, or reshaped by the implementer.
+
+  - data_id: usd_funding_rate
+    type: scalar_ticker_value
+    value: 5.32
+    units: percent
+    source_or_assumption: indicative_2018_Q4
+    classification: illustrative
+    display_format: "%.2f %%"
+    rounding_policy: round_to_two_decimals
+    update_keyframes: []
+    citation_required: false
+    notes: |
+      Shown on board_left (NYC). A plausible USD short rate; not load-bearing
+      for any quantitative claim.
+
+  - data_id: eur_funding_via_basis
+    type: scalar_ticker_value
+    value: 5.62              # = usd_funding_rate + |basis|
+    units: percent
+    source_or_assumption: derived_from_usd_funding_rate_and_basis
+    classification: illustrative
+    display_format: "%.2f %%"
+    rounding_policy: round_to_two_decimals
+    update_keyframes:
+      - shot_id: IP-S0-F02
+        from_time_s: 4.0
+        to_time_s:   8.2
+        from_value: 5.32
+        to_value:   5.62
+        interpolation: linear_in_time
+    citation_required: false
+    notes: |
+      Shown on board_right (Frankfurt). Increases as the basis opens.
+      Coupled to cold_open_basis_climax_value via the linear-in-time
+      interpolation above.
+
+formulas:                    # formulas-as-data, when their tokens carry separate data ids
+  - data_id: formula_V_CCS
+    tex: "V_{CCS} = PV_{EUR} - S \\cdot PV_{USD}"
+    tokens:
+      V_{CCS}: { colour_token: WHITE, data_ref: null }
+      PV_{EUR}: { colour_token: EUR_BLUE, data_ref: scenario.PV_EUR }
+      S: { colour_token: WHITE, data_ref: scenario.FX_spot }
+      PV_{USD}: { colour_token: USD_AMBER, data_ref: scenario.PV_USD }
+    classification: exact_formula
+    notes: |
+      Used in S3-F02 (formula introduction) and S6-F04 (essence frame).
+      The token-to-referent map is the basis for the formula-appearance
+      assembly in those shots (see 12_formula_doctrine.md).
+
+# When adding new data, fill: value(s), units, source_or_assumption, classification,
+# display_format, rounding_policy, update_keyframes, citation_required, notes.
+# Never edit a scene file to introduce an unmanifested number.

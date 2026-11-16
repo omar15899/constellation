@@ -1,0 +1,953 @@
+---
+# task-marshal — deterministic tag taxonomy
+#
+# Every entry is a tag the classifier can assign. A tag fires when ANY of its
+# `patterns` matches (case-insensitive, word-boundary regex) somewhere in
+# title + body + references + project slug.
+#
+# `parent` is optional: when a child tag fires, the parent fires too. That is
+# how hierarchies work without colon-namespacing — a query for --tag mates
+# returns every math task, --tag analisis_funcional only the FA subset.
+#
+# Patterns are intentionally Spanish+English because Omar's prose is bilingual.
+# Accents are optional in most patterns (é? á? í? ó? ú?) because he frequently
+# writes without diacritics on a pressed keyboard.
+#
+# This file is hand-edited. Adding a tag = adding an entry below; no code change.
+# Ordering within `tags:` is cosmetic (classifier reads all, matches all).
+
+version: 1
+
+tags:
+
+  # =========================================================================
+  # MATHEMATICS (root + sub-areas)
+  # =========================================================================
+
+  - name: mates
+    description: "Matemáticas (tag raíz)"
+    patterns:
+      - '(?i)\bmate?m[aá]tica?s?\b'
+      - '(?i)\bmath(s|ematics)?\b'
+      - '(?i)\bteorema\b'
+      - '(?i)\btheorem\b'
+      - '(?i)\bdemostraci[oó]n\b'
+      - '(?i)\bproof\b'
+      - '(?i)\blemma\b'
+      - '(?i)\bcorolario\b'
+      - '(?i)\bproposici[oó]n\b'
+
+  - name: analisis_funcional
+    parent: mates
+    patterns:
+      - '(?i)\ban[aá]lisis\s+funcional\b'
+      - '(?i)\bfunctional\s+analysis\b'
+      - '(?i)\bespacios?\s+de\s+banach\b'
+      - '(?i)\bespacios?\s+de\s+hilbert\b'
+      - '(?i)\bbanach\s+space'
+      - '(?i)\bhilbert\s+space'
+      - '(?i)\bhahn[-\s]banach\b'
+      - '(?i)\boperadores?\s+lineales\b'
+      - '(?i)\blinear\s+operator'
+      - '(?i)\bdual\s+space'
+      - '(?i)\bweak\s+topology\b'
+
+  - name: analisis
+    parent: mates
+    patterns:
+      - '(?i)\ban[aá]lisis\s+real\b'
+      - '(?i)\bran[aá]lisis\s+complejo\b'
+      - '(?i)\breal\s+analysis\b'
+      - '(?i)\bcomplex\s+analysis\b'
+      - '(?i)\bl[íi]mites?\b'
+      - '(?i)\bconvergencia\b'
+      - '(?i)\bconvergence\b'
+      - '(?i)\bcontinuidad\b'
+      - '(?i)\bcontinuous\s+function'
+
+  - name: medida
+    parent: mates
+    patterns:
+      - '(?i)\bteor[ií]a\s+de\s+la?\s+medida\b'
+      - '(?i)\bmeasure\s+theory\b'
+      - '(?i)\bsigma[-\s]?[aá]lgebra\b'
+      - '(?i)\\sigma[-\s]?algebra\b'
+      - '(?i)\bmathcal\{F\}\b'
+      - '(?i)\bborel\b'
+      - '(?i)\blebesgue\b'
+      - '(?i)\bmeasurable\b'
+      - '(?i)\bmedible\b'
+
+  - name: probabilidad
+    parent: mates
+    patterns:
+      - '(?i)\bprobabilidad(es)?\b'
+      - '(?i)\bprobability\b'
+      - '(?i)\bespacio\s+de\s+probabilidad\b'
+      - '(?i)\bprobability\s+space\b'
+      - '(?i)\bvariables?\s+aleatorias?\b'
+      - '(?i)\brandom\s+variable'
+      - '(?i)\besperanza\b'
+      - '(?i)\bexpectation\b'
+      - '(?i)\bconditional\s+expectation'
+      - '(?i)\besperanza\s+condicion'
+      - '(?i)\bdistribuci[oó]n\b'
+      - '(?i)\bdistribution\b'
+
+  - name: estocastica
+    parent: mates
+    patterns:
+      - '(?i)\bestoc[aá]stic'
+      - '(?i)\bstochastic\b'
+      - '(?i)\bprocesos?\s+estoc'
+      - '(?i)\bstochastic\s+process'
+      - '(?i)\bmarkov\b'
+      - '(?i)\bfiltraci[oó]n\b'
+      - '(?i)\bfiltration\b'
+      - '(?i)\badapted\s+process'
+      - '(?i)\bpredictable\s+process'
+
+  - name: martingalas
+    parent: estocastica
+    patterns:
+      - '(?i)\bmartingala?s?\b'
+      - '(?i)\bmartingale'
+      - '(?i)\bsubmartingale'
+      - '(?i)\bsupermartingale'
+      - '(?i)\blocal\s+martingale'
+
+  - name: brownian
+    parent: estocastica
+    patterns:
+      - '(?i)\bmovimiento\s+browniano\b'
+      - '(?i)\bbrownian\s+motion\b'
+      - '(?i)\bwiener\s+process'
+      - '(?i)\bproceso\s+de\s+wiener\b'
+
+  - name: sdes
+    parent: estocastica
+    patterns:
+      - '(?i)\becuaciones?\s+diferenciales?\s+estoc'
+      - '(?i)\bstochastic\s+differential\s+equation'
+      - '(?i)\bSDEs?\b'
+      - '(?i)\bEDEs?\b'
+      - '(?i)\bit[oô]\s+calculus\b'
+      - '(?i)\bc[aá]lculo\s+de\s+it[oô]\b'
+      - '(?i)\bit[oô]\s+formula\b'
+      - '(?i)\bit[oô]''s\s+lemma\b'
+      - '(?i)\bformula\s+de\s+it[oô]\b'
+      - '(?i)\bsemimartingala'
+      - '(?i)\bsemimartingale'
+
+  - name: pde
+    parent: mates
+    patterns:
+      - '(?i)\bPDEs?\b'
+      - '(?i)\bEDPs?\b'
+      - '(?i)\becuaciones?\s+en\s+derivadas?\s+parciales?\b'
+      - '(?i)\bpartial\s+differential\s+equation'
+      - '(?i)\bheat\s+equation\b'
+      - '(?i)\becuaci[oó]n\s+del?\s+calor\b'
+      - '(?i)\blaplace\b'
+      - '(?i)\bpoisson\s+equation'
+      - '(?i)\bnavier[-\s]stokes\b'
+      - '(?i)\bstokes\b'
+      - '(?i)\bformulaci[oó]n\s+variacional\b'
+      - '(?i)\bweak\s+formulation\b'
+
+  - name: ode
+    parent: mates
+    patterns:
+      - '(?i)\bODEs?\b'
+      - '(?i)\bEDOs?\b'
+      - '(?i)\becuaciones?\s+diferenciales?\s+ordinaria'
+      - '(?i)\bordinary\s+differential\s+equation'
+
+  - name: algebra
+    parent: mates
+    patterns:
+      - '(?i)\b[aá]lgebra\b'
+      - '(?i)\balgebra\b'
+      - '(?i)\bgrupos?\s+(?:de|abelian|finitos|ciclico)'
+      - '(?i)\bgroup\s+(?:theory|action)\b'
+      - '(?i)\banillos?\b'
+      - '(?i)\brings?\b'
+      - '(?i)\bcampos?\s+finito'
+      - '(?i)\bgalois\b'
+      - '(?i)\bespacios?\s+vectoriales?\b'
+      - '(?i)\bvector\s+space'
+
+  - name: topologia
+    parent: mates
+    patterns:
+      - '(?i)\btopolog[íi]a\b'
+      - '(?i)\btopology\b'
+      - '(?i)\bespacios?\s+m[eé]tricos?\b'
+      - '(?i)\bmetric\s+space'
+      - '(?i)\bhomotop[íi]a\b'
+      - '(?i)\bhomotopy\b'
+      - '(?i)\bhomolog[íi]a\b'
+      - '(?i)\bhomology\b'
+      - '(?i)\bcohomology\b'
+
+  - name: geometria
+    parent: mates
+    patterns:
+      - '(?i)\bgeometr[íi]a\s+diferencial\b'
+      - '(?i)\bdifferential\s+geometry\b'
+      - '(?i)\bvariedade?s?\b'
+      - '(?i)\bmanifold'
+      - '(?i)\bfibrados?\b'
+      - '(?i)\bfiber\s+bundle'
+      - '(?i)\bformas?\s+diferenciales?\b'
+      - '(?i)\bdifferential\s+forms?\b'
+      - '(?i)\bconexi[oó]n\s+af[ií]n\b'
+      - '(?i)\briemann\w*'
+      - '(?i)\bcurvatur'
+
+  - name: topos
+    parent: mates
+    patterns:
+      - '(?i)\btopos\b'
+      - '(?i)\bgrothendieck\b'
+      - '(?i)\bteor[íi]a\s+de\s+categor[íi]as\b'
+      - '(?i)\bcategory\s+theory\b'
+      - '(?i)\bsheaf\b'
+      - '(?i)\bgavilla\b'
+      - '(?i)\bfunctor\b'
+      - '(?i)\bfuntor\b'
+
+  - name: logica
+    parent: mates
+    patterns:
+      - '(?i)\bl[oó]gica\s+(?:matem|modal|formal|proposicional|primer\s+orden)'
+      - '(?i)\bfirst[-\s]order\s+logic\b'
+      - '(?i)\bpropositional\s+logic\b'
+      - '(?i)\bteor[íi]a\s+de\s+conjuntos\b'
+      - '(?i)\bset\s+theory\b'
+      - '(?i)\bzfc\b'
+      - '(?i)\baxiom\s+of\s+choice\b'
+
+  - name: analisis_numerico
+    parent: mates
+    patterns:
+      - '(?i)\ban[aá]lisis\s+num[eé]rico\b'
+      - '(?i)\bnumerical\s+analysis\b'
+      - '(?i)\bm[eé]todo\s+de\s+elementos?\s+finitos\b'
+      - '(?i)\bfinite\s+element\s+method\b'
+      - '(?i)\bFEM\b'
+      - '(?i)\bdiferencias?\s+finitas?\b'
+      - '(?i)\bfinite\s+difference'
+      - '(?i)\brunge[-\s]kutta\b'
+      - '(?i)\binterpolaci[oó]n\b'
+      - '(?i)\binterpolation\b'
+      - '(?i)\bcuadratura\b'
+      - '(?i)\bquadrature\b'
+
+  - name: optimizacion
+    parent: mates
+    patterns:
+      - '(?i)\boptimizaci[oó]n\b'
+      - '(?i)\boptimization\b'
+      - '(?i)\bprogramaci[oó]n\s+lineal\b'
+      - '(?i)\blinear\s+programming\b'
+      - '(?i)\bconvex\s+optimization\b'
+      - '(?i)\boptimizaci[oó]n\s+convexa\b'
+      - '(?i)\blagrange\s+multiplier'
+      - '(?i)\bmultiplicadores?\s+de\s+lagrange\b'
+      - '(?i)\bKKT\b'
+
+  # =========================================================================
+  # PHYSICS
+  # =========================================================================
+
+  - name: fisica
+    patterns:
+      - '(?i)\bf[íi]sic'
+      - '(?i)\bphysics\b'
+
+  - name: cuantica
+    parent: fisica
+    patterns:
+      - '(?i)\b(mec[aá]nica\s+)?cu[aá]ntica\b'
+      - '(?i)\bquantum\s+(mechanics|field|theory|computing)\b'
+      - '(?i)\bspin\b'
+      - '(?i)\bqubit'
+      - '(?i)\bschr[oö]dinger\b'
+      - '(?i)\bheisenberg\b'
+
+  - name: relatividad
+    parent: fisica
+    patterns:
+      - '(?i)\brelatividad\s+(especial|general)\b'
+      - '(?i)\b(special|general)\s+relativity\b'
+      - '(?i)\beinstein\b'
+      - '(?i)\bgravit(y|ation)'
+
+  - name: mecanica_clasica
+    parent: fisica
+    patterns:
+      - '(?i)\bmec[aá]nica\s+cl[aá]sica\b'
+      - '(?i)\bclassical\s+mechanics\b'
+      - '(?i)\blagrangian\b'
+      - '(?i)\bhamiltonian\b'
+      - '(?i)\blagrangiano\b'
+      - '(?i)\bhamiltoniano\b'
+
+  - name: estadistica_fisica
+    parent: fisica
+    patterns:
+      - '(?i)\bf[íi]sica\s+estad[íi]stica\b'
+      - '(?i)\bstatistical\s+(physics|mechanics)\b'
+      - '(?i)\bboltzmann\b'
+      - '(?i)\bmec[aá]nica\s+estad[íi]stica\b'
+
+  - name: fluidos
+    parent: fisica
+    patterns:
+      - '(?i)\b(mec[aá]nica\s+de\s+)?fluidos\b'
+      - '(?i)\bfluid\s+(mechanics|dynamics)\b'
+      - '(?i)\bturbulencia\b'
+      - '(?i)\bturbulence\b'
+      - '(?i)\bnavier[-\s]stokes\b'
+
+  - name: electromagnetismo
+    parent: fisica
+    patterns:
+      - '(?i)\belectromagnet(ismo|ism)\b'
+      - '(?i)\bmaxwell\b'
+      - '(?i)\bondas?\s+electromagn'
+
+  - name: termodinamica
+    parent: fisica
+    patterns:
+      - '(?i)\btermodin[aá]mic'
+      - '(?i)\bthermodynamic'
+      - '(?i)\bentrop[íi]a\b'
+      - '(?i)\bentropy\b'
+
+  # =========================================================================
+  # FINANCE
+  # =========================================================================
+
+  - name: finanzas
+    patterns:
+      - '(?i)\bfinanza?s?\b'
+      - '(?i)\bfinance\b'
+      - '(?i)\bfinancial\b'
+
+  - name: derivados
+    parent: finanzas
+    patterns:
+      - '(?i)\bderivados?\s+financiero'
+      - '(?i)\bderivado\s+(europeo|americano|exotico|ex[oó]tico)'
+      - '(?i)\bfinancial\s+derivative'
+      - '(?i)\bopciones?\s+(europeas?|americanas?|call|put|vanilla|barrier)'
+      - '(?i)\boptions?\s+(pricing|call|put|strike|maturity)'
+      - '(?i)\bforwards?\b'
+      - '(?i)\bfuturos?\b'
+      - '(?i)\bfutures?\b'
+      - '(?i)\bswaption'
+      - '(?i)\bblack[-\s]scholes\b'
+      - '(?i)\bpayoff'
+
+  - name: renta_fija
+    parent: finanzas
+    patterns:
+      - '(?i)\brenta\s+fija\b'
+      - '(?i)\bfixed\s+income\b'
+      - '(?i)\bbonos?\b'
+      - '(?i)\bbond\s+(pricing|yield|curve)'
+      - '(?i)\byield\b'
+      - '(?i)\bzero[-\s]coupon\b'
+      - '(?i)\bcupon\s+cero\b'
+      - '(?i)\bterm\s+structure\b'
+      - '(?i)\bcurva\s+de\s+(descuento|tipos|forward)'
+      - '(?i)\bdiscount\s+(factor|curve)\b'
+      - '(?i)\bfactor\s+de\s+descuento\b'
+
+  - name: tipos_interes
+    parent: finanzas
+    patterns:
+      - '(?i)\btipos?\s+de\s+inter[eé]s\b'
+      - '(?i)\binterest\s+rates?\b'
+      - '(?i)\bshort\s+rate\b'
+      - '(?i)\binstantaneous\s+forward\s+rate\b'
+      - '(?i)\btasa\s+instant[aá]nea\b'
+      - '(?i)\bHJM\b'
+      - '(?i)\bLIBOR\b'
+      - '(?i)\bSOFR\b'
+      - '(?i)\bESTR\b'
+      - '(?i)\bvasicek\b'
+      - '(?i)\bCIR\b'
+      - '(?i)\bhull[-\s]white\b'
+
+  - name: volatilidad
+    parent: finanzas
+    patterns:
+      - '(?i)\bvolatilidad\b'
+      - '(?i)\bvolatility\b'
+      - '(?i)\bimplied\s+vol'
+      - '(?i)\bvol\s+impl[íi]cita\b'
+      - '(?i)\brealiz(ed|ada)\s+vol'
+      - '(?i)\bsmile\b'
+      - '(?i)\bskew\b'
+      - '(?i)\bvol\s+surface\b'
+      - '(?i)\bsuperficie\s+de\s+vol'
+      - '(?i)\bVIX\b'
+      - '(?i)\bheston\b'
+      - '(?i)\bSABR\b'
+      - '(?i)\blocal\s+vol'
+      - '(?i)\bvol\s+local\b'
+      - '(?i)\bstochastic\s+vol'
+      - '(?i)\bvol\s+estoc[aá]stic'
+
+  - name: riesgo
+    parent: finanzas
+    patterns:
+      - '(?i)\briesgo\b'
+      - '(?i)\brisk\b'
+      - '(?i)\bVaR\b'
+      - '(?i)\bvalue[-\s]at[-\s]risk\b'
+      - '(?i)\bCVaR\b'
+      - '(?i)\bexpected\s+shortfall\b'
+      - '(?i)\bhedg(ing|e)\b'
+      - '(?i)\bcobertura\b'
+
+  - name: arbitraje
+    parent: finanzas
+    patterns:
+      - '(?i)\barbitraje\b'
+      - '(?i)\barbitrage\b'
+      - '(?i)\bno[-\s]arbitrage\b'
+      - '(?i)\bNFLVR\b'
+      - '(?i)\bequivalent\s+martingale\s+measure\b'
+      - '(?i)\bmedida\s+(martingala|riesgo[-\s]neutro|equivalente)\b'
+      - '(?i)\brisk[-\s]neutral\b'
+      - '(?i)\bfundamental\s+theorem\s+of\s+asset\s+pricing\b'
+
+  - name: cartera
+    parent: finanzas
+    patterns:
+      - '(?i)\bcartera\b'
+      - '(?i)\bportfolio\b'
+      - '(?i)\bmarkowitz\b'
+      - '(?i)\bMPT\b'
+      - '(?i)\basset\s+allocation\b'
+      - '(?i)\basignaci[oó]n\s+de\s+activos\b'
+
+  - name: mercados
+    parent: finanzas
+    patterns:
+      - '(?i)\bmercados?\s+(financier|de\s+capital|electric|de\s+energ|power|spot|forward)'
+      - '(?i)\b(financial|power|energy|commodity|spot)\s+markets?\b'
+      - '(?i)\btrading\b'
+      - '(?i)\border\s+book\b'
+      - '(?i)\bmarket\s+making\b'
+      - '(?i)\bhigh[-\s]frequency\b'
+
+  - name: mercado_energia
+    parent: mercados
+    patterns:
+      - '(?i)\bmercado\s+(de\s+)?(energ[íi]a|el[eé]ctric|power|gas|electricidad)'
+      - '(?i)\b(power|electricity|gas|commodity|energy)\s+(market|trading|forward)'
+      - '(?i)\bstorengy\b'
+      - '(?i)\bbalance\s+el[eé]ctric'
+      - '(?i)\bPPA\b'
+
+  - name: quant
+    parent: finanzas
+    patterns:
+      - '(?i)\bquant(itative)?\s+(finance|trading|research)\b'
+      - '(?i)\bfinanzas?\s+cuantitativa'
+      - '(?i)\bbacktest'
+      - '(?i)\bstrateg(y|ia)\s+(quant|trading)'
+
+  # =========================================================================
+  # COMPUTING
+  # =========================================================================
+
+  - name: computacion
+    patterns:
+      - '(?i)\bcomputaci[oó]n\b'
+      - '(?i)\bcomputing\b'
+      - '(?i)\bsoftware\b'
+      - '(?i)\bprogramaci[oó]n\b'
+      - '(?i)\bprogramming\b'
+      - '(?i)\bc[oó]digo\b'
+
+  - name: python
+    parent: computacion
+    patterns:
+      - '(?i)\bpython\b'
+      - '(?i)\bpyenv\b'
+      - '(?i)\buv\s+(run|venv|sync)\b'
+      - '(?i)\bpip\s+install\b'
+      - '(?i)\bpoetry\b'
+      - '(?i)\bvenv\b'
+      - '(?i)\bconda\b'
+
+  - name: ml
+    parent: computacion
+    patterns:
+      - '(?i)\bmachine\s+learning\b'
+      - '(?i)\baprendizaje\s+autom[aá]tico\b'
+      - '(?i)\bML\b'
+      - '(?i)\bneural\s+network'
+      - '(?i)\bred(es)?\s+neuronal'
+      - '(?i)\bdeep\s+learning\b'
+      - '(?i)\baprendizaje\s+profundo\b'
+      - '(?i)\bpytorch\b'
+      - '(?i)\btensorflow\b'
+      - '(?i)\bkeras\b'
+      - '(?i)\btransformer'
+      - '(?i)\battention\s+mechanism\b'
+
+  - name: llm
+    parent: ml
+    patterns:
+      - '(?i)\bLLMs?\b'
+      - '(?i)\blarge\s+language\s+model'
+      - '(?i)\bgpt[-\s]?\d'
+      - '(?i)\bchatgpt\b'
+      - '(?i)\bclaude\b'
+      - '(?i)\bopenai\b'
+      - '(?i)\banthropic\b'
+      - '(?i)\bprompt(ing)?\b'
+      - '(?i)\bfine[-\s]tun'
+      - '(?i)\bRLHF\b'
+
+  - name: web
+    parent: computacion
+    patterns:
+      - '(?i)\bweb\s+(app|dev|scrap)'
+      - '(?i)\breact\b'
+      - '(?i)\bvue\b'
+      - '(?i)\bnext\.?js\b'
+      - '(?i)\bHTML\b'
+      - '(?i)\bCSS\b'
+      - '(?i)\bFastAPI\b'
+      - '(?i)\bflask\b'
+      - '(?i)\bdjango\b'
+
+  - name: datos
+    parent: computacion
+    patterns:
+      - '(?i)\bpandas\b'
+      - '(?i)\bnumpy\b'
+      - '(?i)\bexcel\b'
+      - '(?i)\bCSV\b'
+      - '(?i)\bdataframe'
+      - '(?i)\bsql\b'
+      - '(?i)\bpostgres'
+      - '(?i)\bdatabase\b'
+      - '(?i)\bbase\s+de\s+datos\b'
+      - '(?i)\bETL\b'
+
+  - name: sistemas
+    parent: computacion
+    patterns:
+      - '(?i)\boperating\s+system\b'
+      - '(?i)\bsistema\s+operativo\b'
+      - '(?i)\blinux\b'
+      - '(?i)\bshell\b'
+      - '(?i)\bbash\b'
+      - '(?i)\bzsh\b'
+      - '(?i)\bkernel\b'
+      - '(?i)\bmacOS\b'
+      - '(?i)\bdarwin\b'
+
+  - name: devops
+    parent: computacion
+    patterns:
+      - '(?i)\bdocker\b'
+      - '(?i)\bkubernetes\b'
+      - '(?i)\bk8s\b'
+      - '(?i)\bCI/CD\b'
+      - '(?i)\bgithub\s+actions\b'
+      - '(?i)\bterraform\b'
+      - '(?i)\bansible\b'
+
+  - name: git
+    parent: computacion
+    patterns:
+      - '(?i)\bgit\s+(push|pull|commit|rebase|merge|branch|worktree|log|status|diff|stash|reset)\b'
+      - '(?i)\bgit\s+repo'
+      - '(?i)\bgithub\b'
+      - '(?i)\bgitlab\b'
+      - '(?i)\bbitbucket\b'
+      - '(?i)\brepositori[oa]'
+
+  - name: algoritmos
+    parent: computacion
+    patterns:
+      - '(?i)\balgorithms?\b'
+      - '(?i)\balgoritmos?\b'
+      - '(?i)\bestructuras?\s+de\s+datos\b'
+      - '(?i)\bdata\s+structures?\b'
+      - '(?i)\bcomplejidad\s+(computacional|temporal)\b'
+      - '(?i)\btime\s+complexity\b'
+
+  # =========================================================================
+  # AI HARNESS & INFRASTRUCTURE
+  # =========================================================================
+
+  - name: ai_harness
+    patterns:
+      - '(?i)\b(\.)?claude\b'
+      - '(?i)\bclaude\s+code\b'
+      - '(?i)\bagent(e)?s?\s+(claude|AI|de\s+IA)\b'
+      - '(?i)\b\.claude/'
+      - '(?i)\bsubagent'
+      - '(?i)\bMCP\s+(server|tool)\b'
+      - '(?i)\bskill\s+(task[-\s]marshal|content[-\s]router|orchestrator)'
+
+  - name: skill
+    parent: ai_harness
+    patterns:
+      - '(?i)\bSKILL\.md\b'
+      - '(?i)\b[\s\-_]skill[\s\-_]'
+      - '(?i)\bcreate?\s+(a\s+)?new\s+skill\b'
+      - '(?i)\bmodify\s+(the\s+)?skill\b'
+      - '(?i)\bmodifica\w*\s+(la\s+)?skill\b'
+      - '(?i)\bnueva\s+skill\b'
+
+  - name: hook
+    parent: ai_harness
+    patterns:
+      - '(?i)\bhook\s+(script|claude|pre[-\s]commit|post[-\s]commit|user\s+prompt)'
+      - '(?i)\bpre[-\s]commit\b'
+      - '(?i)\bpost[-\s]commit\b'
+      - '(?i)\bhooks?\.yaml\b'
+
+  - name: agente
+    parent: ai_harness
+    patterns:
+      - '(?i)\borchestrator\b'
+      - '(?i)\bsemantic[-\s]kernel\b'
+      - '(?i)\bcontent[-\s]router\b'
+      - '(?i)\bjarvis[-\s]router\b'
+      - '(?i)\bgovernance[-\s]auditor\b'
+      - '(?i)\bmetadata[-\s]enforcer\b'
+
+  - name: infraestructura
+    patterns:
+      - '(?i)\binfraestructura\b'
+      - '(?i)\binfrastructure\b'
+      - '(?i)\bservidor\b'
+      - '(?i)\bservers?\b'
+
+  - name: nas
+    parent: infraestructura
+    patterns:
+      - '(?i)\bNAS\b'
+      - '(?i)\bQNAP\b'
+      - '(?i)\bsynology\b'
+
+  - name: cloud
+    parent: infraestructura
+    patterns:
+      - '(?i)\biCloud\b'
+      - '(?i)\bOneDrive\b'
+      - '(?i)\bGoogle\s+Drive\b'
+      - '(?i)\bDropbox\b'
+      - '(?i)\bAWS\b'
+      - '(?i)\bGCP\b'
+      - '(?i)\bAzure\b'
+
+  - name: sync
+    parent: infraestructura
+    patterns:
+      - '(?i)\bsincron(izar|izaci[oó]n)\b'
+      - '(?i)\bsync(ing)?\b'
+      - '(?i)\brsync\b'
+      - '(?i)\bbackup\b'
+      - '(?i)\bcopia\s+de\s+seguridad\b'
+
+  - name: latex
+    patterns:
+      - '(?i)\blatex\b'
+      - '(?i)\btexlive\b'
+      - '(?i)\boverleaf\b'
+      - '(?i)\bpdflatex\b'
+      - '(?i)\b\\\\begin\{'
+      - '(?i)\b\\\\end\{'
+      - '(?i)\\mathbb\b'
+      - '(?i)\\mathcal\b'
+
+  # =========================================================================
+  # PROJECTS (detected via project slug OR prose mention)
+  # =========================================================================
+
+  - name: proyecto_omaros
+    patterns:
+      - '(?i)\bOmarOS\b'
+      - '(?i)\bproyecto\s+omaros\b'
+
+  - name: proyecto_reflexiones_a_latex
+    patterns:
+      - '(?i)\breflexiones[_\s]a[_\s]latex\b'
+      - '(?i)\breflexiones_a_latex\b'
+
+  - name: proyecto_scilux
+    patterns:
+      - '(?i)\bscilux\b'
+
+  - name: proyecto_tradinginterface
+    patterns:
+      - '(?i)\btradinginterface\b'
+      - '(?i)\btrading[-\s]interface\b'
+
+  - name: proyecto_sweeplab
+    patterns:
+      - '(?i)\bsweeplab\b'
+      - '(?i)\bsweep[-\s]lab\b'
+      - '(?i)\bimperial\s+solver\b'
+
+  - name: proyecto_karim
+    patterns:
+      - '(?i)\bkarim\s+(specific\s+case|project|specific)\b'
+      - '(?i)\bkarim_specific_case\b'
+
+  # =========================================================================
+  # WORK & PERSONAL DOMAINS
+  # =========================================================================
+
+  - name: trabajo
+    patterns:
+      - '(?i)\btrabajo\b'
+      - '(?i)\bwork\b'
+      - '(?i)\bempleo\b'
+      - '(?i)\bjob\b'
+      - '(?i)\bempresa\b'
+
+  - name: storengy
+    parent: trabajo
+    patterns:
+      - '(?i)\bstorengy\b'
+
+  - name: reuniones
+    parent: trabajo
+    patterns:
+      - '(?i)\breuni[oó]n(es)?\b'
+      - '(?i)\bmeetings?\b'
+      - '(?i)\bone[-\s]on[-\s]one\b'
+      - '(?i)\bdaily\s+standup\b'
+
+  - name: familia
+    patterns:
+      - '(?i)\bfamilia\b'
+      - '(?i)\bfamily\b'
+      - '(?i)\bmam[aá]\b'
+      - '(?i)\bpap[aá]\b'
+      - '(?i)\bhermana?\b'
+      - '(?i)\bsister\b'
+      - '(?i)\bbrother\b'
+
+  - name: salud
+    patterns:
+      - '(?i)\bsalud\b'
+      - '(?i)\bhealth\b'
+      - '(?i)\bm[eé]dico\b'
+      - '(?i)\bdoctor\b'
+      - '(?i)\bhospital\b'
+      - '(?i)\bfarmacia\b'
+      - '(?i)\bmedicamento'
+
+  - name: ejercicio
+    parent: salud
+    patterns:
+      - '(?i)\bejercicio\b'
+      - '(?i)\bentrena(r|miento)\b'
+      - '(?i)\bworkout\b'
+      - '(?i)\btraining\b'
+      - '(?i)\bgym\b'
+      - '(?i)\bgimnasio\b'
+      - '(?i)\brun(ning)?\b'
+      - '(?i)\bcorrer\b'
+      - '(?i)\bcycling\b'
+      - '(?i)\bciclismo\b'
+
+  - name: finanzas_personales
+    patterns:
+      - '(?i)\bfinanzas\s+personales\b'
+      - '(?i)\bpresupuesto\b'
+      - '(?i)\bbudget\b'
+      - '(?i)\bn[oó]mina\b'
+      - '(?i)\bsalario\b'
+      - '(?i)\bsalary\b'
+      - '(?i)\bimpuestos?\b'
+      - '(?i)\btaxes?\b'
+      - '(?i)\bdeclaraci[oó]n\s+de\s+la\s+renta\b'
+
+  - name: amigos
+    patterns:
+      - '(?i)\bamig[oa]s?\b'
+      - '(?i)\bfriends?\b'
+
+  - name: idiomas
+    patterns:
+      - '(?i)\bidiomas?\b'
+      - '(?i)\blanguages?\s+(learning|study)\b'
+      - '(?i)\bfranc[eé]s\b'
+      - '(?i)\b(french|german|english|alem[aá]n)\b'
+
+  # =========================================================================
+  # ACADEMIC / PAPERS
+  # =========================================================================
+
+  - name: investigacion
+    patterns:
+      - '(?i)\binvestigaci[oó]n\b'
+      - '(?i)\bresearch\b'
+      - '(?i)\bpaper'
+      - '(?i)\bart[íi]culo\s+(cient|acad)'
+      - '(?i)\barxiv\b'
+      - '(?i)\bphd\b'
+      - '(?i)\bdoctorado\b'
+      - '(?i)\btesis\b'
+      - '(?i)\bthesis\b'
+
+  - name: lectura
+    patterns:
+      - '(?i)\blectura\b'
+      - '(?i)\bleer\b'
+      - '(?i)\bread(ing)?\b'
+      - '(?i)\blibro\b'
+      - '(?i)\bbook\b'
+
+  - name: imperial
+    patterns:
+      - '(?i)\bimperial\s+college\b'
+      - '(?i)\bimperial\b'
+      - '(?i)\bMSc\b'
+
+  # =========================================================================
+  # ACTIVITY / META-TYPE (what kind of action is the task)
+  # =========================================================================
+
+  - name: escribir
+    patterns:
+      - '(?i)\bescribir\b'
+      - '(?i)\bescrib[ae]\b'
+      - '(?i)\bwrite\b'
+      - '(?i)\bwriting\b'
+      - '(?i)\bredactar\b'
+      - '(?i)\bensayo\b'
+      - '(?i)\bessay\b'
+      - '(?i)\bdraft\b'
+      - '(?i)\bborrador\b'
+      - '(?i)\bdefinici[oó]n\s+formal\b'
+      - '(?i)\bformal\s+definition\b'
+
+  - name: estudiar
+    patterns:
+      - '(?i)\bestudiar\b'
+      - '(?i)\bestudio\b'
+      - '(?i)\bstudy(ing)?\b'
+      - '(?i)\brepasar\b'
+      - '(?i)\brevisar\s+apuntes\b'
+
+  - name: decidir
+    patterns:
+      - '(?i)\bdecidir\b'
+      - '(?i)\bdecision(ar)?\b'
+      - '(?i)\bdecis[ií]on\b'
+
+  - name: llamada
+    patterns:
+      - '(?i)\bllamar\b'
+      - '(?i)\bllamada\b'
+      - '(?i)\bcall\s+(someone|mom|dad|back)'
+      - '(?i)\bphone\s+call\b'
+
+  - name: email
+    patterns:
+      - '(?i)\bemail'
+      - '(?i)\bcorreo\s+(electr|a)'
+      - '(?i)\bmandar\s+un\s+correo\b'
+      - '(?i)\bsend\s+(an\s+)?email\b'
+
+  - name: compra
+    patterns:
+      - '(?i)\bcomprar\b'
+      - '(?i)\bcompra\b'
+      - '(?i)\bbuy\b'
+      - '(?i)\bpurchase\b'
+      - '(?i)\border\s+online\b'
+
+  - name: documentar
+    patterns:
+      - '(?i)\bdocumentar\b'
+      - '(?i)\bdocument(ation|ing)\b'
+      - '(?i)\bdocumentaci[oó]n\b'
+      - '(?i)\bREADME\b'
+      - '(?i)\bcontract\s+invariant'
+
+  - name: refactor
+    patterns:
+      - '(?i)\brefactor'
+      - '(?i)\bcleanup\b'
+      - '(?i)\blimpieza\s+de\s+c[oó]digo\b'
+
+  - name: tests
+    parent: computacion
+    patterns:
+      - '(?i)\btests?\s+(unit|integration|de\s+)'
+      - '(?i)\btesting\b'
+      - '(?i)\bpytest\b'
+      - '(?i)\bunittest\b'
+      - '(?i)\bpruebas?\s+unitaria'
+
+  - name: bug
+    parent: computacion
+    patterns:
+      - '(?i)\bbugs?\b'
+      - '(?i)\berror\s+(en|de|al|de\s+runtime)'
+      - '(?i)\btraceback\b'
+      - '(?i)\bfix\s+(the\s+)?(bug|error|issue)'
+      - '(?i)\barreglar\s+(bug|error|fallo)'
+
+  - name: migrar
+    patterns:
+      - '(?i)\bmigrar\b'
+      - '(?i)\bmigrate\b'
+      - '(?i)\bmigration\b'
+      - '(?i)\bmigrar\s+(de|a)\b'
+
+  - name: organizar
+    patterns:
+      - '(?i)\borganizar\b'
+      - '(?i)\borganize\b'
+      - '(?i)\border\s+(my|mi|las)'
+      - '(?i)\bordenar\b'
+
+  - name: revisar
+    patterns:
+      - '(?i)\brevisar\b'
+      - '(?i)\brevis[ae]r\b'
+      - '(?i)\breview\b'
+      - '(?i)\bauditar\b'
+      - '(?i)\baudit\b'
+
+  # =========================================================================
+  # MEDIA / SOCIAL
+  # =========================================================================
+
+  - name: twitter
+    patterns:
+      - '(?i)\btwitter\b'
+      - '(?i)\btweet\s+'
+      - '(?i)\bVolatility''?s\s+Fray\b'
+      - '(?i)\bvolatility\s+fray\b'
+      - '(?i)(?:^|\s)@\w+'
+
+  - name: podcast
+    patterns:
+      - '(?i)\bpodcast'
+
+  - name: video
+    patterns:
+      - '(?i)\bYouTube\b'
+      - '(?i)\bv[ií]deo\b'
+      - '(?i)\bvideo\s+(tutorial|series)'

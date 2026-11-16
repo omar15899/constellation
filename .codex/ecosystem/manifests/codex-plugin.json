@@ -1,7 +1,0 @@
-{
-  "name": "constellation",
-  "version": "1.4.0",
-  "description": "Shared orchestration, native skills and verified workflows across independent projects.",
-  "skills": "./skills/",
-  "hooks": "./ecosystem/hooks.json"
-}

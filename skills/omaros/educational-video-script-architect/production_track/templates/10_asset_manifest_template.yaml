@@ -1,0 +1,73 @@
+# 10_asset_manifest.yaml — Catalogue of every external asset the production uses.
+#
+# An asset is any file or media object that is NOT generated procedurally inside Manim.
+# Examples: a photograph used as a reference, a logo, a custom font file, a recorded
+# voice-over track, a piece of footage, an icon SVG.
+#
+# Procedurally generated assets (data-driven curves, programmatically drawn diagrams,
+# Manim components) do NOT go here — those go in 10b_data_manifest.yaml or are
+# resolved by the component library.
+#
+# Authority: this file is referenced by 09_animation_spec.yaml via `assets:` and by
+# implementation code via the asset_id. The implementer MAY NOT fetch external
+# media that is not in this manifest.
+# ─────────────────────────────────────────────────────────────────────────────
+
+project:
+  slug: <topic-slug>
+  schema_version: "1.0"
+
+assets:
+  # Example — delete or replace
+  - asset_id: voiceover_es_full
+    type: audio                                  # audio | image | video | font | svg | other
+    source: tts_generated                         # tts_generated | recorded | stock | original | licensed
+    path: assets/audio/voiceover_es_full.wav
+    license_status: project_owned                 # project_owned | licensed | royalty_free | needs_review
+    semantic_role: primary_voiceover_es           # what role the asset plays in the video
+    scenes_used: [S0, S1, S2, S3, S4, S5, S6]
+    replacement_policy: regenerate_from_06_voiceover_md
+    required_resolution: 48000_hz_16_bit_mono
+    colour_treatment: na
+    opacity_treatment: na
+    may_be_stylized: false
+    may_be_procedurally_generated_instead: false
+    notes: |
+      The voice-over is the canonical timing reference for every shot. Regenerating
+      it changes synchronization across all shots; if regenerated, the spec must
+      be re-checked against the new timecodes.
+
+  - asset_id: trading_floor_reference_photo
+    type: image
+    source: stock
+    path: assets/images/trading_floor_dim_2019.jpg
+    license_status: royalty_free
+    semantic_role: cold_open_reference_only       # not used in render — visual director's reference
+    scenes_used: []                               # not directly in any render
+    replacement_policy: any_visually_consistent_dim_trading_floor
+    required_resolution: 3840x2160
+    colour_treatment: desaturate_to_NEUTRAL_GREY_at_30_percent
+    opacity_treatment: na
+    may_be_stylized: true
+    may_be_procedurally_generated_instead: false
+    notes: |
+      Reference only for visual director / image-prompt agent.
+      Not rendered in Manim. If a stylised version is needed in
+      a shot, it must be re-routed through the image_prompts pipeline.
+
+  - asset_id: jetbrains_mono_font
+    type: font
+    source: licensed
+    path: assets/fonts/JetBrainsMono-Medium.ttf
+    license_status: licensed
+    semantic_role: monospace_numeric_register
+    scenes_used: [S0, S1, S2, S3, S4, S5, S6]
+    replacement_policy: any_open_source_monospace_with_similar_metrics
+    required_resolution: na
+    colour_treatment: resolved_by_components
+    opacity_treatment: resolved_by_components
+    may_be_stylized: false
+    may_be_procedurally_generated_instead: false
+    notes: |
+      Bound in manim/constants.py as MONO_FONT. Used by SplitFlapBoard,
+      BasisTicker, DataLabel, FormulaPanel (numeric portions).

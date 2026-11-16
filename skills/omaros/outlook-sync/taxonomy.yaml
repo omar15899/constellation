@@ -1,0 +1,193 @@
+version: 1
+junk_category: Junk
+rescue_from_junk: true
+
+# Categories are evaluated IN ORDER by the Tier-0 deterministic classifier
+# (rules.py). Order = priority: specific before generic. The first category
+# whose rules match wins. Anything left unmatched falls through to the Tier-1
+# LLM (classify.py), which must answer with one of the ids below.
+categories:
+  - id: Finance
+    description: Banking, invoices, receipts of payment, salary, statements, payment confirmations.
+    color: preset8
+    target_folder: Finance
+    rules:
+      from_domains:
+        - santander.es
+        - santander.com
+        - bbva.es
+        - bbva.com
+        - caixabank.es
+        - lacaixa.es
+        - ing.es
+        - openbank.es
+        - revolut.com
+        - wise.com
+        - paypal.com
+        - paypal.es
+        - stripe.com
+        - n26.com
+        - monzo.com
+        - hsbc.co.uk
+        - barclays.co.uk
+        - lloydsbank.com
+      from_addresses: []
+      subject_keywords:
+        - factura
+        - invoice
+        - payment
+        - pago
+        - recibo
+        - receipt
+        - statement
+        - extracto
+        - nomina
+        - payslip
+        - transferencia
+        - transaction
+      header_list_unsubscribe: false
+
+  - id: Work_Engie
+    description: Work mail from Engie — quant, trading desk, internal communications, payroll-adjacent.
+    color: preset5
+    target_folder: Work_Engie
+    rules:
+      from_domains:
+        - engie.com
+        - engie.es
+        - external.engie.com
+        - corp.engie.com
+      from_addresses: []
+      subject_keywords:
+        - engie
+        - quant
+        - trading
+        - desk
+        - pnl
+        - risk report
+      header_list_unsubscribe: false
+
+  - id: Academic_Imperial
+    description: Academic mail from Imperial College and universities — thesis, lectures, coursework, supervisors, admin.
+    color: preset3
+    target_folder: Academic_Imperial
+    rules:
+      from_domains:
+        - imperial.ac.uk
+        - ic.ac.uk
+        - ucl.ac.uk
+        - ox.ac.uk
+        - cam.ac.uk
+        - upm.es
+        - edu
+      from_addresses: []
+      subject_keywords:
+        - thesis
+        - tesis
+        - imperial
+        - lecture
+        - lectura
+        - coursework
+        - seminar
+        - supervisor
+        - dissertation
+        - phd
+        - examination
+      header_list_unsubscribe: false
+
+  - id: Receipts
+    description: Order confirmations, shipping, travel bookings, tickets and reservations from retailers and carriers.
+    color: preset9
+    target_folder: Receipts
+    rules:
+      from_domains:
+        - amazon.com
+        - amazon.es
+        - amazon.co.uk
+        - renfe.com
+        - renfe.es
+        - booking.com
+        - ryanair.com
+        - vueling.com
+        - iberia.com
+        - britishairways.com
+        - easyjet.com
+        - airbnb.com
+        - uber.com
+        - elcorteingles.es
+        - aliexpress.com
+      from_addresses: []
+      subject_keywords:
+        - order
+        - pedido
+        - booking
+        - reserva
+        - ticket
+        - billete
+        - confirmation
+        - confirmacion
+        - shipped
+        - enviado
+        - tracking
+        - boarding pass
+      header_list_unsubscribe: false
+
+  - id: Newsletters
+    description: Mailing lists, newsletters, marketing digests and bulk subscriptions identified by a List-Unsubscribe header.
+    color: preset12
+    target_folder: Newsletters
+    rules:
+      from_domains:
+        - substack.com
+        - mailchimp.com
+        - sendgrid.net
+        - medium.com
+      from_addresses: []
+      subject_keywords:
+        - newsletter
+        - unsubscribe
+        - boletin
+        - digest
+        - weekly
+        - subscribe
+      header_list_unsubscribe: true
+
+  - id: Personal
+    description: Personal correspondence from friends, family and individuals — conversational, non-transactional.
+    color: preset0
+    target_folder: Personal
+    rules:
+      from_domains: []
+      from_addresses: []
+      subject_keywords: []
+      header_list_unsubscribe: false
+
+  - id: Action
+    description: Mail that requires a reply or a concrete action from Omar — requests, questions, follow-ups, deadlines.
+    color: preset1
+    target_folder: Action
+    rules:
+      from_domains: []
+      from_addresses: []
+      subject_keywords: []
+      header_list_unsubscribe: false
+
+  - id: Junk
+    description: Spam, phishing, unsolicited advertising and low-value promotional mail with no legitimate sender relationship.
+    color: preset18
+    target_folder: null
+    rules:
+      from_domains: []
+      from_addresses: []
+      subject_keywords: []
+      header_list_unsubscribe: false
+
+  - id: Archive
+    description: Informational, FYI or notification mail that needs no action and can be filed away.
+    color: preset20
+    target_folder: Archive
+    rules:
+      from_domains: []
+      from_addresses: []
+      subject_keywords: []
+      header_list_unsubscribe: false

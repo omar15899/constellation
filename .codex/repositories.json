@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "repositories": [
-    {
-      "path": ".",
-      "management": "native"
-    }
-  ]
-}

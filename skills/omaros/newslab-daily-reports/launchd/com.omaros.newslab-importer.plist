@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.omaros.newslab-importer</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/omarkhalil/GitHub/NewsLab/.venv/bin/python</string>
+        <string>/Users/omarkhalil/GitHub/Constellation/skills/omaros/newslab-daily-reports/scripts/importer.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__REPO_ROOT__/docs/newslab_importer_daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_ROOT__/docs/newslab_importer_daemon.err</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/omarkhalil/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>NEWSLAB_MODE</key>
+        <string>research</string>
+        <key>NLDR_TOPICS</key>
+        <string>energy,geopolitics,macro,markets,supply_chains,social_unrest,technology</string>
+        <key>NLDR_BASE_INTERVAL</key>
+        <string>300</string>
+        <key>NLDR_MAX_BACKOFF</key>
+        <string>1800</string>
+    </dict>
+</dict>
+</plist>

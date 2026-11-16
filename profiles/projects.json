@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {
+      "id": "workspace",
+      "root": "/Users/omarkhalil/GitHub",
+      "profile": "profiles/workspace.md",
+      "management": "native",
+      "git_hooks_before": ".codex/git-hooks",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "omaros",
+      "root": "/Users/omarkhalil/OmarOS",
+      "profile": "profiles/omaros.md",
+      "management": "native",
+      "git_hooks_before": "/Users/omarkhalil/.codex/constellation-vault-guards/f2a88a8410af70be30273319549d4bd9528c9d36c2468d0c24a0f1ecafe72ce7",
+      "preserve_git_hook_chain": null,
+      "private_patterns": [
+        "06_Knowledge_Base/Mathematics/Finance/ENGIE/Private/**",
+        "09_Data_Sources/*_Conversations/**",
+        "09_Data_Sources/Email_Exports/by_message/**",
+        "09_Data_Sources/Email_Exports/snapshots/**",
+        "09_Data_Sources/Email_Exports/backfill/**",
+        "09_Data_Sources/Email_Exports/index.json",
+        "11_Documents_and_Reports/Email/**",
+        "docs/sk_runs/**",
+        "**/.sync_state/**",
+        "**/turn_states/**",
+        ".claude/cache/**",
+        ".claude/run/**",
+        ".claude/logs/**",
+        ".codex/cache/**",
+        ".codex/sessions/**",
+        ".codex/log/**",
+        ".codex/state/**",
+        "**/*_daemon.log",
+        "**/*_daemon.err"
+      ],
+      "filesystem_identity": {
+        "owner": [
+          16777233,
+          286890278
+        ],
+        "git_dir": [
+          16777233,
+          286890494
+        ]
+      }
+    },
+    {
+      "id": "constellation",
+      "root": "/Users/omarkhalil/GitHub/Constellation",
+      "profile": "profiles/constellation.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "backtestlab",
+      "root": "/Users/omarkhalil/GitHub/BacktestLab",
+      "profile": "profiles/backtestlab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "executionlab",
+      "root": "/Users/omarkhalil/GitHub/ExecutionLab",
+      "profile": "profiles/executionlab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "gasstorageoptimiserengie",
+      "root": "/Users/omarkhalil/GitHub/GasStorageOptimiserEngie",
+      "profile": "profiles/gasstorageoptimiserengie.md",
+      "management": "native",
+      "git_hooks_before": ".githooks",
+      "preserve_git_hook_chain": "/Users/omarkhalil/GitHub/GasStorageOptimiserEngie/.githooks",
+      "private_patterns": []
+    },
+    {
+      "id": "intelligencelab",
+      "root": "/Users/omarkhalil/GitHub/IntelligenceLab",
+      "profile": "profiles/intelligencelab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "karimspecificcase",
+      "root": "/Users/omarkhalil/GitHub/KarimSpecificCase",
+      "profile": "profiles/karimspecificcase.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "mmarv1",
+      "root": "/Users/omarkhalil/GitHub/MMARV1",
+      "profile": "profiles/mmarv1.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "marketdatalab",
+      "root": "/Users/omarkhalil/GitHub/MarketDataLab",
+      "profile": "profiles/marketdatalab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "montecarlolab",
+      "root": "/Users/omarkhalil/GitHub/MonteCarloLab",
+      "profile": "profiles/montecarlolab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "newslab",
+      "root": "/Users/omarkhalil/GitHub/NewsLab",
+      "profile": "profiles/newslab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "portfoliolab",
+      "root": "/Users/omarkhalil/GitHub/PortfolioLab",
+      "profile": "profiles/portfoliolab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "pricinglab",
+      "root": "/Users/omarkhalil/GitHub/PricingLab",
+      "profile": "profiles/pricinglab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "researchlab",
+      "root": "/Users/omarkhalil/GitHub/ResearchLab",
+      "profile": "profiles/researchlab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "risklab",
+      "root": "/Users/omarkhalil/GitHub/RiskLab",
+      "profile": "profiles/risklab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "scilux",
+      "root": "/Users/omarkhalil/GitHub/Scilux",
+      "profile": "profiles/scilux.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "shared",
+      "root": "/Users/omarkhalil/GitHub/Shared",
+      "profile": "profiles/shared.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "strategyorchestrationlab",
+      "root": "/Users/omarkhalil/GitHub/StrategyOrchestrationLab",
+      "profile": "profiles/strategyorchestrationlab.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "sweeplab",
+      "root": "/Users/omarkhalil/GitHub/Sweeplab",
+      "profile": "profiles/sweeplab.md",
+      "management": "native",
+      "git_hooks_before": ".githooks",
+      "preserve_git_hook_chain": "/Users/omarkhalil/GitHub/Sweeplab/.githooks",
+      "private_patterns": []
+    },
+    {
+      "id": "brainteasers-asincronas",
+      "root": "/Users/omarkhalil/GitHub/brainteasers-asincronas",
+      "profile": "profiles/brainteasers-asincronas.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "tradinginterface",
+      "root": "/Users/omarkhalil/GitHub/tradinginterface",
+      "profile": "profiles/tradinginterface.md",
+      "management": "native",
+      "git_hooks_before": "",
+      "preserve_git_hook_chain": null,
+      "private_patterns": []
+    },
+    {
+      "id": "ruflo",
+      "root": "/Users/omarkhalil/GitHub/ruflo",
+      "management": "external",
+      "profile": null
+    }
+  ]
+}
