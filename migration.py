@@ -61,6 +61,21 @@ LEGACY_VAULT_DOCUMENTS = (
     '11_Documents_and_Reports/Incidents/2026-08-10_github_constellation_partial_write.md',
     'docs/recovery_logs/2026-08-10_github_constellation_partial_write.md',
 )
+LEGACY_IMPORTED_DOCUMENTS = (
+    '.claude/docs/README.md',
+    '.claude/docs/architecture.md',
+    '.claude/docs/codex_parity.md',
+    '.claude/docs/control_plane_audit.md',
+    '.claude/docs/git_as_research_ledger.md',
+    '.claude/docs/how_to_add_a_repo.md',
+    '.claude/docs/research_pipeline.md',
+    '.codex/CONSTELLATION_REPORT.md',
+    '.codex/KNOWLEDGE.md',
+    '.codex/OMAROS_1_2_RELEASE.md',
+    '.codex/README.md',
+    '.codex/RESEARCH.md',
+    '.codex/WORKSPACE.md',
+)
 
 REQUIRED_CHECKS = ("native_session", "omaros_note", "parallel_repositories",
                    "stale_review", "foreign_index", "private_outgoing", "interrupted_push")
@@ -138,6 +153,14 @@ def candidate_roots() -> list[tuple[Path, str]]:
         for name in ("bundle", "AGENTS.md", "instructions-install.py", "sync.py"):
             candidates.append((maintenance / "updates" / release / name,
                                "Retired release staging copy; private recovery receipt is preserved"))
+    imported = vault / "11_Documents_and_Reports/Research_Repositories/constellation"
+    raw = vault / "90_Attachments/Research_Repositories/constellation"
+    candidates.append((imported / "README.md", "Retired catalog of obsolete architecture imports"))
+    # Only these reviewed architecture copies retire. The imported workspace
+    # README, QUANTOS and QUANT_RESEARCH documents and provenance stay in the vault.
+    for name in LEGACY_IMPORTED_DOCUMENTS:
+        candidates.append((imported / "files" / name, "Retired imported architecture document"))
+        candidates.append((raw / "files" / (name + ".source"), "Retired imported architecture source copy"))
     return [(path, reason) for path, reason in candidates if path.exists() or path.is_symlink()]
 
 

@@ -3,11 +3,45 @@ import json
 from pathlib import Path
 import shutil
 import stat
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import migration
+
+
+class MigrationScopeTests(unittest.TestCase):
+    def test_import_scope_preserves_domain_content_and_unknown_documents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            source = home / 'source'
+            (source / 'profiles').mkdir(parents=True)
+            (source / 'profiles/projects.json').write_text('{"projects": []}')
+            documents = home / 'OmarOS/11_Documents_and_Reports/Research_Repositories/constellation'
+            originals = home / 'OmarOS/90_Attachments/Research_Repositories/constellation'
+            names = ['.claude/docs/' + name + '.md' for name in (
+                'README', 'architecture', 'codex_parity', 'control_plane_audit',
+                'git_as_research_ledger', 'how_to_add_a_repo', 'research_pipeline')]
+            names += ['.codex/' + name + '.md' for name in (
+                'CONSTELLATION_REPORT', 'KNOWLEDGE', 'OMAROS_1_2_RELEASE',
+                'README', 'RESEARCH', 'WORKSPACE')]
+            retired = {documents / 'README.md'}
+            retired.update(documents / 'files' / name for name in names)
+            retired.update(originals / 'files' / (name + '.source') for name in names)
+            domain_documents = ('README.md', 'QUANTOS.md', '.codex/QUANT_RESEARCH.md')
+            preserved = {documents / 'files' / name for name in domain_documents}
+            preserved.update(originals / 'files' / (name + '.source') for name in domain_documents)
+            preserved.add(documents / 'files/.claude/docs/new-document.md')
+            for path in retired | preserved:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('Exact fixture document')
+            subprocess.run(['git', 'init', '-q', str(home / 'OmarOS')], check=True, capture_output=True)
+            with patch.object(migration, 'HOME', home), patch.object(migration, 'SOURCE', source):
+                candidates = {path for path, _ in migration.candidate_roots()}
+            self.assertEqual(len(retired), 27)
+            self.assertEqual(candidates, retired)
+            self.assertTrue(candidates.isdisjoint(preserved))
 
 
 class MigrationTests(unittest.TestCase):
