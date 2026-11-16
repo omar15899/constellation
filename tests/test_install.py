@@ -62,6 +62,26 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(any(op['path'] in (str(self.config), str(hooks)) for op in plan['operations']))
         self.assertEqual(len(json.loads(hooks.read_text())['hooks']['Stop']), 2)
 
+    def test_install_disables_only_existing_legacy_plugin(self):
+        unrelated = '\n[plugins."other@provider"]\nenabled = true\nsetting = "preserve"\n'
+        for enabled in (None, True, False):
+            with self.subTest(legacy_enabled=enabled):
+                original = self.original + unrelated
+                if enabled is not None:
+                    original += '\n[plugins."constellation@constellation"]\nenabled = ' + str(enabled).lower() + '\n'
+                self.config.write_text(original)
+                receipt = install.apply_plan(self.plan())
+                config = tomllib.loads(self.config.read_text())
+                self.assertEqual(config['plugins']['other@provider'],
+                                 {'enabled': True, 'setting': 'preserve'})
+                if enabled is None:
+                    self.assertNotIn('constellation@constellation', config['plugins'])
+                else:
+                    self.assertFalse(config['plugins']['constellation@constellation']['enabled'])
+                self.assertEqual(self.plan()['operations'], [])
+                install.rollback(receipt)
+                self.assertEqual(self.config.read_text(), original)
+
     def test_changed_input_aborts_before_any_mutation(self):
         plan = self.plan()
         self.config.write_text(self.original + '# user edit\n')

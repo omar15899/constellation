@@ -61,6 +61,7 @@ def _toml_blocks(text: str) -> list[str]:
 def _native_config(text: str, source: Path, home: Path, entries: list[dict[str, Any]], agents: list[dict[str, Any]]) -> str:
     """Replace only owned references; preserve unrelated TOML, including memories."""
     original_text = text
+    original_config = tomllib.loads(text)
     text = re.sub(re.escape(BEGIN) + r'.*?' + re.escape(END) + r'\n?', '', text, flags=re.DOTALL)
     old_skills = {str(Path(row['source']) / filename) for row in entries for filename in ('SKILL.md', 'skill.md')}
     old_skills.update(str(home / 'OmarOS/.agents/skills' / row['name'] / 'SKILL.md') for row in entries if row['group'] == 'omaros')
@@ -92,10 +93,13 @@ def _native_config(text: str, source: Path, home: Path, entries: list[dict[str, 
         result += f'\n[agents.{json.dumps(agent["name"])}]\n'
         result += f'description = {json.dumps(agent["description"], ensure_ascii=False)}\n'
         result += f'config_file = {json.dumps(str(agent["path"]))}\n'
-    result += '\n[plugins."constellation@constellation"]\nenabled = false\n'
+    # Read presence before removing managed markers, which may enclose an
+    # existing disabled entry. A removed plugin must stay absent on reinstall.
+    if 'constellation@constellation' in original_config.get('plugins', {}):
+        result += '\n[plugins."constellation@constellation"]\nenabled = false\n'
     result += END + '\n'
     parsed = tomllib.loads(result)
-    return original_text if parsed == tomllib.loads(original_text) else result
+    return original_text if parsed == original_config else result
 
 
 def build_plan(source: Path, home: Path | None = None, state_dir: Path | None = None) -> dict[str, Any]:
