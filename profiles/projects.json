@@ -21,6 +21,8 @@
         "**/*_daemon.err",
         "**/*_daemon.log",
         "**/.sync_state/**",
+        "**/WhatsApp Audio*",
+        "**/WhatsApp Image*",
         "**/session_logs/**",
         "**/turn_states/**",
         ".claude/cache/**",
