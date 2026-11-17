@@ -81,7 +81,7 @@ exclude globs declared in `find-in-repos`, including private conversation paths.
 
 ## 12. No emoji, no AI attribution
 
-Inherits from `~/CLAUDE.md`. No emoji in commits, prompts, agent
+Inherits from `~/GitHub/Constellation/instructions/AGENTS.md`. No emoji in commits, prompts, agent
 specs, or generated files. No `Co-authored-by`. No "Generated with
 Claude". This applies to the hub itself, not just the repos it
 manages.

@@ -1,7 +1,7 @@
 # registry/repos.yaml — machine-readable registry of every repo under ~/GitHub/.
 #
-# Authoritative source. Updated by `repo-discovery` skill or the
-# `constellation-cartographer` agent. Human-readable mirror: REPOS.md.
+# Workspace discovery metadata. Use Constellation/profiles/workspace.md for
+# current discovery and ownership procedures. Human-readable mirror: REPOS.md.
 #
 # Fields per repo:
 #   name       — directory name under ~/GitHub/
@@ -19,6 +19,7 @@
 #
 # Schema version. Bump when fields change.
 schema_version: 1
+# Historical generator of the recorded inventory, not an installed native role.
 generated_by: constellation-cartographer
 last_updated: 2026-09-17
 # Directory membership refreshed; historical maturity labels below are not a new code audit.
@@ -210,7 +211,7 @@ repos:
     status: external
     vault_link: null
     claude_dir: null
-    notes: No .claude/ yet. Candidate for repo-bootstrap (adjacent variant).
+    notes: Historical bootstrap candidate (adjacent). Inspect current native registration using the Constellation workspace profile before changing it.
 
   - name: KarimSpecificCase
     path: /Users/omarkhalil/GitHub/KarimSpecificCase

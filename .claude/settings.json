@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/secret_scan.sh\"",
+            "command": "bash \"/Users/omarkhalil/GitHub/Constellation/resources/automations/secret_scan.sh\"",
             "timeout": 15,
             "onFailure": "block"
           }
@@ -19,12 +19,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/secret_scan.sh\"",
+            "command": "bash \"/Users/omarkhalil/GitHub/Constellation/resources/automations/secret_scan.sh\"",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/changed_python_syntax.sh\"",
+            "command": "bash \"/Users/omarkhalil/GitHub/Constellation/resources/automations/changed_python_syntax.sh\"",
             "timeout": 15
           }
         ]

@@ -27,8 +27,8 @@ When two policies appear to disagree:
 Load policies relevant to the task, without copying them into every skill.
 A session that picks up a non-trivial request:
 
-1. Reads the kernel (`~/GitHub/.claude/CLAUDE.md`).
-2. Establishes scope with `contracts/routing.md` in the current agent.
+1. Reads the kernel (`~/GitHub/Constellation/README.md`).
+2. Declares exact paths and native authors with `constellation.py begin`.
 3. Reads the relevant policy from this directory if the request
    touches it.
 4. Acts.

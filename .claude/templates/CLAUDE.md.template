@@ -1,68 +1,44 @@
-# CLAUDE.md — <REPO_NAME>
+@/Users/omarkhalil/GitHub/Constellation/instructions/AGENTS.md
+@/Users/omarkhalil/GitHub/Constellation/profiles/<PROJECT_PROFILE>.md
 
-> Template. Replace placeholders, then trim everything you don't need.
+# <REPO_NAME>
 
-## Mission
+Replace placeholders and keep only project-specific navigation. Shared
+instructions, native roles and installation belong in Constellation.
 
-(one paragraph — what this repo *is*. Inherit tone from the constellation
-kernel at `~/GitHub/.claude/CLAUDE.md`.)
+## Mission and perimeter
 
-## Perimeter
+<What this repository owns, its inputs and its outputs.>
 
-- **Perimeter:** `<adjacent | quantos-core | quantos-info | quantos-alloc | quantos-prod | quantos-ui>`
-- **Tier:** `<0 | 1 | 1.5 | 2 | 2.5 | 3 | UI | n/a>`
-- **Vault home:** `<path under ~/OmarOS/05_Projects/ or "none">`
+- Perimeter: <adjacent | quantos-core | quantos-info | quantos-alloc | quantos-prod | quantos-ui | quantos-orchestration>.
+- Tier: <0 | 1 | 1.5 | 2 | 2.5 | 3 | 4 | UI | n/a>.
+- Canonical domain documentation: <owner paths>.
+- Vault home, if authorized and applicable: <path or none>.
 
-## Reading order
+## Read before changing this project
 
-Read in this order before any non-trivial work in this repo:
+1. The applicable local `AGENTS.md`, shared instructions and project profile.
+2. The current owner documentation for the affected behavior.
+3. For cross-repository work, `~/GitHub/Constellation/profiles/workspace.md`
+   and the applicable tier/perimeter policy.
 
-1. `~/CLAUDE.md` — user contract.
-2. `~/GitHub/.claude/CLAUDE.md` — constellation kernel.
-3. (vault, if applicable) `<vault-home>/Vision/`
-4. This file.
+## Implementation and checks
 
-## Stack
+- Stack and package manager: <actual supported tools>.
+- Public interfaces and compatibility obligations: <owner contracts>.
+- Existing checks: <relevant commands and when they apply>.
+- Tier contract, if applicable: `.importlinter`.
 
-- **Stack profile:** `<python-uv-strict | python-light | typescript-vite | vanilla-web | mixed>`
-- **Package manager:** `<uv | pip | npm>`
-- **Tests:** `<pytest | playwright | …>`
-- **Tier contract:** `.importlinter` (QuantOS only)
-- **Pre-commit:** `<gate file>`
+Register exact owned paths and applicable required checks through the common
+workflow. Create, change or run tests only when Omar explicitly requests them;
+keep an unmet required gate visible. Preserve foreign changes and indexes.
+Cross-repository work uses each actual Git owner and its publication contract.
 
-## Peers (read-only)
+## Navigation
 
-The master peer list lives at
-`~/GitHub/.claude/registry/repos.yaml`. A snapshot is kept here under
-`.claude/registry/peers.yaml.snapshot` (auto-refreshed by
-`peer_sync.py`). The lab's own `peers.yaml` (if any) overrides the
-snapshot.
+The peer registry is `~/GitHub/.claude/registry/repos.yaml`; inspect actual
+Git ownership and current dependencies rather than treating the registry as
+proof of readiness. Read the workspace profile for dependency and status
+inspection. Update owner navigation only when the scoped change needs it.
 
-## Git policy
-
-Inherits from `~/CLAUDE.md` and `~/GitHub/.claude/policies/cross_repo_commits.md`.
-
-- Plain English commits. Present tense. No AI attribution.
-- One commit per logical change.
-- Never `--no-verify`. Never `--force` to main.
-
-## Cross-repo work
-
-When work in this repo is part of a multi-repo refactor:
-
-1. Use the same branch name across affected repos.
-2. Open one PR per repo with the cross-reference block.
-3. Stop on the first failing pre-commit gate.
-
-## Risk
-
-- **Adjacent / Tier ≤ 2:** routine local work is low-risk.
-- **Tier 3 (touches money):** every change is medium-to-high risk.
-  Verify changed dependencies with `tier-check` and inspect state with `repo-status`.
-
-## Authoritative references
-
-- Constellation kernel: `~/GitHub/.claude/CLAUDE.md`
-- Constellation map: `~/GitHub/QUANTOS.md`
-- Vault governance: `~/OmarOS/05_Projects/QuantOS/AGENTS.md` (QuantOS) or
-  the relevant project home under `~/OmarOS/05_Projects/<project>/`.
+<Add concise project-specific references; remove this placeholder.>

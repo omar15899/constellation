@@ -6,7 +6,8 @@ landed, and recorded.
 
 ## Hard rules
 
-1. **One commit per repo.** Each repository is its own git surface.
+1. **One commit per repo.** Each repository is its own Git owner and
+   Constellation task. Use the common `commit` and `push` entry points.
    Never invoke `git commit` across repos in a single call. Each commit
    is atomic within its repo.
 2. **Tier order for landings.** Land Tier 0 first, then 1, 1.5, 2,
@@ -36,7 +37,7 @@ landed, and recorded.
 
 ## Commit message style
 
-Inherits from `~/CLAUDE.md`:
+Inherits from `~/GitHub/Constellation/instructions/AGENTS.md`:
 
 - Present tense, plain English.
 - No AI attribution.
@@ -67,18 +68,18 @@ lands. The ADR:
 - Records the agreed naming / signature / schema.
 - Links each PR once it is open.
 
-The `multi-repo-orchestrator` proposes the ADR follow-up; the user
-writes it (or invokes the `decision-logger` skill at the vault).
+The active coordinator proposes the ADR follow-up and records it only
+within the authorized vault scope. Each owner has a separate task.
 
 ## Idempotence + retry
 
-If the orchestrator is interrupted mid-pipeline:
+If the active coordinator is interrupted:
 
 - Per-repo commits that landed remain (no rollback).
 - Per-repo branches that were created remain (no cleanup unless asked).
-- The orchestrator records the state in
-  `~/GitHub/.claude/docs/orchestration_state.md` so the next session can
-  resume from the correct repo.
+- The coordinator records a curated checkpoint in the private Constellation
+  task ledger. Resume with `constellation.py status` and `recover` for the
+  specific owner; do not create a second orchestration state file.
 
 ## What never gets committed across repos
 

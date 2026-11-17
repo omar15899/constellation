@@ -1,21 +1,22 @@
-# `~/GitHub/.claude/templates/`
+# Workspace templates
 
-Bootstrap material used by `scripts/bootstrap_repo.sh` and the
-`repo-bootstrap` skill.
+The existing `scripts/bootstrap_repo.sh` consumes this bundle. The
+[Constellation workspace profile](../../Constellation/profiles/workspace.md)
+defines the current repository discovery, ownership and bootstrap procedure.
 
-| File                          | Purpose                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------ |
-| `CLAUDE.md.template`          | Starting `CLAUDE.md` for any new repo, with perimeter/tier placeholders. |
-| `importlinter.template`       | Standard tier-discipline contract for a QuantOS lab.                     |
-| `lint.yml.template`           | Standard GitHub Actions lint workflow.                                   |
-| `claude_subagent_link.sh`     | Symlink the hub's `agents/skills/commands` into a repo's `.claude/_shared/`. |
+| File | Purpose |
+| --- | --- |
+| `CLAUDE.md.template` | Minimal native entry with project and profile placeholders. |
+| `importlinter.template` | Tier-discipline starting contract for a QuantOS lab. |
+| `lint.yml.template` | Existing lint workflow template; installation or activation requires the owner's applicable policy. |
 
-## Conventions
+Templates are copied verbatim by the bootstrap script. Resolve every
+placeholder and inspect the generated files before installing them; copying a
+template is not a completed Constellation registration.
 
-- All `.template` files use angle-bracket placeholders (`<LAB_NAME>`,
-  `<TIER>`, …). The bootstrap script does NOT auto-substitute — it
-  copies verbatim and surfaces the placeholders for the user to fill.
-- Templates are intentionally small. If a template grows beyond ~80
-  lines, it probably wants to be a proper directory with its own
-  scaffolding script.
-- Never include secrets or credentials in templates.
+Native agents and skills are installed by Constellation. The historical
+`claude_subagent_link.sh` helper is not the current installation procedure.
+Do not create a parallel shared agent/skill tree.
+
+Keep templates small and domain-specific. Never include secrets, credentials,
+private conversation data or automatic publication steps.
