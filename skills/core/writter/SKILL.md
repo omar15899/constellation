@@ -39,8 +39,9 @@ combina con `mathematics` o `coding` según corresponda.
 
 Una entrega significativa lleva comprobaciones y revisión independiente
 proporcionadas, con el mínimo del receptor. El
-[protocolo común](../../../README.md) distingue el ciclo
-Git de la entrega portable. Una explicación pedida en conversación se entrega
-en conversación. Para Word, PDF o diapositivas, aplica la skill de formato
+[protocolo común](../../../README.md) reúne los cambios en archivos, su evidencia
+y su revisión en el encargo del proyecto propietario; permite cerrar una entrega
+local sin publicarla. Una explicación pedida en conversación se entrega en
+conversación. Para Word, PDF o diapositivas, aplica la skill de formato
 disponible y comprueba el resultado renderizado. La publicación y el envío se
 ajustan al alcance autorizado.

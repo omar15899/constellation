@@ -22,7 +22,7 @@ Shared is QuantOS Tier 0 — the substrate at the bottom of the QuantOS constell
 
 - .claude/registry/peers.yaml
 
-- .claude/skills/shared-substrate-doctrine/SKILL.md
+- docs/vault/lab_vision/00_Substrate.md
 
 - docs/vault/AGENTS.md
 
@@ -42,29 +42,29 @@ Shared is QuantOS Tier 0 — the substrate at the bottom of the QuantOS constell
 
 ## Invariantes
 
-- ADR-0020, single-source. Verbatim from CLAUDE.md: "components in Shared are never duplicated in a lab repo. A lab that needs a primitive that does not yet exist in Shared opens an ADR and proposes the addition; the lab does not vendor its own copy." The skill escalates it: "Forking a schema in a lab is a release blocker." Doctrinal, not mechanically enforced.
+- ADR-0020, single-source. Verbatim from CLAUDE.md: "components in Shared are never duplicated in a lab repo. A lab that needs a primitive that does not yet exist in Shared opens an ADR and proposes the addition; the lab does not vendor its own copy." Forking a shared schema in a lab is a release blocker. Doctrinal, not mechanically enforced.
 
-- Tier 0 isolation, no upward import. Stated in the SKILL's contract_invariants (NOT in CLAUDE.md): "quant_core imports nothing from QuantOS. quant_data and quant_observability import only from quant_core. No upward import." MECHANICAL COVERAGE IS PARTIAL: the only .importlinter contract is `quant-cache-is-tier0-infra` (quant_cache must not import quant_data or grid_expansion). /audit-imports rule 4 declares any import of a downstream lab from packages/ "a release blocker", but that check is a grep in a markdown command file, not CI.
+- Tier 0 isolation, no upward import. The retained doctrine requires no upward imports. Its historical `quant_core` and `quant_observability` names describe substrate responsibilities; apply the boundary to current packages instead of recreating absent packages. MECHANICAL COVERAGE IS PARTIAL: the only .importlinter contract is `quant-cache-is-tier0-infra` (quant_cache must not import quant_data or grid_expansion). /audit-imports rule 4 declares any import of a downstream lab from packages/ "a release blocker", but that check is a grep in a markdown command file, not CI.
 
 - Typing. Verbatim from CLAUDE.md: "Python 3.12, `mypy --strict`. No `Any`, no `cast`, no `# type: ignore` without an inline explanation." Every package pyproject sets strict = true; the root sets warn_return_any, explicit_package_bases and namespace_packages. Note the repo venv actually runs Python 3.13.3.
 
 - State discipline. Verbatim from CLAUDE.md: "State is `pyrsistent.PMap`; never a mutable dict for accumulated state" (ADR-0011); "`typing.Protocol` for interfaces; `dataclasses(frozen=True)` for value types." ASPIRATIONAL — pyrsistent is not installed and not declared in any pyproject.
 
-- Effects. Verbatim from CLAUDE.md: "Side effects flow through the `Capability` environment (ADR-0013)." Skill: "No effect without a token. No token without a registry entry."
+- Effects. Verbatim from CLAUDE.md: "Side effects flow through the `Capability` environment (ADR-0013)." The retained capability rule is: no effect without a token, and no token without a registry entry.
 
-- Four-clock model. From the SKILL's contract_invariants (not CLAUDE.md): "Every datum carries (T_event, T_available, T_logical) and a wall-clock origin used only for telemetry. Decision paths take time from CausalClock, never from time.time() or datetime.now()." The skill's anti-pattern list repeats it.
+- Four-clock model. "Every datum carries (T_event, T_available, T_logical) and a wall-clock origin used only for telemetry. Decision paths take time from CausalClock, never from time.time() or datetime.now()."
 
-- KnownAt[T] monotonicity. From the SKILL: "A function consuming KnownAt[T] cannot produce KnownAt[T'] with T' < T. Information does not travel backwards."
+- KnownAt[T] monotonicity. "A function consuming KnownAt[T] cannot produce KnownAt[T'] with T' < T. Information does not travel backwards."
 
-- Run identity. From the SKILL: "BLAKE3 audit DAG. Run identity is the root hash. Replays match iff root hashes match. No alternative notion of run identity is admitted." Paired with: "Schema, RNG, or canonicalisation changes must come with a replay-equivalence argument on the regression corpus."
+- Run identity. "BLAKE3 audit DAG. Run identity is the root hash. Replays match iff root hashes match. No alternative notion of run identity is admitted." Paired with: "Schema, RNG, or canonicalisation changes must come with a replay-equivalence argument on the regression corpus."
 
-- Dependencies. CLAUDE.md: substrate dependencies are "minimal by design" and "Any addition is an ADR-recorded architectural decision." Skill: "Stdlib-first. New dependencies in packages/*/pyproject.toml require an ADR proposed first", with pandas/polars/scipy/sklearn/pytorch/tensorflow imports in packages/quant_* named as review-rejected anti-patterns.
+- Dependencies. CLAUDE.md: substrate dependencies are "minimal by design" and "Any addition is an ADR-recorded architectural decision." Stdlib-first: new dependencies in packages/*/pyproject.toml require a proposed ADR, with pandas/polars/scipy/sklearn/pytorch/tensorflow imports in packages/quant_* named as review-rejected anti-patterns.
 
-- Tests. Verbatim from CLAUDE.md: "Property tests (`hypothesis`) for every kernel primitive. Every named invariant in the lab Vision documents has at least one test in this repo." Skill anti-pattern: "A public symbol added to packages/quant_*/src/ without a paired test."
+- Tests. Verbatim from CLAUDE.md: "Property tests (`hypothesis`) for every kernel primitive. Every named invariant in the lab Vision documents has at least one test in this repo." Public primitives require corresponding evidence. This requirement does not authorize creating or running tests without Omar's explicit request.
 
-- ADR-first workflow. From the SKILL: "New substrate components follow /new-substrate-component: intake → architect → ADR (proposed) → tests → implementation → validate → ADR (accepted)."
+- ADR-first workflow. New substrate components follow intake, architecture, a proposed ADR, implementation and authorized validation before ADR acceptance. Apply the explicit-request policy to any required tests.
 
-- Read first, write second. From the SKILL: "Every substrate change reads Vision/00_Substrate.md, the relevant ADRs, and the affected sub-package before any line of code is written."
+- Read first, write second. "Every substrate change reads Vision/00_Substrate.md, the relevant ADRs, and the affected sub-package before any line of code is written."
 
 - /validate-substrate gate. The command file states: "No commit, no run touching `packages/quant_*` should be considered green until this passes… Any failed step blocks downstream work. Do not commit until clean." TREAT WITH CARE: as written the command targets quant_core/quant_observability, which do not exist, so it CANNOT pass. The honest operational form of this invariant is the per-package equivalents listed under commands.
 
@@ -72,9 +72,19 @@ Shared is QuantOS Tier 0 — the substrate at the bottom of the QuantOS constell
 
 - Hook contract, from _common.py's own docstring: "Every hook must import this module. Direct sys.exit(0) without logging is forbidden (invariant I09). Use hook_log() for all structured output."
 
-- Voice, from the SKILL: English-first in code, comments and ADRs; terse doctrinal prose; "No emojis in code, ADRs, or commit messages. None. Ever."; no AI-attribution footer in any commit message; never bundle two unrelated logical units in one commit.
+- Voice: English-first in code, comments and ADRs; terse doctrinal prose; "No emojis in code, ADRs, or commit messages. None. Ever."; no AI-attribution footer in any commit message; never bundle two unrelated logical units in one commit.
 
-## Comandos de referencia
+## Retained domain procedure
+
+A public substrate or schema change identifies each consuming lab and the required mirror or compatibility updates. Record a proposed ADR before introducing a public component or dependency; acceptance follows authorized evidence and independent review. Version schema changes and supply the replay-equivalence argument when changing schema, RNG or canonical encoding.
+
+Use current package ownership, including `quant_substrate`; do not recreate absent `quant_core` or `quant_observability` packages to satisfy legacy navigation. Retain the single source, clocks, causal-information and capability contracts.
+
+## Validation and publication
+
+The commands below are references, not automatic authorization. Create, change or run tests only when Omar explicitly requests them. Record permitted checks and independent review through Constellation; any test-dependent gate without authorized evidence remains unmet. Domain hooks are additional controls, not proof that the outer Constellation commit ran the required checks. No startup, documentation or skill workflow publishes automatically.
+
+## Reference commands
 
 - uv sync --frozen || uv sync    # install (test.yml and import-linter.yml; lint.yml has NO install step)
 

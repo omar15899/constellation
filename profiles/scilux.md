@@ -1,75 +1,136 @@
 # Scilux
 
-Raíz: `/Users/omarkhalil/GitHub/Scilux`. Las rutas de este perfil se interpretan desde esa raíz.
-Las reglas de dominio se conservan; versiones y comandos se contrastan con los archivos actuales.
-La coordinación y publicación usan el único `constellation.py`.
+Raíz: `/Users/omarkhalil/GitHub/Scilux`. Las rutas de dominio siguientes se
+interpretan desde esa raíz. Scilux produce guiones educativos, storyboards TikZ
+y documentos intelectuales. Conserva sus contratos pedagógicos y formatos;
+Constellation posee los ocho roles nativos, las skills compartidas y el flujo de
+alcance, comprobación, revisión y publicación.
 
-## Identidad
+## Responsabilidades
 
-Scilux (scientia + lux) is a multi-agent educational-content engine: one natural-language command in, a production-quality didactic script plus a frame-by-frame TikZ storyboard out, targeted at Manim Community Edition backends and bilingual (EN/ES) high-school-to-undergraduate audiences. It is pure agent infrastructure — 65 Markdown agent specs, 15 skill folders, 20 Python hook scripts (17 of them wired) and a YAML config backbone under config/ — with no application source tree, no package and no build. It runs two pipelines: the 10-phase lesson pipeline (P0 Setup through P9 Assembly & delivery) and an intellectual writing pipeline (notes, essays, formalizations, diagrams), both entered through the semantic-kernel agent. In the constellation it sits in the `adjacent` perimeter with tier=null: it is not bound by QuantOS tier discipline, imports nothing from Shared, and is governed only by its own CLAUDE.md and the user-level contract.
+- El coordinador aclara el encargo, público, fuentes y entregables; registra
+  rutas exactas y los checks pertinentes antes de editar.
+- Investigación y extracción usan `ecosystem_researcher`; obligaciones formales,
+  `ecosystem_mathematician` y, cuando procede, `ecosystem_counterexample`.
+- Redacción y pedagogía usan `ecosystem_editor`; código, TikZ y generación,
+  `ecosystem_coder`. La revisión independiente usa `ecosystem_reviewer`,
+  `ecosystem_verifier` o `ecosystem_security_reviewer` según el riesgo.
+- Los nombres de etapa y antiguos especialistas de skills y registros históricos
+  describen responsabilidades del dominio. No son tipos de subagente instalados.
+  Ejecuta esas responsabilidades con los ocho roles cargados y el contrato común.
+  La antigua secuencia `semantic-kernel`/orchestrator/playbook ya no es una
+  condición de despacho ni un segundo runtime. Esta regla de integración rige
+  sobre los registros históricos; los métodos actuales no despachan ese sistema.
+- Modelos, esfuerzo y permisos se heredan del cliente. Las tablas históricas de
+  modelos no son configuración activa. Sólo el coordinador publica mediante
+  `constellation.py`; no existe un agente local `git-steward`.
+
+## Maintained methods
+
+Use [scilux-lessons](../skills/Scilux/scilux-lessons/SKILL.md) for lesson creation, revision, sources, storyboards and delivery; use [scilux-documents](../skills/Scilux/scilux-documents/SKILL.md) for governed notes, essays and figures. Natural-language requests do not require a routing command. The fifteen former selectors are consolidated into these two methods.
 
 ## Fuentes del dominio
 
-- CLAUDE.md
+Lee `CLAUDE.md`, `config/context-registry.yaml`, `config/style-canon.yaml`,
+`config/document-schema-registry.yaml` y las plantillas de `docs/templates/`.
+Las fases P0–P9, artefactos, contratos de entrada/salida y calidad de la enseñanza
+siguen vigentes. `config/agent-registry.yaml`, `config/routing-policy.yaml` y los
+esquemas de provenance/playbook conservan vocabulario y evidencia histórica;
+no constituyen un catálogo de agentes ejecutables. Los documentos históricos
+de arquitectura se interpretan con esta distinción.
 
-- config/context-registry.yaml
+Scilux está en el perímetro `adjacent`, sin tier QuantOS. No importa Shared.
+`reference/` es de consulta; `workspace/` es efímero. No se publican sus archivos.
+Conserva el servidor MCP, el estilo de salida, las fuentes y los datos locales.
+La recuperación de OmarOS exige evidencia de disponibilidad; una inferencia
+propia nunca se presenta como contenido recuperado del vault. `reference/omaros`
+conserva su destino histórico, igual que `SCILUX_OMAROS_PATH` en el MCP. Cambiar
+esa fuente de datos requiere otro encargo. Comprueba fuentes externas ausentes, como la
+ruta histórica de Reflexiones, antes de afirmar acceso.
 
-- docs/architecture.md
+## Comprobaciones obligatorias según el entregable
 
-- docs/audit/2026-04-15-orchestration-playbook-refactor.md
+Create, change or run tests only when Omar explicitly requests them. The commands below identify existing artifact gates; they are not blanket authorization for tests or behavioral probes. If a required gate needs unauthorized testing, report it as unmet rather than bypassing it.
 
-- docs/governance/playbook.schema.json
+Declara los checks aplicables en `required_checks` al abrir el encargo. Ejecuta
+cada comprobación mediante `constellation.py check TASK ID -- COMANDO` desde
+esta raíz. Fija `SCILUX_ROOT` a la raíz real y `SCILUX_LESSON_ID` al identificador
+exacto de la lección; no uses la inferencia por archivo más reciente.
 
-- docs/governance/agent-response.schema.json
+| Momento o artefacto | Comando del check |
+| --- | --- |
+| Antes de P0: brief, fuentes y registros | `env SCILUX_LESSON_ID=LESSON python3 .claude/hooks/start_gate.py` |
+| Antes de trabajo intelectual | `python3 .claude/hooks/intellectual_start_gate.py` |
+| Recuperación necesaria de OmarOS | `python3 .claude/hooks/mcp_health_probe.py --quiet` |
+| P1: fuentes normalizadas | `env SCILUX_LESSON_ID=LESSON python3 .claude/hooks/ingestion_gate.py` |
+| P3: notación y preámbulo | `env SCILUX_LESSON_ID=LESSON python3 .claude/hooks/notation_gate.py` |
+| Guion ensamblado: duración | `env SCILUX_LESSON_ID=LESSON python3 .claude/hooks/timing_gate.py` |
+| Frames TikZ de una lección | `env SCILUX_LESSON_ID=LESSON python3 .claude/hooks/tikz_compile_gate.py` |
+| Documento gobernado Markdown | `env SCILUX_HOOK_TASK_ID=TASK python3 .claude/hooks/knowledge_schema_gate.py` |
+| TeX/TikZ intelectual | `python3 .claude/hooks/intellectual_compile_gate.py --task-id TASK --require-manifest` |
+| Antes de P9 o exportar | `env SCILUX_LESSON_ID=LESSON python3 .claude/hooks/release_gate.py` |
+| Infrastructure tests, only when explicitly requested | `python3 tests/run_all.py` |
 
-- config/agent-registry.yaml
+La publicación añade una comprobación distinta sobre el árbol candidato:
+la cadena Git preservada ejecuta `.claude/git-hooks/pre-commit`, que llama a
+`pre_commit_gate.py` con el `GIT_INDEX_FILE` aislado de Constellation. Lee los
+blobs de ese índice para validar frontmatter de escenas y frames; no sustituye
+esos bytes por los del worktree ni modifica el índice ajeno. Las eliminaciones
+no requieren contenido inexistente. El guard rechaza contenido no legible o
+malformado. La política central excluye además `workspace/**` y `reference/**`
+de la publicación, incluidos los commits salientes.
 
-- config/skill-registry.yaml
+Esta comprobación se ejecuta durante `constellation.py commit TASK MENSAJE`.
+Una ejecución manual del script sin el índice candidato no demuestra que se
+haya validado el árbol que se va a publicar. Los checks de fase de la tabla y
+la revisión independiente siguen siendo obligatorios para sus entregables.
 
-- config/hook-registry.yaml
+Para Markdown/TeX crea primero el manifiesto exacto
+`workspace/intellectual/tasks/TASK/hook_targets.txt`. Comprueba que enumera
+todos los entregables actuales y que el resultado del validador cubre esos
+archivos. El validador Markdown conserva un fallback histórico por mtime;
+un retorno cero sin targets no demuestra cobertura. No uses ese fallback como
+evidencia del encargo. La comprobación MCP de inicio es informativa; el check
+MCP separado debe pasar cuando el resultado dependa de recuperación.
 
-- config/routing-policy.yaml
+Los validadores se conservan como checks explícitos. Los antiguos selectores
+`SubagentStart`/`SubagentStop` por especialistas ausentes se retiran: terminar un
+rol genérico no identifica una fase o un artefacto. Los hooks nativos de registro
+y guardia de shell conservan sus responsabilidades. El motor común controla
+ediciones y publicación; los hooks no constituyen un sandbox.
 
-- config/style-canon.yaml
+## Calidad y entrega
 
-- docs/operational-manual.md
+Cada fase necesita evidencia de entrada y salida. Cada objetivo de aprendizaje
+(LO) debe quedar cubierto por al menos un beat de definición, ejemplo o
+afirmación. Cada concepción errónea debe quedar abordada por al menos un beat
+de contraejemplo o puente. Cada afirmación factual debe tener su fuente en
+`sources.json`. La revisión debe comprobar estas tres obligaciones para todos
+los elementos, además de comprobar la utilidad de cada beat.
 
-## Invariantes
+Cada beat de definición contiene las tres capas: estructura formal, intuición
+rigurosa y visión intelectual. Preserva notación, honestidad visual y paridad
+bilingüe. No hay frames sin narración, texto, movimiento y fuente. Cada frame
+TikZ debe compilar antes de su commit. Compila también los demás artefactos
+TeX antes de entregarlos y revisa visualmente el resultado.
 
-- I15 (constitutional). CLAUDE.md states it in two parts of different strength, and the difference matters: the binding clause is "Every user-originated Agent dispatch to a top-level orchestrator must carry a `semantic_kernel_run_id`", followed by the broader doctrine "No skill, orchestrator, or agent may receive raw user language without first passing through `semantic-kernel`." Hook enforcement is the NARROW version only: .claude/hooks/semantic_bypass_guard.py (PreToolUse: Agent) checks the run_id marker, its format, and its freshness ONLY when subagent_type is in GATED = {script-orchestrator, intellectual-orchestrator, input-classifier, review-orchestrator}. Dispatches to any of the other 61 agents are not I15-checked. Do not write "every request is hook-forced through semantic-kernel" — the doctrine says it, the hook does not enforce it.
+P9 exige un informe independiente con veredicto PASS. Una excepción debe quedar
+explícita en el encargo y en el informe; un waiver histórico no es aprobación
+nueva. La revisión comprueba matemáticas, pedagogía, accesibilidad, referencias,
+coherencia visual y cobertura de los validadores. Los avisos de estilo son
+informativos; no sustituyen esa lectura.
 
-- I16: every root-level Agent dispatch to a non-infrastructure subagent must be authorised by an active playbook — the prompt must carry `playbook_id`, `playbook_step` and `lesson_id`, the step must exist in workspace/<lesson_id>/playbook.yaml, and its `subagent_type` must match. The exempt set is 8 names, defined as EXEMPT_FROM_I16 in .claude/hooks/lib/playbook.py: semantic-kernel, script-orchestrator, review-orchestrator, intellectual-orchestrator, input-classifier, _probe, git-steward, log-writer. Enforced by .claude/hooks/playbook_guard.py (PreToolUse: Agent) — which is wired in settings.json but MISSING from config/hook-registry.yaml.
+Realiza commits por unidades lógicas con rutas exactas y mensajes naturales,
+sin atribución de IA. El registro de evidencia y el SHA remoto verificado
+pertenecen al flujo común. Las metas históricas de número de commits no obligan
+a fabricar actividad.
 
-- I3 (verbatim): "Every blocking gate fires. No `--skip` argument exists." Operating principle 12: "Never skip a gate. Every invariant has a verifier. No `--skip` flags exist."
+## Lesson style and artifact conventions
 
-- I9 (verbatim): "Every git commit stages specific named files. No wildcards." git-steward does all staging and committing; pre_commit_gate.py verifies (it also blocks any staged path under workspace/ or reference/).
+The master lesson script is Markdown at `lessons/LESSON/script/full_script.md`. Frame sheets use `storyboard/frames/frame_NNNN.md`, with corresponding `storyboard/tikz/frame_NNNN.tex`; downstream animation targets Manim Community Edition. Preserve the brief's requested languages and duration; do not introduce a second default or silently change the audience. The lesson skill records the P0–P9 artifact dependencies.
 
-- I11: "review_report.md must be PASS before Phase 9 runs" — release_gate.py (SubagentStop: review-orchestrator) blocks otherwise, and the /export skill independently refuses.
+For lessons, retain precise speakable narration and the three-layer definition standard. Avoid “clearly”, “obviously”, “trivially” and “it is easy to see” as substitutes for explanation. Every beat advances a learning objective or addresses a misconception. Hooks begin with a concrete, mathematically honest tension and a precise learning promise.
 
-- I10: "Every commit is recorded in logs/${lesson_id}/git_log.md" — post_commit_tracer.py at PostToolUse: Bash(git commit*).
+Analogies map structure, state `breaks_when`, and follow the style canon's preference for physics, geometry and spatial experience rather than cooking, finance, sports or politics. Preserve the lesson convention of at most one strong analogy per two minutes; originality does not excuse distortion. Visual elements must support the beat, use consistent semantic colours and remain readable at the intended 1080p presentation size. Apply the current canon when a brief intentionally changes a presentation convention.
 
-- I12 (verbatim): "Agents write only to their declared paths. reference/ is read-only." CLAUDE.md assigns this to path_guard.py at PreToolUse: Write|Edit, but path_guard.py is NOT wired in settings.json — so I12 has no live hook verifier. The sandbox denyWrite on reference/ and pre_commit_gate.py's FORBIDDEN_PATH_PREFIXES are the only live enforcement.
-
-- I1/I2: no phase is entered without a verified entry contract and no phase advances without a verified exit contract. CLAUDE.md assigns the verifier to script-orchestrator — an AGENT, not a hook, so this is convention-enforced, not gate-enforced. config/context-registry.yaml holds the contracts and is marked "READ FIRST" in the file-layout section.
-
-- I14: the intellectual pipeline entry gate must fire before intellectual-orchestrator dispatches — intellectual_start_gate.py, wired at `SubagentStart: intellectual-orchestrator` (as is start_gate.py for script-orchestrator). No evidence in logs/ that either has fired; treat this enforcement as unverified.
-
-- I6: every definition beat carries all three layers — formal, rigorous intuition, personal intellectual vision. CLAUDE.md: "A lesson that delivers only layer 1 is a catalogue, not a lesson." Enforced by scene-writer + pedagogical-validator (agents, not hooks).
-
-- I7: "Every TikZ frame compiles before it is committed" — tikz_compile_gate.py at SubagentStop: tikz-frame-renderer, which compiles every frame in the sandbox.
-
-- I13: "Every governed document has complete frontmatter before delivery" — knowledge_schema_gate.py at SubagentStop: markdown-knowledge-agent checks for complete VALID frontmatter.
-
-- Commit discipline: one of exactly 15 typed prefixes (brief:/ingest:/pedagogy:/knowledge:/blueprint:/scene:/script:/storyboard:/tikz:/validate:/fix:/config:/agent:/hook:/infra:), subject <= 50 chars, target 30-40 granular commits per lesson, includeCoAuthoredBy=false.
-
-- Style canon (verbatim): the words "clearly," "obviously," "trivially," "it is easy to see" are forbidden in narration — "These words tell a struggling student that they are alone." Enforced NON-BLOCKINGLY by style_monitor.py and intellectual_style_monitor.py (they log to style_warnings.md / style_violations.md; they do not halt).
-
-- config/context-registry.yaml is the single source of paths. Its header states: "Every agent resolves all paths from this file. No hardcoded paths in agent specs."
-
-- workspace/ is ephemeral and never committed (gitignored, and blocked by pre_commit_gate.py); lessons/ holds the committed artefacts.
-
-## Comandos de referencia
-
-- python3 tests/run_all.py
-
-- python3 tests/run_all.py -v
+`inputs/briefs/_template.yaml` and `lessons/_template/` own scaffolding. Do not overwrite an existing lesson. Workspace and reference data remain private; lesson reviews and reports contain curated evidence, not raw conversation exports. The start gate currently does not count image-only inputs as a sufficient source set: report this prerequisite honestly rather than inventing a source.

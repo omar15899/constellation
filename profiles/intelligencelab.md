@@ -24,7 +24,7 @@ IntelligenceLab is the QuantOS Tier-2 counterfactual / causal-inference lab, per
 
 - .claude/registry/peers.yaml
 
-- .claude/skills/causal-inference-doctrine/SKILL.md
+- docs/vault/lab_vision/00_Doctrine.md
 
 - .importlinter
 
@@ -60,7 +60,7 @@ IntelligenceLab is the QuantOS Tier-2 counterfactual / causal-inference lab, per
 
 - Tier-2 import contract (.importlinter, contract `no-higher-or-sibling-tier-imports`): "quant_intel does not import higher-tier or sibling QuantOS labs" — forbidden modules are quant_news, quant_research_core, quant_research_runner, quant_research_report, quant_research, quant_insights, quant_portfolio_core, quant_portfolio_analytics, quant_portfolio_optimizer, quant_portfolio, quant_risk_core, quant_risk_limits, quant_risk_metrics, quant_risk_monitor, quant_risk, quant_exec_core, quant_exec_broker, quant_exec_ledger, quant_exec_pretrade, strategy_orchestration_lab. Enforced by `uv run lint-imports` in a hard-failing CI job — this is the ONLY genuinely hard gate in CI besides ruff.
 
-- I-CI-1 (causal-inference-doctrine skill): "Assumptions are declared, not implicit. Every counterfactual carries a typed list of assumptions; an empty list is a doctrine violation."
+- I-CI-1 (causal-inference doctrine): "Assumptions are declared, not implicit. Every counterfactual carries a typed list of assumptions; an empty list is a doctrine violation."
 
 - I-CI-2: "Identifiability before estimation. No estimator runs without an Estimand record whose verdict is identifiable or identifiable-on-subregion."
 
@@ -92,7 +92,17 @@ IntelligenceLab is the QuantOS Tier-2 counterfactual / causal-inference lab, per
 
 - Determinism contract in packages/quant_intel/src/quant_intel/causal.py: "same column data + same column order (we sort covariate names) => identical audit_root.digest".
 
-## Comandos de referencia
+## Retained domain procedure
+
+Match sensitivity analysis to the identification assumptions: E-value and partial-R² for an applicable binary backdoor design; Rosenbaum bounds for matched designs; partial-R² for linear adjustment; plausibly-exogenous exclusion analysis for IV; pre-trend and anticipation checks for DiD; partial-identification bounds when identification fails. Shared-noise twin-network coupling and backend refutation procedures require an applicable model. A numerical estimate does not establish identification.
+
+Use `docs/vault/decisions/ADR-0019-counterfactual-scm-dowhy-pyro.md` and `ADR-0027-intelligence-pipeline.md` with the existing I-CI-1–8 obligations and enforcement caveats.
+
+## Validation and publication
+
+The commands below are references, not automatic authorization. Create, change or run tests only when Omar explicitly requests them. Record permitted checks and independent review through Constellation; any test-dependent gate without authorized evidence remains unmet. Domain hooks are additional controls, not proof that the outer Constellation commit ran the required checks. No startup, documentation or skill workflow publishes automatically.
+
+## Reference commands
 
 - uv sync --frozen || uv sync   # install (.github/workflows/test.yml, import-linter.yml)
 

@@ -1,60 +1,84 @@
-# Flujo de ingeniería
+# Engineering workflow
 
-## Diseñar el cambio
+## Design the change
 
-Parte de entradas, resultados, errores y efectos observables. Sigue los
-consumidores existentes y las rutas con las que se usa el producto. Identifica
-contratos de compatibilidad, formatos históricos, unidades, orden y propiedad de
-recursos cuando afecten al resultado. Propón un diseño directo y añade una
-abstracción si una variación requerida o una responsabilidad compartida la justifica.
-Usa nombres del dominio, tipos claros y control de flujo fácil de seguir.
-En operaciones con estado, verifica que fallos parciales y reintentos conserven
-las invariantes. Para afirmar una mejora de rendimiento, mide la carga, el
-entorno y la base de comparación de forma reproducible.
+Start from inputs, outputs, errors, and observable effects. Follow existing
+callers and normal entry points. Identify compatibility promises, stored formats,
+units, ordering, and resource ownership where they affect the result.
 
-## Documentar decisiones y datos
+Choose a design a colleague can follow without reconstructing a framework.
+Name concepts in the language of the domain. Keep related operations together,
+use focused functions, and make branches and data transformations explicit.
+Prefer an ordinary loop or named intermediate value when a compact expression
+would hide intent. Reuse the component that already owns the behavior. Introduce
+abstractions, dependencies, and compatibility layers only for a demonstrated
+requirement; avoid speculative extension points.
 
-Usa [Google Style](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings)
-en Python. Describe el propósito de los módulos y clases relevantes. Las
-interfaces públicas y funciones de tamaño o lógica no trivial llevan una
-docstring con un resumen y el contexto necesario para usarlas. Aplica
-`Args:`, `Returns:`, `Yields:`, `Raises:` o `Attributes:` según corresponda.
-Explica semántica que la firma no expresa, como precondiciones, efectos, errores
-de contrato, unidades, orden, mutación y duración de recursos. Si cuesta
-interpretar los datos, incluye un ejemplo breve, sintético y comprobado de la
-estructura real. Junto al código, comenta motivos, invariantes y decisiones que
-serían difíciles de deducir. Los tests autoexplicativos pueden prescindir de
-docstrings que repitan sus nombres.
+Make invalid inputs and failure behavior clear at the boundary that owns them.
+Use useful types and specific errors. Explain relevant state transitions,
+mutation, resource lifetimes, cancellation, retries, and concurrency. Handle
+partial failure and cleanup without silently replacing errors with success.
+Measure a claimed performance improvement only when the user has authorized
+the required measurement; otherwise leave the claim unmade.
 
-## Elegir pocas pruebas
+## Document contracts and decisions
 
-1. Reutiliza las comprobaciones que cubren el comportamiento por sus entradas
-   normales. Selecciona escenarios que puedan distinguir la solución de una
-   implementación defectuosa. Comprueba tanto el caso permitido como el rechazo
-   al modificar un control.
-2. Añade una prueba si el usuario la pidió, el proyecto la exige o la evidencia
-   existente deja una regresión o un riesgo concreto sin cubrir. Para una
-   regresión automatizable sin cobertura, demuestra que la prueba falla con el
-   defecto y pasa con la corrección cuando sea viable.
-3. Da a cada prueba un nombre de escenario y resultado. Prepara datos pequeños,
-   ejecuta la conducta y afirma el resultado visible. Controla reloj, azar y
-   servicios externos cuando puedan volverla inestable. Agrupa variantes de la
-   misma regla si los casos siguen siendo fáciles de distinguir.
-4. Conserva la suite existente. Repite o amplía la comprobación por un cambio,
-   un fallo o una duda concreta. Registra qué se ejecutó y cualquier límite real.
+Use [Google Style](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings)
+for Python. Describe the purpose of relevant modules and classes. Document public
+APIs and nontrivial functions with the context a caller or maintainer needs.
+Use `Args:`, `Returns:`, `Yields:`, `Raises:`, and `Attributes:` as appropriate,
+without filling sections that repeat the signature.
 
-En código numérico fija dominio y precisión. Busca extremos válidos,
-desbordamientos intermedios y cancelación cuando puedan romper el contrato.
-Usa una referencia independiente o una cota pertinente. Corrige el cálculo o
-declara la obligación pendiente si el dominio requerido queda sin cubrir.
+Explain semantics the types do not express: preconditions, effects, error
+contracts, units, ordering, mutation, and resource lifetime. Put the reason for
+an otherwise surprising decision beside the code. Comments should explain
+invariants or tradeoffs; they should not narrate ordinary statements. Use a
+small, clearly labeled example when a data structure is difficult to interpret.
+In other languages, follow the project's idiomatic documentation format.
 
-## Revisar y cerrar
+## Inspect without assuming permission to test
 
-Usa el [protocolo común](../../../../README.md) y la política
-del proyecto para registro, revisión, resolución de hallazgos y publicación.
-Para trabajos sustantivos, conserva decisiones, evidencia y pendientes con el
-[progreso del ciclo elegido](../../../../README.md). Protege los
-datos privados y el trabajo ajeno durante la integración. Comprueba que cada
-requisito tenga artefactos vigentes, evidencia pertinente, autores reales y la
-revisión independiente aplicable. Al terminar, comunica el resultado, las
-comprobaciones ejecutadas y las obligaciones pendientes que afecten al encargo.
+Do not add, modify, or run tests unless the user explicitly requests them.
+Preserve existing test files. A project's usual test command, a desire for
+confidence, or a reviewer's request does not override this user preference.
+Do not disguise a test suite, behavioral reproduction, or regression experiment
+as a static check.
+
+Read the diff and trace affected callers, invariants, and error paths. Use
+relevant non-test static checks when available: syntax parsing, schema
+validation, type checking, or linting. Record which checks actually ran and what
+they establish. Static evidence and review do not establish runtime correctness;
+state untested behavior and any unresolved consequence plainly.
+
+If the user explicitly requests tests, keep them proportionate to that request.
+Prefer a few deterministic scenarios through normal entry points with readable
+inputs and observable outcomes. Reuse existing meaningful coverage before
+adding new cases. Do not widen the campaign without a concrete reason.
+
+For numerical code, reason about the declared domain, precision, overflow,
+cancellation, and approximation assumptions. Use an appropriate reference or
+bound for the mathematical claim. Distinguish proof, static inspection, and
+executed numerical evidence.
+
+## Coordinate independent review and delivery
+
+Use the [common protocol](../../../../README.md) and project policy for task
+records, review, finding resolution, and authorized publication. Keep meaningful
+decisions, evidence, and outstanding work in the existing task ledger.
+
+Delegate independent tasks with exclusive paths and a clear result. Use native
+agents, inherit the selected model and reasoning effort, and respect the
+client's actual capacity. Register native identities before edits. Authors
+preserve others' changes and leave integration and publication to the
+coordinator.
+
+Correctness, readability, and security reviews may proceed concurrently on the
+same completed candidate. Reviewers inspect the artifact itself and quote its
+current fingerprint. Feedback obtained during implementation is advisory; a
+later edit invalidates approval. A finding's resolution needs a verifier who
+neither authored the change nor discovered that finding.
+
+Protect private data, foreign edits, and the existing index during integration.
+Check that each requirement has current artifacts and appropriate evidence.
+Describe the delivered result, checks actually performed, unresolved findings,
+and material limits without promising perfection or implying unperformed tests.

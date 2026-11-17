@@ -181,8 +181,13 @@
       "profile": "profiles/scilux.md",
       "management": "native",
       "git_hooks_before": "",
-      "preserve_git_hook_chain": null,
-      "private_patterns": []
+      "preserve_git_hook_chain": "/Users/omarkhalil/GitHub/Scilux/.claude/git-hooks",
+      "private_patterns": [
+        "reference",
+        "reference/**",
+        "workspace",
+        "workspace/**"
+      ]
     },
     {
       "id": "shared",

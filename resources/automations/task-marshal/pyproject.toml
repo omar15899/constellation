@@ -1,0 +1,17 @@
+# DEPRECATED as a standalone project.
+#
+# task-marshal uses the shared vault venv at ~/.venvs/omaros/
+# declared by /Users/omarkhalil/OmarOS/pyproject.toml.
+# UV_PROJECT_ENVIRONMENT=/Users/omarkhalil/.venvs/omaros is set in .claude/settings.json.
+#
+# Run scripts with:
+#   /Users/omarkhalil/.venvs/omaros/bin/python /Users/omarkhalil/GitHub/Constellation/resources/automations/task-marshal/scripts/<name>.py
+#
+# This file is kept only so tooling doesn't treat the directory as a sub-project.
+
+[project]
+name = "task-marshal-stub"
+version = "0.0.0"
+description = "Stub — real deps live in /pyproject.toml at OmarOS root."
+requires-python = ">=3.12"
+dependencies = []

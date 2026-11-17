@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Validate an educational-video pipeline folder.
 
-Checks the 13-file deliverable produced by scaffold_pipeline.py + the agent:
+Checks an existing full 13-file deliverable assembled from the package templates.
+This format is optional; a shorter requested deliverable does not need this validator.
 
   1. Every required file exists.
   2. Every file carries a YAML frontmatter block with the expected `note_type`.

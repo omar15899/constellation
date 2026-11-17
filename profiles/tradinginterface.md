@@ -46,19 +46,19 @@ tradinginterface (product name: Helix) is the UI tier of QuantOS — a desktop-f
 
 - No chart library, ever. CLAUDE.md:24 — 'Hand-coded SVG/canvas kit (`src/charts/`) — no chart library, intentional'; CLAUDE.md:167 — 'No chart library, ever.'
 
-- Barrel-free imports. CLAUDE.md:75-80 — 'Imports are **direct and layer-addressed**. The migration-era compatibility barrels (`src/shell.tsx`, `src/workspaceEngine.tsx`, `src/app.tsx`) are **gone** … Do not reintroduce a barrel; `scripts/ts_nocheck_ratchet.mjs` (run in `npm run typecheck`) fails the build if any file reintroduces `@ts-nocheck`.' Verified: 0 files in src/ contain @ts-nocheck.
+- Barrel-free imports. CLAUDE.md:75-80 — 'Imports are **direct and layer-addressed**. The migration-era compatibility barrels (`src/shell.tsx`, `src/workspaceEngine.tsx`, `src/app.tsx`) are **gone** … Do not reintroduce a barrel; `scripts/ts_nocheck_ratchet.mjs` (run in `npm run typecheck`) fails the build if any file reintroduces `@ts-nocheck`.'
 
 - Backend layer direction. CLAUDE.md:96 — 'Three layers: `routers/` → `services/` → `bridges/`; a router never imports another router.' Frontend layer direction is stated in docs/ARCHITECTURE.md:39 (NOT CLAUDE.md) — '`shell → ui · lib`; nothing imports `app`. Layers below never reach up.'
 
-- No window globals. CLAUDE.md:85 — 'The former `window.HX` / `window.HXL` / `window.SlotCtx` globals no longer exist.' Registration goes through the typed module singletons in src/engine/registry.ts via the HX / HXL shims.
+- Use the typed module exports in `src/engine/registry.ts` for HX/HXL registration. Compatibility `window.HX/WIDGETS/LAYOUTS/HXL` aliases still exist in the current file; their presence is not an API to extend or a reason to reintroduce upward imports.
 
 - No Redux, no TanStack Query (CLAUDE.md:168, ADR-LOCAL-0002); server state goes through src/lib/store.ts polled stores; Context is confined to the shell/engine.
 
-- Never skip hooks. CLAUDE.md:179 — 'Never skip hooks (`--no-verify`). `playwright_gate.py` runs the `@smoke` Playwright tier on any commit touching `src/`, `index.html`, or `vite.config*`.' NOTE: this gate is currently inert because of the stale TRADING_ROOT (see gotchas) — the rule stands as doctrine, the enforcement does not.
+- Never bypass publication guards. The retained `playwright_gate.py` describes the direct Git-command UI gate; configuration alone does not establish execution, and the outer Constellation commit requires its own declared checks. Tests run only when explicitly requested.
 
 - Granular commits, one logical change each (CLAUDE.md:175 'Adding a pane ≠ adding a tooltip ≠ fixing a CSS variable'); semantic natural messages; CLAUDE.md:181 — 'No AI attribution. No `Co-authored-by`.'
 
-- Never stage secrets. .claude/hooks/pre_commit_gate.py blocks any staged path containing .env, .env.local, .env.production, credentials.json, secrets/, .ssh/, id_rsa, id_ed25519, .pem, .key, or .DS_Store (exit 2 + JSON block decision). Doctrine holds; enforcement is currently broken by the stale TRADING_ROOT.
+- Never publish secrets. Retain the project's secret/path checks and Constellation's candidate/outgoing-content controls; a configured hook is not evidence that the current candidate was checked.
 
 - CSS is desktop-only. CLAUDE.md:198 — 'CSS: desktop-only. No media queries, no mobile breakpoints.' CLAUDE.md:199 — 'Numbers: always right-aligned in tables, always IBM Plex Mono.' IBM Plex woff2 is self-hosted (src/styles/fonts.css, src/assets/fonts/) — no Google Fonts CDN.
 
@@ -68,7 +68,17 @@ tradinginterface (product name: Helix) is the UI tier of QuantOS — a desktop-f
 
 - Do not contradict docs/architecture/AGENTS.md, the QuantOS governance binding already in the repo: no client-side authority over execution; staleness visible (`as_of` + freshness on every mirrored panel); failure modes are first-class UI indicators; density floor 9-13px text / 1px hairlines / 4px grid; deterministic rendering (same backend snapshot -> byte-identical UI); no business logic in the client.
 
-## Comandos de referencia
+## Maintained interface method
+
+Use [component-builder](../skills/tradinginterface/component-builder/SKILL.md) for current pane, chart, table and workspace work. It consolidates the former artisan/design/backend recipes without creating another frontend architecture. `src/ui/Pane.tsx` uses `sources: string[]`; inside ModularGrid, slot chrome owns the header while Pane publishes source/subtitle metadata. Use actual response provenance, units and freshness rather than hardcoded “live” labels.
+
+Reuse `createPolledStore`/`usePolled` in `src/lib/store.ts`, preserving shared polling, single-flight fetches, invalidation order, last-good-data semantics and subscription cleanup. Separate live server state, persisted workspace/user state and ephemeral view state. The documented Cognito deployment is a trusted shared workspace, not per-user account isolation; authentication and application authorization are different contracts.
+
+## Validation policy
+
+Create, change or run tests only when Omar explicitly requests them. The commands below are references, not automatic authorization. Record permitted checks and independent review through Constellation; an unmet test-dependent gate remains unmet. Never infer runtime behavior, broker readiness or production compatibility from static evidence.
+
+## Reference commands
 
 - npm ci
 

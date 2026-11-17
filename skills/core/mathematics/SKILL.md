@@ -30,13 +30,14 @@ externos. Usa cálculo simbólico, numérico o formal para resolver incertidumbr
 concretas y conserva entradas y condiciones reproducibles. Una observación
 numérica no sustituye una demostración.
 
-Cuando la entrega sustantiva requiera evidencia persistente, usa el
-[protocolo común](../../../README.md) para relacionar
-requisitos, artefactos, autores reales, comprobaciones y revisión. El portátil
-admite trabajo sin Git; una modificación Git ordinaria conserva el contrato
-receptor. No dupliques ciclos por combinar skills. Si la publicación depende de
-una prueba, enlaza expresamente su evidencia vigente con la integración Git.
-Materializa resultados intencionales, nunca transcripciones.
+Para modificar archivos, usa el [protocolo común](../../../README.md) del
+proyecto: relaciona requisitos, artefactos, autores reales, comprobaciones y
+revisión en el mismo encargo. Una entrega local usa `mode: "local"`; publicar
+requiere además la autorización y las puertas Git del receptor. No dupliques
+registros por combinar skills. Si la publicación depende de una demostración,
+incorpora su argumento revisado y sus límites a la evidencia del encargo.
+Las consultas se resuelven directamente; guarda solo resultados solicitados,
+nunca transcripciones.
 
 Combina `coding`, `writter` o una skill de formato disponible cuando el resultado
 requiera implementación, elaboración editorial o archivos con ese formato. Un
@@ -45,6 +46,6 @@ perfil `mathematics` no acredita su ejecución ni sustituye las otras revisiones
 
 Distingue prueba informal revisada, prueba formal ejecutada, evidencia
 experimental, resultado condicional, refutación y cuestión abierta. Una
-obligación esencial pendiente impide declarar `proved`. Entrega resultados
+obligación esencial pendiente impide declarar demostrada la afirmación. Entrega resultados
 parciales con sus hipótesis, el impedimento y la evidencia necesaria para
 reanudar. La puerta verifica trazabilidad y vigencia, no verdad matemática.

@@ -24,7 +24,7 @@ RiskLab is the QuantOS Tier-3 risk-certification lab and the mandatory gate betw
 
 - .claude/registry/peers.yaml
 
-- .claude/skills/risk-invariant-doctrine/SKILL.md
+- /Users/omarkhalil/OmarOS/05_Projects/QuantOS/Labs/RiskLab/Vision/00_Doctrine.md
 
 - .importlinter
 
@@ -56,7 +56,7 @@ RiskLab is the QuantOS Tier-3 risk-certification lab and the mandatory gate betw
 
 - Substrate is never duplicated. CLAUDE.md: "Per [[ADR-0020]] and [[ADR-0031]] the substrate is **never duplicated** in this repo; it is imported from `Shared` via path dependency during local development."
 
-- The risk-invariant-doctrine skill declares TEN invariants (I1..I10), not eight. A single FAIL on the ENFORCEMENT subset — I1, I3, I4, I6, I10 — is BLOCKING: the artefact does not leave RiskLab and the orchestrator routes the failure back to risk-architect.
+- The retained risk doctrine has ten invariants (I1..I10). A single FAIL on the ENFORCEMENT subset — I1, I3, I4, I6, I10 — is BLOCKING: the artefact does not leave RiskLab. The native coordinator assigns the failure to an author applying this profile and the canonical risk doctrine, then commissions independent verification before publication.
 
 - I1-Gate: for every BacktestRun that is order-proposal-eligible there must exist a RiskReport with cert.run_id = run.id, recommendation != block, age <= MAX_RISK_REPORT_AGE, cert.limits_version = run.limits_version and cert.dataset_version = run.dataset_version. (policy_linkage RISK_POLICY R5, R6)
 
@@ -86,7 +86,17 @@ RiskLab is the QuantOS Tier-3 risk-certification lab and the mandatory gate betw
 
 - The pre-commit gate is not advisory (with two caveats). pre_commit_gate.py fires on PreToolUse Bash(git commit*); if any staged path starts with packages/ it runs `uv run mypy packages/` then `uv run pytest packages/ -x --tb=short -q -m "not slow"` from the lab root and emits {"decision":"block"} + exit 2 on failure. Caveat 1: it skips entirely when nothing under packages/ is staged. Caveat 2: it fails OPEN if uv is missing or either subprocess times out (120s mypy / 300s pytest).
 
-## Comandos de referencia
+## Retained domain procedure
+
+A risk review identifies the artifact and subject, each invariant verdict and its supporting evidence, an overall verdict, failing invariants and required actions. Failure of I1, I3, I4, I6 or I10 blocks release. Policy-authorized review may permit the stated amber-threshold modulation; it never permits overriding a red limit or silently converting a blocking result into a pass.
+
+The canonical `/Users/omarkhalil/OmarOS/05_Projects/QuantOS/Vision/Policies/RISK_POLICY.md` governs these decisions alongside the ten invariants above.
+
+## Validation and publication
+
+The commands below are references, not automatic authorization. Create, change or run tests only when Omar explicitly requests them. Record permitted checks and independent review through Constellation; any test-dependent gate without authorized evidence remains unmet. Domain hooks are additional controls, not proof that the outer Constellation commit ran the required checks. No startup, documentation or skill workflow publishes automatically.
+
+## Reference commands
 
 - uv sync --all-packages --frozen
 

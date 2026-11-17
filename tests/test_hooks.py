@@ -12,6 +12,7 @@ import unittest
 
 from constellation.hooks import patch_paths, pre_tool, stop, HookError
 from constellation.state import Store
+from probe_claude import native_names
 
 
 class Tasks:
@@ -38,6 +39,14 @@ class HooksTest(unittest.TestCase):
         result.update(changes)
         return result
 
+    def test_native_probe_requires_exact_skill_names_and_known_metadata(self):
+        observed = native_names(["brainteasers-quant-notes", "coding"])
+        self.assertIn("brainteasers-quant-notes", observed)
+        self.assertNotIn("brainteasers-quant", observed)
+        for malformed in ("brainteasers-quant", [{"name": "brainteasers-quant"}], None):
+            with self.subTest(malformed=malformed), self.assertRaises(RuntimeError):
+                native_names(malformed)
+
     def test_declared_edit_and_both_rename_paths_are_allowed(self):
         patch = "*** Begin Patch\n*** Update File: note.md\n*** Move to: renamed.md\n@@\n-a\n+b\n*** End Patch"
         self.assertEqual(pre_tool(self.payload(patch), self.store), {})
@@ -48,6 +57,36 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(pre_tool({"tool_name": "read_file"}, Tasks([])), {})
         patch = "*** Begin Patch\n*** Add File: note.md\n+text\n*** End Patch"
         self.assertIn("hookSpecificOutput", pre_tool(self.payload(patch), Tasks([])))
+
+    def test_claude_notebook_edit_requires_its_actual_declared_target(self):
+        self.task["assignments"]["analysis.ipynb"] = "writer"
+        payload = self.payload("", tool_name="NotebookEdit",
+            tool_input={"notebook_path": str(self.root / "analysis.ipynb"),
+                        "new_source": "print('synthetic example')", "cell_number": 0})
+        self.assertEqual(pre_tool(payload, self.store), {})
+        for changes in ({"agent_id": "other"},
+                        {"tool_input": {"notebook_path": str(self.root / "foreign.ipynb")}}):
+            with self.subTest(changes=changes):
+                response = pre_tool({**payload, **changes}, self.store)
+                self.assertEqual(response["hookSpecificOutput"]["permissionDecision"], "deny")
+        # A misleading file_path cannot substitute for NotebookEdit's target.
+        for inputs in ({}, {"notebook_path": None}, {"notebook_path": 4},
+                       {"file_path": "analysis.ipynb"},
+                       {"notebook_path": "", "file_path": "analysis.ipynb"}):
+            with self.subTest(inputs=inputs):
+                response = pre_tool({**payload, "tool_input": inputs}, self.store)
+                self.assertEqual(response["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_claude_notebook_edit_keeps_symlink_and_nested_owner_boundaries(self):
+        (self.root / "linked.ipynb").symlink_to(self.root / "analysis.ipynb")
+        child = self.root / "child"
+        subprocess.run(["git", "init", "-q", str(child)], check=True)
+        for name in ("linked.ipynb", "child/analysis.ipynb", "../analysis.ipynb"):
+            with self.subTest(name=name):
+                self.task["assignments"][name] = "writer"
+                payload = self.payload("", tool_name="NotebookEdit",
+                                       tool_input={"notebook_path": name})
+                self.assertIn("hookSpecificOutput", pre_tool(payload, self.store))
 
     def test_other_author_cannot_edit_assigned_path(self):
         patch = "*** Begin Patch\n*** Add File: note.md\n+text\n*** End Patch"

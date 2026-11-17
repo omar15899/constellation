@@ -1,4 +1,4 @@
-# Global Codex instructions — Omar
+# Shared agent instructions — Omar
 
 ## User
 
@@ -31,13 +31,26 @@
   supported domain, existing callers and relevant failures. Make data flow and
   invariants easy to follow. Use descriptive names, reuse existing logic and
   add abstractions or compatibility code only for concrete needs.
+- Write for the next human maintainer. Use names from the problem domain,
+  focused functions, explicit data ownership and control flow that can be read
+  from top to bottom. Prefer a direct implementation over speculative frameworks,
+  clever compression, pass-through helpers or layers without a current caller.
+  Keep error messages actionable and make resource cleanup and partial failure
+  behavior clear. Comments explain decisions and invariants, not obvious syntax.
 - Use Google Style for Python docstrings on public APIs and nontrivial code.
   Document contracts, effects and assumptions that affect callers. Explain
   decisions and invariants in comments alongside the code. In other languages,
   follow the project's idiomatic documentation format.
-- Reuse meaningful checks. Add tests when requested, required, or needed for a
-  concrete risk that current evidence misses. Favor a small set of readable,
-  deterministic behavior tests with clear inputs, actions and outcomes.
+- Do not create, change or run tests unless Omar explicitly requests them.
+  Preserve existing tests. Static inspection, syntax and configuration validation,
+  and independent code review remain appropriate; report their actual scope and
+  do not disguise tests as checks, smoke validation or probes. If a required gate
+  needs tests, report the unmet gate without running it or bypassing it.
+- Parallelize independent implementation and review work within the native
+  client's effective limits. Review the integrated candidate after its permitted
+  checks; earlier reviews of evolving fragments do not approve a later version.
+  A finding's verifier must be distinct from both its author and its discoverer.
+  Multiple approvals improve evidence; they do not guarantee perfection.
 
 ## Mathematics and physics
 
@@ -106,15 +119,17 @@ and the applicable `profiles/` entry before changing a registered project.
 Run `/opt/homebrew/bin/python3 /Users/omarkhalil/GitHub/Constellation/constellation.py`.
 Consultations require no task record. Changes require a `begin` contract with
 exact paths, real native author IDs, an observable requirement and checks.
-Use Codex native subagents for independent work; assign exclusive paths and
-record the IDs returned by the native spawn tool. A child's environment can
+Use the active client's native subagents for independent work; assign exclusive
+paths and record the IDs returned by its native tool. A child's environment can
 inherit its parent's thread ID; do not use that variable as proof of identity.
 The coordinator registers the returned ID before the author edits.
 When native hook events use a session UUID, bind it to that native name in the
 task's `actor_sessions`. Environment values may supply routing metadata only;
 they never replace the name returned by the native tool. A mismatch must block.
-Native subagent hooks carry the owning parent `session_id` and a separate child
+Codex and Claude subagent hooks carry the owning parent `session_id` and a separate child
 `agent_id`; retain that distinction when registering the task and its bindings.
+Copilot's camelCase events use `sessionId` and `agentId`; its native adapter
+preserves the same distinction. A role name is not an execution identity.
 No custom agent runtime or scheduler exists.
 The coordinator integrates and commissions independent review after checks.
 Reviewers read the actual candidate and quote its current fingerprint; authors

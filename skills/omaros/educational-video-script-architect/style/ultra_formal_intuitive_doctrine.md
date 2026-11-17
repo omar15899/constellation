@@ -1,8 +1,8 @@
 # Ultra-Formal / Ultra-Intuitive Doctrine
 
-This doctrine is the operating philosophy that every script in this skill must obey. It is imported, in spirit and in mechanics, from the `scholar` skill — where Omar's long-form writing voice was crystallised — and adapted to the time-bound, audio-visual medium of an educational video.
+This reference develops the [shared teaching method](../../../core/teach-from-first-principles/SKILL.md) for time-bound audiovisual explanations. The [skill entrypoint](../SKILL.md) determines the requested deliverables and which resources to read.
 
-The doctrine has four pillars. Every artefact in the 13-file pipeline (see `SKILL.md` §6) inherits them. They are non-negotiable.
+The four pillars govern conceptual accuracy and explanatory structure. The numbered files, durations and presentation patterns below describe a full production format; adapt them to the requested artifact rather than requiring a fixed file stack.
 
 ---
 
@@ -25,7 +25,7 @@ In the second-by-second narration script (`05_narration_script.md`), every forma
 
 The preamble carries no notation. No equation appears on screen during it. The visual is the metaphor. When the preamble ends and the formal block begins, the metaphor either *morphs into* the formal object or *fades* while the formal object enters — never a hard cut from "metaphor world" to "formal world".
 
-### Canonical models from the scholar corpus
+### Canonical models from OmarOS
 
 `06_Knowledge_Base/Computing/Concurrency/python_asyncio.md` is the master reference for this pattern. Sections §§II.0, III.0, VI.0, VIII.0, XI.0, XII.0, XVI.0 each demonstrate the preamble→formalism move. When designing a video preamble, mentally translate one of these section preambles into a 15-second visual beat: which analogy carries the concept, what does the camera see, when does the formalism arrive?
 

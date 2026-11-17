@@ -1,7 +1,7 @@
 # Redacción y revisión sustancial
 
 Para trabajo sustancial o prolongado, conserva decisiones, hallazgos, evidencia y
-siguientes pasos mediante el [progreso del ciclo elegido](../../../../README.md).
+siguientes pasos en el [registro común](../../../../README.md).
 Sincroniza hitos personales sólo cuando la política local lo autorice; no abras
 otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimiento.
 
@@ -28,17 +28,15 @@ que debe conservar, fuentes necesarias y condiciones de aceptación. Declara
 solo los entregables intencionales y sus rutas exactas. No archives prompts,
 conversaciones ni transcripciones como si fueran documentación del trabajo.
 
-Elige el ciclo con el [protocolo común](../../../../README.md).
-Para una entrega sustantiva sin publicación, usa sus operaciones portátiles de
-requisitos, autoría, comprobaciones, revisión y cierre. Una edición Git ordinaria
-usa el contrato receptor, sin un segundo registro obligatorio por usar esta skill.
-Si el informe requiere garantías semánticas del portátil y además publicación,
-relaciona los artefactos revisados y su evidencia con la integración Git; no
-supongas equivalencia ni sincronización automática entre sus controles. Respeta
-los permisos de publicación y conserva la tarea existente. El motor portátil
-funciona sin Git: no crees un repositorio para poder redactar. Si una capacidad
-requerida no está disponible, declara la limitación y el trabajo pendiente; no simules una
-operación, una revisión o un cierre aprobado.
+Para modificar archivos, sigue el [protocolo común](../../../../README.md)
+en el proyecto propietario. Conserva el encargo existente: utilizar esta skill
+no exige un segundo registro. El contrato reúne requisitos, autoría, archivos,
+comprobaciones y revisión; usa `mode: "local"` si la entrega no se publica.
+El CLI actual requiere una raíz Git para abrir ese contrato. Una explicación
+en conversación no necesita registro ni justifica crear un repositorio.
+La publicación requiere su autorización y evidencia vigentes. Si falta una
+capacidad necesaria, declara la limitación y el trabajo pendiente; no simules
+una operación, una revisión o un cierre aprobado.
 
 ## Estructura y responsabilidad
 
@@ -145,8 +143,9 @@ Para un argumento matemático esencial, verifica hipótesis, tipos, cuantificado
 y pasos que sostienen la conclusión; distingue demostración, cálculo numérico,
 aproximación y conjetura. Usa `mathematics` si está disponible y corresponde al
 trabajo. Para resultados computacionales esenciales, verifica las entradas,
-versiones, ejecución y comportamiento pertinente; usa `coding` cuando esté
-disponible. No describas como ejecutado un ejemplo de código que solo leíste.
+versiones y evidencia de ejecución disponible; usa `coding` cuando corresponda.
+No crees, modifiques ni ejecutes tests de software sin una petición explícita
+del usuario. No describas como ejecutado un ejemplo de código que solo leíste.
 La ausencia de una skill especializada no elimina la obligación de verificar
 el contenido ni autoriza fingir herramientas o resultados.
 
@@ -179,8 +178,8 @@ enlace y comprobar las hipótesis adicionales necesarias.
 
 Cada entrega significativa pasa una revisión independiente proporcional al
 riesgo y con la cobertura vigente del protocolo común. Entrega al revisor los
-requisitos, archivos actuales, evidencia pertinente y token del motor cuando
-corresponda. Debe evaluar el resultado real con independencia de su autor,
+requisitos, archivos actuales, evidencia pertinente y huella vigente del contrato
+cuando haya cambios registrados. Debe evaluar el resultado real con independencia de su autor,
 incluidas claridad, estructura, voz, exactitud y límites de las conclusiones.
 Para una explicación, comprueba si el lector puede decir qué es cada objeto,
 obtener el caso particular desde el marco general y reconstruir el paso

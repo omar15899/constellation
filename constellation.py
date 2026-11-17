@@ -20,6 +20,9 @@ def main() -> int:
     if sys.argv[1:2] == ['install']:
         from constellation.install import main as install_main
         return install_main(sys.argv[2:])
+    if sys.argv[1:2] == ['docs']:
+        return subprocess.run([sys.executable, '-B',
+            str(SOURCE / 'resources/automations/official_docs.py'), *sys.argv[2:]]).returncode
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir')
     commands = parser.add_subparsers(dest='command', required=True)
@@ -36,7 +39,9 @@ def main() -> int:
     check.add_argument('task'); check.add_argument('check_id')
     check.add_argument('argv', nargs=argparse.REMAINDER)
     hook = commands.add_parser('hook')
-    hook.add_argument('event', choices=('pre-tool', 'stop'))
+    hook.add_argument('--client', choices=('shared', 'copilot'), default='shared')
+    hook.add_argument('event', choices=('pre-tool', 'stop', 'sessionStart',
+                                      'subagentStart', 'preToolUse', 'agentStop', 'subagentStop'))
     git_hook = commands.add_parser('git-hook')
     git_hook.add_argument('event', choices=('pre-commit', 'pre-push'))
     git_hook.add_argument('arguments', nargs='*')
@@ -45,6 +50,8 @@ def main() -> int:
     run.add_argument('arguments', nargs=argparse.REMAINDER)
     install = commands.add_parser('install')
     install.add_argument('arguments', nargs=argparse.REMAINDER)
+    docs = commands.add_parser('docs', help='Verify, search or refresh local official documentation')
+    docs.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.state_dir:
         os.environ['CONSTELLATION_STATE_DIR'] = str(Path(args.state_dir).expanduser().resolve())
@@ -62,11 +69,17 @@ def main() -> int:
         print(json.dumps({'verified': verified, 'root': str(root), 'hooks': str(hooks.resolve())}))
         return 0 if verified else 2
     if args.command == 'hook':
+        if args.client == 'copilot':
+            from constellation.copilot_hooks import main as copilot_hook_main
+            return copilot_hook_main(args.event)
         from constellation.hooks import main as hook_main
         return hook_main(args.event)
     if args.command == 'install':
         from constellation.install import main as install_main
         return install_main(args.arguments)
+    if args.command == 'docs':
+        return subprocess.run([sys.executable, '-B',
+            str(SOURCE / 'resources/automations/official_docs.py'), *args.arguments]).returncode
     if args.command == 'skill-run':
         base = (SOURCE / 'skills' / args.group / args.skill).resolve()
         script = (base / args.script).resolve()

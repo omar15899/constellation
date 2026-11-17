@@ -1,40 +1,47 @@
 ---
 name: "coding"
-description: "Implementar, depurar y refactorizar software con requisitos observables, pruebas y revisión independiente. Usar para encargos de ingeniería que cambien o diagnostiquen comportamiento; no para dudas triviales de sintaxis, redacción o teoría matemática por la mera presencia de código."
+description: "Implement, debug, and refactor software with explicit contracts, readable code, and independent review. Use for engineering work that changes or diagnoses behavior, not trivial syntax questions, prose, or mathematical theory merely containing code."
 ---
 
-# Ingeniería de software
+# Software engineering
 
-1. **Entiende el contrato.** Localiza las instrucciones, las entradas normales,
-   los consumidores y las invariantes del proyecto. Define el resultado observable.
-   Si corriges un fallo, reprodúcelo o fundamenta su causa antes de editar.
-2. **Implementa para el dominio completo.** Reutiliza las estructuras existentes.
-   Conserva interfaces y datos anteriores salvo cambios pedidos. Haz visible el
-   recorrido de los datos con nombres del dominio y pasos claros. Cada abstracción
-   debe resolver una necesidad concreta. Cuida los fallos parciales, los reintentos
-   y la concurrencia cuando puedan alterar el resultado.
-3. **Documenta y comprueba.** En Python usa Google Style para los comentarios y
-   docstrings exigidos por la interfaz o la lógica. En otros lenguajes aplica
-   la convención equivalente del proyecto. Ejecuta primero las comprobaciones
-   existentes pertinentes. Añade pruebas cuando el usuario las pida, el proyecto las exija
-   o quede un riesgo concreto sin cubrir.
-4. **Entrega con evidencia.** Sigue el ciclo y la revisión exigidos por el proyecto.
-   En una corrección local pequeña, una verificación enfocada basta si el proyecto
-   lo permite. Comunica únicamente hitos, bloqueos y decisiones materiales durante
-   la ejecución. Al terminar, resume el resultado, la evidencia y los límites.
+1. **Understand the contract.** Read project instructions, normal entry points,
+   callers, and invariants. State the observable result. For a defect, establish
+   its cause from the available evidence before editing.
+2. **Write for the next maintainer.** Reuse existing owners and structures. Use
+   domain names, focused functions, useful types, and straightforward control
+   flow. Make data ownership, mutation, errors, and cleanup clear. Add an
+   abstraction only for a concrete need. Cover the supported domain and preserve
+   interfaces and data unless the requested change requires otherwise.
+3. **Document decisions and inspect the result.** Use Google Style for Python
+   public APIs and nontrivial code; use the project's idiom in other languages.
+   Explain contracts and reasons rather than narrating statements. Read the
+   actual diff and use relevant non-test static checks.
+4. **Deliver grounded evidence.** Follow the project's task and review contract.
+   Report meaningful milestones, blockers, and decisions. State the resulting
+   behavior, evidence actually obtained, and remaining limitations.
 
-Consulta el [flujo de ingeniería](references/workflow.md) para decisiones de
-implementación, documentación, pruebas y revisión en cambios sustantivos. El
-[protocolo común](../../../README.md) define cómo reutilizar
-un contrato activo, registrar evidencia y coordinar su publicación autorizada.
+Do not add, modify, or run tests unless the user explicitly requests them.
+Preserve existing test files. Do not relabel suites, regressions, or behavioral
+experiments as static checks. Do not claim runtime correctness from reading,
+syntax checks, or an independent review.
 
-Si delegas, da alcance exclusivo, condiciones de aceptación y contexto. Usa el
-catálogo nativo. Si el rol no está cargado, transmite su instrucción al agente
-disponible con el modelo, esfuerzo y permisos heredados. Los roles de
-[código](../../../agents/coder.toml),
-[diagnóstico](../../../agents/researcher.toml),
-[revisión](../../../agents/reviewer.toml),
-[seguridad](../../../agents/security-reviewer.toml) y
-[verificación](../../../agents/verifier.toml) tienen sus propias
-responsabilidades. Cada obligación matemática, empírica o editorial requiere
-evidencia de su tipo.
+Read the [engineering workflow](references/workflow.md) for substantive design,
+documentation, validation, and review decisions. The
+[common protocol](../../../README.md) describes task reuse, evidence, and
+authorized publication.
+
+Delegate independent work through the client's native agents with exclusive
+file ownership, acceptance criteria, and sufficient context. Inherit the
+selected model and reasoning effort within the client's effective limits.
+Register returned native identities before edits. If a role is unavailable,
+supply its instructions to an available native agent. The roles for
+[implementation](../../../agents/coder.toml),
+[investigation](../../../agents/researcher.toml),
+[review](../../../agents/reviewer.toml),
+[security](../../../agents/security-reviewer.toml), and
+[finding verification](../../../agents/verifier.toml) have distinct duties.
+Reviews may run concurrently on a stable candidate. Authors cannot approve
+their own work, and a finding's verifier must also be independent of its finder.
+Each mathematical, empirical, or editorial obligation needs its own kind of
+evidence.

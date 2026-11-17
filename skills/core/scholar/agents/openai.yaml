@@ -1,6 +1,0 @@
-interface:
-  display_name: "Scholar"
-  short_description: "Explicaciones y notas rigurosas para el vault"
-  default_prompt: "Usa $scholar para preparar una explicación conforme a las referencias y al contexto de OmarOS."
-policy:
-  allow_implicit_invocation: true

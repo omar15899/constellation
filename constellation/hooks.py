@@ -84,9 +84,12 @@ def _edit_paths(payload: Mapping[str, Any], tool: str) -> list[str]:
                 or any(item != texts[0] for item in texts)):
             raise HookError("Missing or conflicting patch input")
         return patch_paths(texts[0])
-    if not isinstance(value, dict) or not isinstance(value.get("file_path"), str):
+    # Claude's NotebookEdit has a distinct target field; it is still a write
+    # subject to the same exact-path ownership as Write and Edit.
+    field = "notebook_path" if tool == "notebookedit" else "file_path"
+    if not isinstance(value, dict) or not isinstance(value.get(field), str):
         raise HookError("Missing structured edit target")
-    return [value["file_path"]]
+    return [value[field]]
 
 
 def destructive_command_reason(command: str) -> str | None:
@@ -219,7 +222,7 @@ def pre_tool(payload: Mapping[str, Any], store: Store | None = None) -> dict[str
             command = inputs.get("command", inputs.get("cmd", "")) if isinstance(inputs, dict) else ""
             reason = destructive_command_reason(command) if isinstance(command, str) else None
             return _deny(reason) if reason else {}
-        if tool not in {"apply_patch", "write", "edit", "multiedit"}:
+        if tool not in {"apply_patch", "write", "edit", "multiedit", "notebookedit"}:
             return {}
         session, actor = _identity(payload)
         cwd_value = payload.get("cwd")
@@ -243,7 +246,7 @@ def pre_tool(payload: Mapping[str, Any], store: Store | None = None) -> dict[str
 def stop(payload: Mapping[str, Any], store: Store | None = None) -> dict[str, Any]:
     """Report pending work once, retaining all state for later recovery.
 
-    A continuation cannot claim completion or loop indefinitely: when Codex
+    A continuation cannot claim completion or loop indefinitely: when the client
     sends stop_hook_active=true, return an advisory and leave the task open.
     """
     try:

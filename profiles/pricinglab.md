@@ -64,15 +64,25 @@ PricingLab is the QuantOS pricing evaluator: it turns a calibrated model plus ma
 
 - Destructive git and network commands are denied at the settings level: rm, rmdir, curl, wget, git reset --hard, git push --force, git push -f, git clean -f, git clean *-fd*, git filter-branch. This is a permissions deny list, not a hook.
 
-- Auto-push is off: PRICINGLAB_AUTO_PUSH=0 in .claude/settings.json env; post_git_safety_loop.py pushes only when that var is 1/true/yes.
+- Publication uses the common reviewed Constellation workflow; retired automatic Git hooks are not an enforcement mechanism.
 
 - Cross-repo contract tests pin siblings by commit hash, never against main — tests/cross_repo/README.md §Discipline 1, mandated by ADR-0030 §3. (Documentary only: the pin currently reads `HEAD`.)
 
-- DOCTRINAL, NOT MACHINE-ENFORCED — the following six come from .claude/skills/pricing-pipeline-doctrine/SKILL.md contract_invariants, which is a reviewer contract; the only in-repo mechanism (pricing_preflight.py) implements weak source-level heuristics for four of them and is warn-only by default. (1) MeasureSpec discipline — "A Price without a declared measure is rejected — never warned." (2) Calibration provenance is eight fields or it is not a CalibratedModel: market_state_hash, instrument_set, loss_spec, optimiser_spec, residual_surface, convergence_trace, calibration_timestamp, bundle_hash, BLAKE3-hashed canonically (ADR-0023). (3) Repricing closure — CalibrationSpec.production_algorithm_id must equal the algorithm dispatched at production; a mismatch without an explicit waiver is flagged RepricingClosureViolation. (4) Roper static no-arbitrage is a hard constraint: every Surface/SmileFit carries a certificate covering calendar (∂_T w ≥ 0), butterfly (Gatheral g(k) ≥ 0) and vertical (put-call parity) on a fine grid; "Penalty methods are forbidden... A surface without a certificate is not a Surface." (5) Discounting separation — D(t,T) lives in MarketState; a Payoff taking a `risk_free_rate: float` constructor argument or hard-coding a D(t,T) literal fails review (doctrine non-negotiable #1). (6) Verdict alphabet is closed: CERTIFIED / PROVISIONAL / REJECTED, and "PROVISIONAL is never a free pass."
+- DOCTRINAL, NOT MACHINE-ENFORCED — the following six retained pricing invariants are reviewer obligations; the only in-repo mechanism (pricing_preflight.py) implements weak source-level heuristics for four of them and is warn-only by default. (1) MeasureSpec discipline — "A Price without a declared measure is rejected — never warned." (2) Calibration provenance is eight fields or it is not a CalibratedModel: market_state_hash, instrument_set, loss_spec, optimiser_spec, residual_surface, convergence_trace, calibration_timestamp, bundle_hash, BLAKE3-hashed canonically (ADR-0023). (3) Repricing closure — CalibrationSpec.production_algorithm_id must equal the algorithm dispatched at production; a mismatch without an explicit waiver is flagged RepricingClosureViolation. (4) Roper static no-arbitrage is a hard constraint: every Surface/SmileFit carries a certificate covering calendar (∂_T w ≥ 0), butterfly (Gatheral g(k) ≥ 0) and vertical (put-call parity) on a fine grid; "Penalty methods are forbidden... A surface without a certificate is not a Surface." (5) Discounting separation — D(t,T) lives in MarketState; a Payoff taking a `risk_free_rate: float` constructor argument or hard-coding a D(t,T) literal fails review (doctrine non-negotiable #1). (6) Verdict alphabet is closed: CERTIFIED / PROVISIONAL / REJECTED, and "PROVISIONAL is never a free pass."
 
 - The Claude Code PreToolUse commit gate fires only when packages/ is staged. Non-packages commits bypass its mypy and tests.
 
-## Comandos de referencia
+## Retained domain procedure
+
+Review the MarketServices → Model → PricingAlgorithm → Product boundaries before applying measure, calibration-provenance, repricing-closure and no-arbitrage gates. Record the correlation estimator and conditioning evidence instead of silently assuming correlations. Assess applicable calibration failure modes before issuing CERTIFIED, PROVISIONAL or REJECTED. A provisional verdict identifies the acknowledged model or calibration limitation.
+
+Use `docs/vault/lab_vision/02_Calibration_Model.md` and `08_Smile_Interpolators.md`. Preserve the eight-field calibration bundle and certificate requirements; these obligations do not establish that the present implementation enforces them.
+
+## Validation and publication
+
+The commands below are references, not automatic authorization. Create, change or run tests only when Omar explicitly requests them. Record permitted checks and independent review through Constellation; any test-dependent gate without authorized evidence remains unmet. Domain hooks are additional controls, not proof that the outer Constellation commit ran the required checks. No startup, documentation or skill workflow publishes automatically.
+
+## Reference commands
 
 - uv run ruff check .
 

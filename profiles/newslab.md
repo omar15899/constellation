@@ -44,7 +44,7 @@ NewsLab is the QuantOS Tier-2 information lab in the `quantos-info` perimeter: i
 
 - docs/adr/ADR-LOCAL-0004-universe-aware-intelligence-report.md
 
-- .claude/skills/news-causal-admissibility/SKILL.md
+- docs/vault/lab_vision/00_Doctrine.md
 
 ## Invariantes
 
@@ -58,21 +58,21 @@ NewsLab is the QuantOS Tier-2 information lab in the `quantos-info` perimeter: i
 
 - The vault is canonical, this repo is not. CLAUDE.md: "The doctrine, architecture, schema strategy, and invariants are canonical in the OmarOS vault and must be read before any code is written here." docs/vault/README.md: "The vault is canonical. This mirror is a cache. If a file here disagrees with the source under ~/OmarOS/, the source wins."
 
-- I-1 causal admissibility typed (news-causal-admissibility SKILL.md, verbatim): "Every emitted FeatureSet row carries a KnownAt[T] wrapper. The type system rejects the construction of a row whose decision_admissible_at precedes any contributing event's decision_admissible_at."
+- I-1 causal admissibility typed (NewsLab doctrine): "Every emitted FeatureSet row carries a KnownAt[T] wrapper. The type system rejects the construction of a row whose decision_admissible_at precedes any contributing event's decision_admissible_at."
 
-- I-2 content-hash dedup (SKILL.md, verbatim): "Two RawArticles with identical normalised body collapse to one Event. Hash is BLAKE3 (ADR-0023). The Event.sources list cites every contributing raw row. Hash collisions across distinct bodies are fatal."
+- I-2 content-hash dedup (retained doctrine): "Two RawArticles with identical normalised body collapse to one Event. Hash is BLAKE3 (ADR-0023). The Event.sources list cites every contributing raw row. Hash collisions across distinct bodies are fatal."
 
-- I-3 verifier soundness (SKILL.md, verbatim): "A tag accepted by the verifier has at least one supporting span in the event body, locatable within bounded edit distance delta. Accepting with no locatable span is a hard test failure."
+- I-3 verifier soundness (retained doctrine): "A tag accepted by the verifier has at least one supporting span in the event body, locatable within bounded edit distance delta. Accepting with no locatable span is a hard test failure."
 
-- I-8 tagging non-contamination (SKILL.md, verbatim): "The tagger training-set content hashes are disjoint from any consumer's live-window contributing-event content hashes. Overlap is a release-blocking finding."
+- I-8 tagging non-contamination (retained doctrine): "The tagger training-set content hashes are disjoint from any consumer's live-window contributing-event content hashes. Overlap is a release-blocking finding."
 
-- Versions are pinned or the run is refused. SKILL.md: "The skill refuses to run a tagger-or-feature pipeline whose tagger_version is unpinned or whose ontology version is unpinned. The news_preflight hook is the runtime mirror of this clause." Caveat: the hook only blocks when NEWSLAB_ENFORCE_PREFLIGHT=1, which settings.json sets to 0.
+- Versions are pinned or the run is refused: both tagger_version and ontology version must be explicit. Treat the news_preflight hook as additional evidence with limited coverage. Caveat: the hook only blocks when NEWSLAB_ENFORCE_PREFLIGHT=1, which settings.json sets to 0.
 
-- Test for every invariant touched. SKILL.md: "A change that touches I-1, I-2, I-3, or I-8 ships with the corresponding test under tests/invariants/test_I_<n>.py. Untested touch is rejected." (Currently only test_I_1, test_I_2 and test_I_5 exist.)
+- Evidence for every invariant touched. Changes to I-1, I-2, I-3 or I-8 require corresponding validation evidence. Existing invariant tests remain relevant; create, change or run them only on Omar's explicit request, and otherwise report the acceptance gate as unmet.
 
-- Capability boundary. SKILL.md: "Adapters never write to the store directly. Tagger / verifier / feature-builder never bypass the Capability layer." (ADR-0013.) Every LLM call is gated behind require(capability, CAP_LLM_CLASSIFY).
+- Capability boundary. "Adapters never write to the store directly. Tagger / verifier / feature-builder never bypass the Capability layer." (ADR-0013.) Every LLM call is gated behind require(capability, CAP_LLM_CLASSIFY).
 
-- Two-pass discipline for new components. SKILL.md: "The skill first proposes the component outline + invariant impact analysis; only after confirmation does it write code."
+- Two-pass discipline for new components: establish the component outline and invariant impact before implementation. Resolve material missing choices under the common contract; an already authorized task does not need a second routine permission step.
 
 - Coding standards (CLAUDE.md, aspirational where unenforced): Python 3.12, mypy --strict, typing.Protocol for interfaces, frozen dataclasses for value types, hypothesis property tests, pytest, "Every public abstraction ships with at least one test." CLAUDE.md also names pyrsistent.PMap for state, but pyrsistent is not a dependency and appears nowhere in the codebase — do not add it on the strength of that line.
 
@@ -80,7 +80,17 @@ NewsLab is the QuantOS Tier-2 information lab in the `quantos-info` perimeter: i
 
 - Cross-lab stop rule (.claude/registry/peers.yaml, verbatim): "If the request you receive belongs to a sibling lab, SAY SO and stop. Do not duplicate an abstraction that belongs there." docs/architecture/AGENTS.md restates it: "If the request belongs to a sibling lab, say so and stop."
 
-## Comandos de referencia
+## Retained domain procedure
+
+Before changing ingestion, deduplication, verification or feature construction, record the affected invariants, pinned tagger/ontology versions and any required ADR. Keep supporting-span evidence and training/live-window content-hash disjointness explicit. Use the actual `packages/quant_news/` owner paths rather than the former `src/news_lab/` layout.
+
+Consult `docs/vault/lab_vision/01_Architecture.md`, `05_Invariants.md` and `schemas/manifest.yaml`. Required test evidence remains an unmet gate unless the user authorizes creating or running the relevant tests.
+
+## Validation and publication
+
+The commands below are references, not automatic authorization. Create, change or run tests only when Omar explicitly requests them. Record permitted checks and independent review through Constellation; any test-dependent gate without authorized evidence remains unmet. Domain hooks are additional controls, not proof that the outer Constellation commit ran the required checks. No startup, documentation or skill workflow publishes automatically.
+
+## Reference commands
 
 - uv sync --frozen || uv sync
 

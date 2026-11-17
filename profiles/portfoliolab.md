@@ -24,7 +24,7 @@ PortfolioLab is the QuantOS Tier-2.5 portfolio-construction lab and the sole mem
 
 - .claude/registry/peers.yaml
 
-- .claude/skills/portfolio-allocation-doctrine/SKILL.md
+- /Users/omarkhalil/OmarOS/05_Projects/QuantOS/Labs/PortfolioLab/Vision/00_Doctrine.md
 
 - docs/architecture/ai_development_contract.md
 
@@ -62,15 +62,15 @@ PortfolioLab is the QuantOS Tier-2.5 portfolio-construction lab and the sole mem
 
 - The vault is canonical, this repo is not. CLAUDE.md: 'The doctrine, architecture, schema strategy, and invariants are canonical in the OmarOS vault and **must be read before any code is written here**.' docs/architecture/AGENTS.md is headed '> **Read first. Always.**'
 
-- The eight allocation invariants I-1..I-8 (.claude/skills/portfolio-allocation-doctrine/SKILL.md frontmatter, contract_invariants) bind every allocation: I-1 universe_hash(w*) = universe_hash(Sigma) = universe_hash(mu) = universe_hash(IntelligenceBundle); I-2 Sigma >= 0 verified by Cholesky, projection method recorded when used; I-3 ConstraintSet certified non-empty before solver dispatch (typed feasibility, not an exception handler); I-4 available_at(I) <= decision_time for every input; I-5 every contributing CF estimator id and BacktestRun ancestry present in Allocation.metadata; I-6 same (Sigma, mu, ConstraintSet, pi, w_prev, IntelligenceBundle) -> bit-identical w*; I-7 no input window strictly later than decision_time; I-8 AuditDAG chains back to every input and replay reproduces w*. NOTE: these are doctrine text plus AST-heuristic warnings in portfolio_preflight.py — nothing in packages/ enforces them in code today.
+- The eight allocation invariants I-1..I-8 (retained allocation doctrine) bind every allocation: I-1 universe_hash(w*) = universe_hash(Sigma) = universe_hash(mu) = universe_hash(IntelligenceBundle); I-2 Sigma >= 0 verified by Cholesky, projection method recorded when used; I-3 ConstraintSet certified non-empty before solver dispatch (typed feasibility, not an exception handler); I-4 available_at(I) <= decision_time for every input; I-5 every contributing CF estimator id and BacktestRun ancestry present in Allocation.metadata; I-6 same (Sigma, mu, ConstraintSet, pi, w_prev, IntelligenceBundle) -> bit-identical w*; I-7 no input window strictly later than decision_time; I-8 AuditDAG chains back to every input and replay reproduces w*. NOTE: these are doctrine text plus AST-heuristic warnings in portfolio_preflight.py — nothing in packages/ enforces them in code today.
 
-- Constraints are typed leaves, never strings, never lambdas (LongOnly | LeverageCap | TurnoverCap | SectorCap | FactorBox | PositionBox | Cardinality | And). Infeasibility is a typed error, not a silently-returned zero vector. Source: SKILL.md §'Hard rules / 1. Typed constraints'.
+- Constraints are typed leaves, never strings, never lambdas (LongOnly | LeverageCap | TurnoverCap | SectorCap | FactorBox | PositionBox | Cardinality | And). Infeasibility is a typed error, not a silently-returned zero vector.
 
-- Determinism: no global RNG in allocators. Any randomness routes through a counter-based RNG keyed by the allocation context (SKILL.md §5, 'mirrors ADR-0016 in the MC layer'). The portfolio_preflight hook greps for np.random.normal/uniform/randn, numpy.random.normal/uniform, random.random(, random.gauss(.
+- Determinism: no global RNG in allocators. Any randomness routes through a counter-based RNG keyed by the allocation context (the counter-based RNG discipline of ADR-0016). The portfolio_preflight hook greps for np.random.normal/uniform/randn, numpy.random.normal/uniform, random.random(, random.gauss(.
 
 - State is immutable: pyrsistent.PMap for accumulated state, dataclasses(frozen=True) for value types, typing.Protocol for interfaces, side effects through the Capability environment (ADR-0013). Source: CLAUDE.md §Coding standards. The preflight hook additionally warns on `= {}` and `= dict()`.
 
-- Engine/application boundary (ADR-0003): packages/quant_portfolio is stdlib-first. cvxpy, scipy.optimize, osqp, ecos, numpy, pandas belong in allocators/, not in packages/. The engine consumes typed Allocator protocols; solver choice is a property of the script. Source: SKILL.md §'Engine-vs-application boundary'. (packages/quant_portfolio does declare numpy>=1.26 as a dependency, so the stdlib-first rule is aspirational for numpy.)
+- Engine/application boundary (ADR-0003): packages/quant_portfolio is stdlib-first. cvxpy, scipy.optimize, osqp, ecos, numpy, pandas belong in allocators/, not in packages/. The engine consumes typed Allocator protocols; solver choice is a property of the script. (packages/quant_portfolio does declare numpy>=1.26 as a dependency, so the stdlib-first rule is aspirational for numpy.)
 
 - Python 3.12, mypy --strict, hypothesis property tests + pytest unit tests, and 'Every public abstraction ships with at least one test' (CLAUDE.md §Coding standards).
 
@@ -80,11 +80,21 @@ PortfolioLab is the QuantOS Tier-2.5 portfolio-construction lab and the sole mem
 
 - Every non-trivial change reports in the ai_development_contract §3 shape, verbatim from docs/architecture/AGENTS.md §Output contract: What changed / Why / Files touched / Public API delta / Tests added-updated / Tests run (command + outcome) / Invariants checked (I-N list, or N/A) / Risks remaining.
 
-- Constellation git policy applies (from ~/GitHub/.claude/CLAUDE.md, not from this repo's CLAUDE.md): one commit per repo per logical change, never bundled across repos; no --no-verify; no --force to main. This repo's own .claude/settings.json deny list additionally blocks rm, rmdir, curl, wget, git reset --hard, git push --force/-f, git clean -f/-fd and git filter-branch outright.
+- The shared Constellation publication contract applies: one commit per repo per logical change, never bundled across repos; no --no-verify; no --force to main. This repo's own .claude/settings.json deny list additionally blocks rm, rmdir, curl, wget, git reset --hard, git push --force/-f, git clean -f/-fd and git filter-branch outright.
 
-- Auto-push is off by default: PORTFOLIOLAB_AUTO_PUSH=0 in .claude/settings.json env; post_git_safety_loop.py performs an optional auto-push only when that var is set truthy. Preflight enforcement is likewise off by default: PORTFOLIOLAB_ENFORCE_PREFLIGHT=0 means portfolio_preflight.py warns and allows rather than blocking.
+- Publication uses the common reviewed Constellation workflow; retired automatic Git hooks are not an enforcement mechanism.
 
-## Comandos de referencia
+## Retained domain procedure
+
+A BacktestRun supplying an allocation, directly or through a counterfactual estimator, must close before the allocation's decision time. Record contributing estimator IDs, BacktestRun ancestry, dataset hashes and weighting parameters. Record covariance projection methods instead of hiding repairs. Reconciliation failure blocks an ExecutionIntent until the portfolio snapshot is reconciled; replay must reconstruct the allocation from its recorded inputs.
+
+Consult `docs/vault/decisions/ADR-0026-portfolio-intelligence-layer.md`; preserve typed feasibility, causal input timing and deterministic-RNG obligations.
+
+## Validation and publication
+
+The commands below are references, not automatic authorization. Create, change or run tests only when Omar explicitly requests them. Record permitted checks and independent review through Constellation; any test-dependent gate without authorized evidence remains unmet. Domain hooks are additional controls, not proof that the outer Constellation commit ran the required checks. No startup, documentation or skill workflow publishes automatically.
+
+## Reference commands
 
 - uv sync --all-packages
 

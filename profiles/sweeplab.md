@@ -18,8 +18,8 @@ La coordinación y publicación usan el único `constellation.py`.
 - `src/sweeplab_repo/run_store.py`: creación/finalización canónica. Los documentos
   originales del run conservan autoridad; los CSV son reconstruibles.
 
-Lee [la arquitectura observada](../docs/architecture/lab_architecture.md),
-[el contrato de investigación](../docs/scalable_research.md) y los consumidores
+Lee [la arquitectura observada](../../Sweeplab/docs/architecture/lab_architecture.md),
+[el contrato de investigación](../../Sweeplab/docs/scalable_research.md) y los consumidores
 afectados. La visión genérica Design/Runner/Aggregator sigue siendo un objetivo.
 
 ## Invariantes y límites
@@ -45,7 +45,17 @@ Revisa todos los consumidores antes de convertir una operación en colectiva.
 Los hashes de configuración/artefactos no prueban convergencia, reproducibilidad
 del código sucio ni escalabilidad multinodo.
 
+## Maintained methods and reports
+
+Use [pde-intake](../skills/Sweeplab/pde-intake/SKILL.md) to establish the mathematical problem and numerical choices; use [pde-results-review](../skills/Sweeplab/pde-results-review/SKILL.md) to interpret existing evidence and prepare requested reports. These methods replace specialist routing, automatic documentation loops and separate report selectors.
+
+Resolve report destinations through `labs._shared.reports.write_run_report` and the existing `RunPaths.reports_dir`; cross-run reports use `write_report`. The report index is maintained by `labs._shared.build_reports_index` at `outputs/_general/reports_index.md`. Do not create a second index or invent a timestamped run directory for analysis. Preserve authoritative run metadata and private raw logs.
+
+For a scoped finding that changes maintained knowledge, consult `docs/known_issues.md`, `docs/numerical_validation.md`, `docs/american_option_methods.md` and the relevant architecture document. Record the observed change, evidence, limitations and related paths in the same task; do not launch a post-commit documentation/commit loop.
+
 ## Entorno y comprobaciones
+
+Create, change or run tests only when Omar explicitly requests them. The commands below are references; record permitted checks and independent review, and leave an unauthorized test-dependent gate unmet.
 
 La instalación local de Firedrake se encuentra en
 `/Users/omarkhalil/Documents/Universidad/ImperialCollege/Project/programming/venv-firedrake`.

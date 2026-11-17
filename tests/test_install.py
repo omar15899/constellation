@@ -172,12 +172,11 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.config.read_text(), 'model = "concurrent installation edit"\n')
 
     def test_claude_agent_links_survive_idempotent_reinstallation(self):
-        adapters = self.source / 'resources/native-claude-agents'
-        adapters.mkdir(parents=True)
-        (adapters / 'coder.md').write_text('---\nname: coder\n---\nInstructions.\n')
         install.apply_plan(self.plan())
-        alias = self.home / '.claude/agents/coder.md'
+        alias = self.home / '.claude/agents/role0.md'
         self.assertTrue(alias.is_symlink())
+        self.assertEqual(alias.resolve(), self.home / '.local/state/constellation/native/claude/agents/role0.md')
+        self.assertIn('Read contracts.', alias.read_text())
         self.assertFalse(any(op['path'] == str(alias) for op in self.plan()['operations']))
 
     def test_git_hook_configuration_roundtrip_preserves_unrelated_config(self):

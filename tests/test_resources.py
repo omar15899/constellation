@@ -2,7 +2,10 @@
 from pathlib import Path
 import hashlib
 import json
+import tomllib
 import unittest
+
+from constellation.claude import agent_document
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -25,6 +28,24 @@ class InheritedResourcesTests(unittest.TestCase):
                 agents.append(relative)
                 self.assertEqual(item['source_sha256'], item['sha256'], relative)
         self.assertEqual(len(agents), 8)
+        # Native Markdown is now generated from these exact preserved roles.
+        # Keep historical projection provenance without treating duplicate
+        # adapter copies as another maintained source of instructions.
+        adapters = inventory['derived_adapters']
+        self.assertEqual(len(adapters), 8)
+        self.assertEqual({row['source'] for row in adapters}, set(agents))
+        for row in adapters:
+            canonical = SOURCE / row['source']
+            data = tomllib.loads(canonical.read_text())
+            self.assertEqual(row['generator'], 'constellation.claude.agent_document')
+            self.assertEqual(row['runtime_destination'],
+                             f"native/claude/agents/{data['name']}.md")
+            provenance = row['previous_projection']
+            self.assertEqual(provenance['category'], 'native-adapter')
+            self.assertEqual(provenance['source_sha256'],
+                             hashlib.sha256(canonical.read_bytes()).hexdigest())
+            self.assertEqual(agent_document(data).split('---\n', 2)[2].strip(),
+                             data['developer_instructions'].strip())
 
 
 if __name__ == '__main__':

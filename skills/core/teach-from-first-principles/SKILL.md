@@ -8,8 +8,9 @@ Create explanations that let the learner reconstruct the subject, not merely rec
 
 Choose this method when the outcome is a capability the learner should demonstrate.
 For a standalone essay or ordinary technical explanation, use the general
-Constellation writing method when available. Use Scholar when the requested
-output belongs to OmarOS and requires its navigational and editorial context.
+Constellation writing method when available. For a requested OmarOS artifact,
+read its [owner profile](../../../profiles/omaros.md) for destinations,
+metadata and relevant teaching references.
 For a course, calibrate prerequisites, practice, feedback and tests of transfer
 against the current learning objective.
 

@@ -1,160 +1,31 @@
 ---
 name: component-builder
-description: Scaffolds and writes new React TSX components for the Helix energy trading interface. Use this skill when adding a new pane, workspace panel, SVG chart, config panel, data table, or heatmap to market.tsx, research.tsx, strategy.tsx, assets.tsx, or shell.tsx. Knows the full design system, Pane wrapper pattern, seeded fake-data generation, hand-coded SVG chart conventions, and CSS variable usage of the project. Trigger on: "add a pane", "new chart", "create a component", "scaffold", "add [name] panel", "add [name] to [workspace]".
+description: Build or revise Helix panes, charts, tables and workspace layouts while preserving registration, data provenance, shared polling and project boundaries. Use only for tradinginterface.
 ---
+# Helix components
 
-# Component Builder
+Read the [Helix profile](../../../profiles/tradinginterface.md), the owner's `CLAUDE.md` and relevant architecture instructions. Resolve project paths against `/Users/omarkhalil/GitHub/tradinginterface`. Use the common coding method and native independent review; this skill supplies the Helix-specific decisions.
 
-Scaffolds new trading UI components following the exact conventions of the Helix codebase.
+## Extend the current interface
 
-## Invocation Patterns
+Locate the actual workspace, widget and layout registration. Extend the existing modules and preserve widget IDs, layout identities and `helix.*` persistence formats. Use the typed exports in `src/engine/registry.ts`; `src/workspaces/markets/index.ts` demonstrates registration. Do not restore migration-era barrels or depend on browser-global compatibility aliases.
 
-| User says | Action |
-|---|---|
-| "add a [name] pane to the market workspace" | New Pane component in `src/workspaces/market.tsx` |
-| "add a [type] chart to [pane]" | SVG chart subcomponent |
-| "create a config panel for [feature]" | Tabbed config panel (follow ResearchWorkspace ConfigPanel pattern) |
-| "add a [name] table" | Data table following trading table conventions |
-| "new workspace for [domain]" | Full workspace component with CSS Grid layout under `src/workspaces/` |
+Reuse `src/ui/Pane.tsx` and its current types. Its source metadata uses `sources: string[]`, not the former singular `source` prop. Inside `ModularGrid`, the slot owns the chrome: `Pane` publishes response sources and subtitle without adding a second header. Retain timestamps, units, run identity and freshness indicators.
 
-## Step 0 — Read target file first
+Read current tokens in `src/styles/tokens.css` and extend the owning style module. Preserve the desktop density, semantic colours, numeric alignment/typography and accessible controls. Reuse `src/ui/icons.tsx` and the existing hand-written SVG/canvas chart kit; do not introduce a chart library or hardcoded visual constants. Source badges must describe the actual response: a fixture or simulation must not appear live.
 
-Always read the target `.tsx` file before writing anything to understand:
-- Existing components (avoid name collisions)
-- CSS classes in use
-- The seeded RNG setup (copy `seed`/`rng` pattern exactly)
-- Grid layout structure
+## Preserve state and lifecycle
 
-## Step 1 — Decide component type
+Use the existing API client and `createPolledStore`/`usePolled` in `src/lib/store.ts`. Preserve single-flight requests, shared subscriber-owned timers, invalidation ordering and cleanup. Distinguish an initial failure from stale last-good data, and make both visible. Avoid a separate polling loop per component or synthetic fallback for a failed connected feed.
 
-| Type | Name suffix | Wraps in `<Pane>`? |
-|---|---|---|
-| Workspace panel with title bar | `Pane` | Yes |
-| SVG line/area chart | `Chart` | No (subcomponent) |
-| SVG heatmap | `HeatChart` or `Surface` | No (subcomponent) |
-| Config panel with tabs | `Config` or `ConfigPanel` | Yes |
-| Data table | inline in Pane or `Table` | No |
-| Full workspace | `Workspace` | N/A (is the parent) |
+Keep live server state, persisted user/workspace state and ephemeral view state distinct. Preserve cancellation, resource release and the user's drafts, focus and layout when components remount or hide. Demonstration data belongs in an explicit fixture/demo path, with its origin visible.
 
-## Step 2 — Write the component
+## Respect backend and execution boundaries
 
-### Pane wrapper (mandatory for all workspace panels)
+Backend changes need their own exact scope and current owner contracts. Preserve `routers → services → bridges`, synchronous market-data requests, vendor quotas and shared cache/usage-ledger ownership. Do not add streaming, extra backend replicas, another state framework or an authentication stack merely because a pane needs data.
 
-```jsx
-function MyNewPane() {
-  return (
-    <Pane title="My Title" source="live" sub="optional subtext">
-      {/* content */}
-    </Pane>
-  );
-}
-```
+Distinguish authentication from application authorization: the documented Cognito deployment is a trusted shared workspace, not per-user account isolation. Do not expose server credentials to the frontend. Keep the T212 execution freeze and all live-trading switches intact; UI work is no authorization for broker execution or new order paths. Preserve the mandatory `uv run --no-sync` backend launch convention.
 
-Source badge mapping:
-- `"live"` → amber — real-time market data
-- `"internal"` → indigo — model output, fair value, internal analytics
-- `"sim"` → purple — simulated, backtested, hypothetical
-- `"rec"` → cyan — system recommendations
+## Evidence
 
-### Seeded fake data
-
-```javascript
-let seed = 9999; // choose a unique value — each component needs its own seed
-const rng = () => { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; };
-const prices = Array.from({ length: 60 }, () => 45 + rng() * 10);
-```
-
-### SVG line chart
-
-```jsx
-function MyChart({ data, width = 300, height = 70 }) {
-  const pad = { t: 6, r: 6, b: 14, l: 28 };
-  const w = width - pad.l - pad.r;
-  const h = height - pad.t - pad.b;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const xs = i => (i / (data.length - 1)) * w;
-  const ys = v => h - ((v - min) / (max - min || 1)) * h;
-  const d = data.map((v, i) => `${i === 0 ? 'M' : 'L'}${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).join(' ');
-  return (
-    <svg width={width} height={height} style={{ display: 'block' }}>
-      <g transform={`translate(${pad.l},${pad.t})`}>
-        {/* grid lines */}
-        {[0, 0.5, 1].map(t => (
-          <line key={t} x1={0} y1={h * (1 - t)} x2={w} y2={h * (1 - t)}
-            stroke="var(--border-hairline)" strokeWidth={1} />
-        ))}
-        <path d={d} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
-      </g>
-    </svg>
-  );
-}
-```
-
-### SVG heatmap
-
-```jsx
-function HeatChart({ grid, rows, cols }) {
-  const cellW = 14, cellH = 9;
-  const heat = v => {
-    // v in [-1, 1]: negative=ask, positive=bid
-    if (v > 0) return `rgba(74, 222, 128, ${Math.min(v, 1) * 0.8})`;
-    return `rgba(248, 113, 113, ${Math.min(-v, 1) * 0.8})`;
-  };
-  return (
-    <svg width={cols * cellW} height={rows * cellH} style={{ display: 'block' }}>
-      {grid.map((row, r) => row.map((val, c) => (
-        <rect key={`${r}-${c}`}
-          x={c * cellW} y={r * cellH}
-          width={cellW - 1} height={cellH - 1}
-          fill={heat(val)} />
-      )))}
-    </svg>
-  );
-}
-```
-
-### Data table
-
-```jsx
-<div style={{ overflowY: 'auto', flex: 1 }}>
-  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px' }}>
-    <thead>
-      <tr style={{ position: 'sticky', top: 0, background: 'var(--bg-raised)' }}>
-        <th style={{ textAlign: 'left', padding: '3px 6px', color: 'var(--text-secondary)', fontWeight: 500 }}>Name</th>
-        <th style={{ textAlign: 'right', padding: '3px 6px', color: 'var(--text-secondary)', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>Value</th>
-        <th style={{ textAlign: 'right', padding: '3px 6px', color: 'var(--text-secondary)', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>Δ</th>
-      </tr>
-    </thead>
-    <tbody>
-      {rows.map((r, i) => (
-        <tr key={i} style={{ borderTop: '1px solid var(--border-hairline)' }}>
-          <td style={{ padding: '2px 6px', color: 'var(--text-primary)' }}>{r.name}</td>
-          <td style={{ padding: '2px 6px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>{r.value}</td>
-          <td style={{ padding: '2px 6px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: r.delta >= 0 ? 'var(--bid)' : 'var(--ask)' }}>
-            {r.delta >= 0 ? '+' : ''}{r.delta.toFixed(2)}
-          </td>
-        </tr>
-      ))}
-    </tbody>
-  </table>
-</div>
-```
-
-## Step 3 — Insert into workspace grid
-
-After writing the component, insert it into the workspace's `grid-template-areas`. Use the existing column structure and add a new row or area as needed.
-
-## Step 4 — Add CSS to src/styles/helix.css
-
-If the component needs new CSS, add it to `src/styles/helix.css` — never inline magic values, never a new stylesheet file.
-
-## Constraints
-
-- Never hardcode hex colors — always `var(--token-name)`
-- Never import chart libraries
-- Every workspace panel gets a `<Pane>` wrapper
-- Seed values must be unique per component (use `seeded` imported from `src/workspaces/market.tsx`)
-- Numbers: `textAlign: 'right'`, `fontFamily: 'var(--mono)'`
-- TypeScript is required — give props real types, not `any`
-- CSS lives in `src/styles/helix.css`; no per-component CSS files
+Use static inspection and independent review within the authorized task. Create, change or run tests only when Omar explicitly requests them. Report the verification actually performed and any unmet required gate; file presence, types and configuration alone do not establish runtime behavior.

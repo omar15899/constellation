@@ -6,7 +6,7 @@ The reading list at a glance. Each row links to the canonical PDF (archival) and
 
 This is the **map** of the learning-research collection. The skill itself rarely reads this file — it reads `extracted_principles.md` and `video_design_rules.md`, plus the relevant per-paper summary on demand. Use this index when you need to locate a specific paper, audit coverage, or hand-pick a small reading set.
 
-For the loading hierarchy the skill uses during normal video-script generation, see `../SKILL.md` §10–§11 and `../CLAUDE.md` "Paper-loading policy".
+For selective reading during video design, see [Resources by stage](../SKILL.md#resources-by-stage). Use a paper when its evidence is needed; the collection is not a mandatory reading sequence.
 
 ## 01 — Core reviews
 

@@ -1,7 +1,7 @@
 # Investigación y auditoría matemática
 
 Para trabajo sustancial o prolongado, conserva decisiones, hallazgos, evidencia y
-siguientes pasos mediante el [progreso del ciclo elegido](../../../../README.md).
+siguientes pasos en el [registro común](../../../../README.md).
 Sincroniza hitos personales sólo cuando la política local lo autorice; no abras
 otro contrato ni conviertas una tarea pequeña en un procedimiento de seguimiento.
 
@@ -111,16 +111,14 @@ conclusiones afectadas por cambios de hipótesis, fuentes o artefactos.
 
 ## Cierre proporcional y reanudable
 
-Para una entrega significativa, aplica el
-[protocolo común](../../../../README.md) y elige el ciclo por
-su objetivo. Una prueba o informe sin publicación usa el CLI portátil de Python
-3.11+ con una raíz y estado local, sin depender de Git. Un cambio Git ordinario
-conserva el flujo receptor. Cuando la publicación dependa de una prueba, declara
-la obligación semántica en el portátil y entrega a la integración Git los
-artefactos revisados y la evidencia vigente. El flujo Git no evalúa automáticamente
-los veredictos de prueba ni los hashes de entradas y comandos del portátil:
-verifica esa dependencia expresamente. No registres dos veces el encargo completo
-ni conviertas una aprobación Git en prueba matemática.
+Para cambios en archivos, aplica el [protocolo común](../../../../README.md)
+en el proyecto propietario. Usa el mismo encargo para la demostración, el código
+y el informe que formen una entrega; `mode: "local"` permite cerrarla sin publicar.
+El CLI actual requiere una raíz Git para ese contrato. Una consulta en conversación
+no necesita registro, y redactar una explicación no justifica crear un repositorio.
+Si se autoriza publicar un resultado matemático, incorpora el argumento revisado,
+sus dependencias y sus límites a la evidencia del contrato antes de la integración.
+Una aprobación Git acredita el flujo declarado, no la validez de la demostración.
 
 Relaciona cada requisito con los artefactos que lo satisfacen, comprobaciones
 pertinentes, autores reales y evaluación independiente. Elige perfiles por
@@ -135,11 +133,11 @@ Expresa el estado intelectual por afirmación, no solo por documento:
 
 | Estado | Evidencia y límite |
 | --- | --- |
-| Prueba informal revisada | Argumento completo bajo hipótesis declaradas, examinado por un revisor independiente; puede respaldar `proved` con `proof_review`. |
-| Prueba formal ejecutada | Verificador ejecutado y enunciado formal correspondiente al objetivo; documenta axiomas y dependencias antes de respaldar `proved` con `formal`. |
-| Experimental | Observación reproducible que orienta o contrasta una afirmación; `experimental` no satisface una obligación de prueba. |
-| Condicional | Conclusión dependiente de una premisa esencial aún no establecida; conserva `conditional` y esa premisa pendiente. |
-| Refutada | Contraejemplo o contradicción válidos para el enunciado; registra `refuted` y su alcance exacto. |
+| Prueba informal revisada | Argumento completo bajo hipótesis declaradas, examinado por un revisor independiente. |
+| Prueba formal ejecutada | Verificador ejecutado y enunciado formal correspondiente al objetivo; documenta axiomas y dependencias. |
+| Experimental | Observación reproducible que orienta o contrasta una afirmación; no satisface una obligación de demostración. |
+| Condicional | Conclusión dependiente de una premisa esencial aún no establecida; identifica esa premisa pendiente. |
+| Refutada | Contraejemplo o contradicción válidos para el enunciado y con alcance explícito. |
 | Abierta | No hay prueba ni refutación suficiente; conserva la obligación pendiente y distingue una conjetura de una mera ausencia de resultado. |
 
 Una prueba bajo las hipótesis explícitas del problema no es incompleta solo por
@@ -148,7 +146,9 @@ premisa exigida por el encargo. Del mismo modo, refutar una afirmación no
 satisface una obligación declarada de demostrarla: conserva ese hecho en el
 contrato, aunque la refutación resuelva la pregunta intelectual del usuario.
 
-No declares `proved` ni cierre completo mientras quede una obligación esencial
+Estos estados describen la evidencia matemática; no son comandos ni veredictos
+automáticos del CLI. No declares demostrada una afirmación ni cerrado el encargo
+mientras quede una obligación esencial
 abierta o evidencia contradictoria sin resolver. Un cierre parcial debe decir
 qué se obtuvo, bajo qué hipótesis, qué impide concluir y qué comprobación o
 argumento permitiría continuar; conserva artefactos y referencias verificables.

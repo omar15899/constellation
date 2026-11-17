@@ -34,7 +34,7 @@ ResearchLab is the QuantOS Tier-2 experiment orchestrator, perimeter `quantos-in
 
 - .claude/registry/peers.yaml
 
-- .claude/skills/study-report-pipeline/SKILL.md
+- /Users/omarkhalil/OmarOS/05_Projects/QuantOS/Documentation/research_pipelines/index.md
 
 - research_algorithms/learning_to_rank_cross_sectional/README.md
 
@@ -48,21 +48,21 @@ ResearchLab is the QuantOS Tier-2 experiment orchestrator, perimeter `quantos-in
 
 - Coding standards inherited from QuantOS (CLAUDE.md): 'Python 3.12, `mypy --strict`, `pyrsistent.PMap` for state, `typing.Protocol` for interfaces, `dataclasses(frozen=True)` for value types', property tests with hypothesis, unit tests with pytest, and 'Every public abstraction ships with at least one test.' Side effects flow through the `Capability` environment ([[ADR-0013]]). Caveat: `strict = true` is configured in packages/*/pyproject.toml, not at the root, so the root `uv run mypy packages/` does not itself apply it.
 
-- Deterministic regeneration is the central invariant (.claude/skills/study-report-pipeline/SKILL.md:7): 'Same (code_commit, dataset_version_hash, config_hash, seed_pack) -> bit-identical audit_dag_root and bit-identical report.md (modulo a documented timestamp non-determinism floor).'
+- Deterministic regeneration is the central invariant (/Users/omarkhalil/OmarOS/05_Projects/QuantOS/Documentation/research_pipelines/index.md:7): 'Same (code_commit, dataset_version_hash, config_hash, seed_pack) -> bit-identical audit_dag_root and bit-identical report.md (modulo a documented timestamp non-determinism floor).'
 
-- Five-link lineage chain mandatory (SKILL.md:8): 'code_commit -> dataset_version_hash -> config_hash -> audit_dag_root -> artefact_hashes. Every link content-addressed via BLAKE3 over a canonical encoding (Cap'n Proto for binary, sorted-key UTF-8 JSON for text).'
+- Five-link lineage chain mandatory (retained study doctrine): 'code_commit -> dataset_version_hash -> config_hash -> audit_dag_root -> artefact_hashes. Every link content-addressed via BLAKE3 over a canonical encoding (Cap'n Proto for binary, sorted-key UTF-8 JSON for text).'
 
-- 'as_of_decision_time is part of the config. A config that does not pin it is invalid; refuse to scaffold or run.' (SKILL.md:9). .claude/hooks/research_preflight.py does check for the string, but only WARNS unless RESEARCHLAB_ENFORCE_PREFLIGHT=1 (settings.json pins it to 0) — the absolute form of this rule is doctrine, not machine-enforced.
+- 'as_of_decision_time is part of the config. A config that does not pin it is invalid; refuse to scaffold or run.'. .claude/hooks/research_preflight.py does check for the string, but only WARNS unless RESEARCHLAB_ENFORCE_PREFLIGHT=1 (settings.json pins it to 0) — the absolute form of this rule is doctrine, not machine-enforced.
 
-- 'Falsifiability is a precondition. A study cannot run against a hypothesis whose falsifiability statement does not name a metric, threshold, and horizon.' (SKILL.md:15). Doctrine only — no hook or CI job checks it.
+- 'Falsifiability is a precondition. A study cannot run against a hypothesis whose falsifiability statement does not name a metric, threshold, and horizon.'. Doctrine only — no hook or CI job checks it.
 
-- Two-numbers rule (SKILL.md:10): reports of kind single_strategy_backtest or cost_robustness 'must quote a Sharpe under 3x the calibrated cost in addition to the headline Sharpe.'
+- Two-numbers rule (retained study doctrine): reports of kind single_strategy_backtest or cost_robustness 'must quote a Sharpe under 3x the calibrated cost in addition to the headline Sharpe.'
 
-- 'outputs/ is gitignored. Study artefacts are runtime state, not source. Never commit outputs/<study>/<ts>/.' (SKILL.md:12; enforced by .gitignore and re-checked, advisory-only, by research_preflight.py.)
+- 'outputs/ is gitignored. Study artefacts are runtime state, not source. Never commit outputs/<study>/<ts>/.' (Excluded by .gitignore and re-checked, advisory-only, by research_preflight.py.)
 
-- Registry idempotence and append-only (SKILL.md:13): 'A second registry write with the same run_id (= audit_dag_root) is a no-op. Records are append-only; never deleted.'
+- Registry idempotence and append-only (retained study doctrine): 'A second registry write with the same run_id (= audit_dag_root) is a no-op. Records are append-only; never deleted.'
 
-- 'AI-authored reports are not evidence on their own... a study published without ai_reviewed: true is opinion, not evidence.' (SKILL.md:14.)
+- 'AI-authored reports are not evidence on their own... a study published without ai_reviewed: true is opinion, not evidence.'
 
 - Never claim an edge without the promotion gate. docs/component_status.md:17-19: 'None of the four asserts an alpha edge... **No verdict is recorded for any of them**, and none should be reported as a live edge.' Verdicts come from DSR / PBO-CSCV / reality-check / BH-FDR / bootstrap-CI at the honest family size.
 
@@ -78,7 +78,19 @@ ResearchLab is the QuantOS Tier-2 experiment orchestrator, perimeter `quantos-in
 
 - Never commit real positions: .gitignore excludes `data/private/` and `*.account.json` under the comment 'Private T212 account snapshots / real holdings — NEVER commit real positions.'
 
-## Comandos de referencia
+## Retained domain procedure
+
+Before scaffolding or regenerating a study, read its configuration, existing manifest and applicable research-pipeline chapter. Keep configuration, manifest, provenance, data, figures, tables and rendered report together under the declared run layout. Reports derive from recorded artifacts and never invent metrics.
+
+Completion records data sources, model/code versions, assumptions, explicit conclusions, limitations and archival/publication disposition. Preserve reproducibility limits, the five-link lineage chain, honest falsifiability, append-only run registration and human-review status. Runtime outputs remain outside source publication.
+
+The canonical directory is `/Users/omarkhalil/OmarOS/05_Projects/QuantOS/Documentation/research_pipelines/`: consult `studies.md`, `reports.md`, `provenance.md`, `reproducibility.md` and `figures_and_tables.md` as the task requires.
+
+## Validation and publication
+
+The commands below are references, not automatic authorization. Create, change or run tests only when Omar explicitly requests them. Record permitted checks and independent review through Constellation; any test-dependent gate without authorized evidence remains unmet. Domain hooks are additional controls, not proof that the outer Constellation commit ran the required checks. No startup, documentation or skill workflow publishes automatically.
+
+## Reference commands
 
 - uv run ruff check .   # .github/workflows/lint.yml, working-directory ResearchLab
 

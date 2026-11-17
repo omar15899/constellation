@@ -35,6 +35,23 @@ For every load-bearing claim, identify the type of each object. Check for silent
 
 Definitions should not be circular, and symbols should not change type between sections.
 
+Choose a passage on which the conclusion depends and reconstruct it using only
+the prerequisites granted to the reader. If reconstruction requires a new
+hypothesis, a change of space or an unstated identification, repair the point
+where that dependency enters. For a dual pairing in a finite-dimensional real
+vector space, changing the basis must change vector and covector coordinates
+compatibly while preserving the scalar evaluation. Identifying the functional
+with a vector requires the additional choice of an inner product; the text
+must explain what that choice contributes.
+
+In a probabilistic argument, follow the random variable from its outcome space
+to its values. Changing the available information differs from changing the
+law. For an integrable real random variable, a conditional expectation is taken
+under a probability measure and relative to a conditioning sigma-algebra. A
+finite example should let the reader verify its defining integral identity on
+events in that sigma-algebra. Use the analogous decisive distinction in the
+actual subject rather than imposing these examples everywhere.
+
 ### 3. Derivation and arithmetic
 
 Recompute representative formulas and all numbers that carry a decision. Check denominators, conditioning information, units, boundary conditions, card or state compatibility, conservation laws, and off-by-one conventions.

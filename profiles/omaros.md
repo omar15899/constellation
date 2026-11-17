@@ -40,7 +40,7 @@ en conversación. Una modificación no trivial deja una traza breve declarada en
 cambios, evidencia y límites; nunca el prompt ni la conversación.
 
 Una petición explícita de guardar aprendizaje profesional sobre ENGIE, pricing,
-hedging u operativa activa `constellation:engie-learning`.
+hedging u operativa activa `engie-learning`.
 Busca antecedentes antes de escribir y conserva teoría general y fuentes en su
 dominio. El conocimiento nuevo y sus síntesis diarias viven en
 `06_Knowledge_Base/Mathematics/Finance/ENGIE/Private/`, con fechas de aprendizaje,
@@ -76,16 +76,42 @@ obligaciones pendientes. Investigar, simular, hacer paper trading y emitir
 autorización correspondiente; una comprobación de investigación nunca activa
 órdenes como efecto lateral.
 
-`constellation:writter` y `constellation:scholar` guían las explicaciones. Establece
+`writter` guía la redacción y `teach-from-first-principles` el aprendizaje que
+requiere reconstrucción o práctica; `mathematics` cubre las demostraciones. Establece
 objetos, estructuras, hipótesis y cuantificadores; distingue una función de su
 valor, un proceso de una trayectoria y un operador de su matriz. Introduce
 formalismo con su significado y justifica los pasos esenciales. Un ejemplo
 confirma el mecanismo; una prueba explica la conclusión. Para LaTeX, lee el
 capítulo, preámbulo, macros y bibliografía, integra el estilo y compila.
 
+Cuando sea útil calibrar una explicación, consulta el pasaje pertinente de
+`06_Knowledge_Base/Mathematics/Finance/Matematicas_Financieras.MD` o de
+`06_Knowledge_Base/Mathematics/Functional_Analysis/vectores_coordenadas_y_dual_pairing.md`.
+La primera referencia desarrolla configuraciones, observables, información y
+ley; la segunda, el emparejamiento y su representación en una base. Son ejemplos
+del vault, no prerrequisitos de toda respuesta ni autorización para guardar
+preferencias nuevas. Si un material falta, usa el método disponible y declara
+el límite cuando afecte al encargo.
+
+Para documentación de QuantOS, lee `05_Projects/QuantOS/Documentation/index.md`,
+`ai_reading_order.md` y `current_vs_target.md`, además de la doctrina pertinente
+y el código actual del laboratorio dueño. Conserva la distinción entre
+implementado, parcial, declarado y contradictorio. Cubre la pregunta, el contenido
+matemático, su realización, invariantes, fallos protegidos y pendientes, evidencia
+existente, extensiones y referencias; integra esas funciones en la estructura
+del capítulo sin repetir lo que ya es canónico. Enlaza código y fuentes reales,
+actualiza los índices afectados dentro del alcance y no inventes ejecución de tests.
+Una consulta no autoriza crear un capítulo, modificar la doctrina ni publicar.
+
+Los métodos propios del vault viven en `Constellation/skills/omaros/`:
+`fast-finder`, `engie-learning`, `brainteasers-quant` y
+`brainteasers-quant-notes` conservan sus recursos y alcances específicos.
+Las automatizaciones conectadas se mantienen aparte de la selección de skills;
+su presencia no autoriza ejecutarlas ni demuestra que estén activas.
+
 ## Recuperación, privacidad y preservación
 
-`constellation:fast-finder` es la entrada mantenida de
+`fast-finder` es la entrada mantenida de
 búsqueda. Sus límites parciales no justifican conclusiones exhaustivas. Los raw,
 el archivo, salud y relaciones requieren alcance pertinente; conversaciones,
 logs y estados privados no son contexto incidental. Las asíncronas y el manual

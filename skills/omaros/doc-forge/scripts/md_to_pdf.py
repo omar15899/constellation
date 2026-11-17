@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 md_to_pdf.py — Markdown → PDF pipeline for doc-forge.
-Improves on the md-to-pdf skill with themes, TOC auto-detection, and a
-3-step engine fallback chain (lualatex → xelatex → pdflatex).
+Supports themes, TOC auto-detection, and a three-engine fallback chain
+(lualatex → xelatex → pdflatex).
 """
 import dataclasses
 import json
@@ -104,7 +104,7 @@ class MdToPdfPipeline:
         self.log = RunLog(source=str(self.src))
 
     # ------------------------------------------------------------------
-    # Stage 1 + 2: analysis + transformation (from md-to-pdf)
+    # Stage 1 + 2: analysis and transformation
     # ------------------------------------------------------------------
     LATEX_CMDS = [
         "mathcal", "mathbf", "mathrm", "mathbb", "mathfrak",
@@ -280,11 +280,10 @@ class PdfToMdPipeline:
         self.log_path = log_path
 
     def run(self):
-        # Delegate to existing pdf-to-md logic via subprocess for now
-        skill_dir = Path(__file__).parent.parent.parent / "pdf-to-md" / "scripts"
-        script = skill_dir / "pdf_to_md.py"
-        if not script.exists():
-            print(f"[doc-forge] pdf-to-md script not found at {script}", file=sys.stderr)
+        # Keep extraction in this package, with its own optional dependencies.
+        script = Path(__file__).resolve().with_name("pdf_extract.py")
+        if not script.is_file():
+            print(f"[doc-forge] PDF extraction script not found at {script}", file=sys.stderr)
             sys.exit(1)
         cmd = [sys.executable, str(script), str(self.src), "-o", str(self.out)]
         if self.mode != "auto":

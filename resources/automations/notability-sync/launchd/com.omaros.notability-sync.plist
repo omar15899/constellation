@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.omaros.notability-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>cd /Users/omarkhalil/OmarOS &amp;&amp; /usr/bin/env python3 /Users/omarkhalil/GitHub/Constellation/resources/automations/notability-sync/scripts/sync.py --quiet &gt;&gt; /tmp/notability-sync.log 2&gt;&amp;1</string>
+    </array>
+
+    <key>WatchPaths</key>
+    <array>
+        <string>/Users/omarkhalil/Library/Mobile Documents/com~apple~CloudDocs/Notability_Backup</string>
+        <string>/Users/omarkhalil/Library/Mobile Documents/iCloud~com~gingerlabs~Notability/Documents</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/notability-sync.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/notability-sync.err.log</string>
+</dict>
+</plist>

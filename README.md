@@ -1,95 +1,160 @@
 # Constellation
 
-Una fuente para los ocho agentes, las skills y los encargos de Omar. Codex
-selecciona herramientas y ejecuta subagentes nativos; Constellation registra
-alcance, evidencia y publicación. Las consultas se responden directamente.
+One source for Omar's eight agents, skills and change contracts. Codex, Claude
+and GitHub Copilot select tools and run native subagents; Constellation records
+ownership, evidence, review and publication. Consultations need no task record.
 
 ```text
 Constellation/
-├── constellation.py       # única entrada
-├── constellation/         # estado, Git, hooks e instalación
-├── agents/                # ocho definiciones heredadas
-├── skills/                # métodos y recursos, agrupados por propietario
-├── profiles/              # restricciones y destinos de los proyectos
-├── instructions/          # contrato común
-├── resources/automations/ # automatizaciones conservadas y conectadas
-├── git-hooks/             # entradas Git al mismo control
-├── tests/                 # pruebas y comprobación nativa
+├── constellation.py       # common command entry
+├── constellation/         # ledger, Git, hooks and reversible installation
+├── agents/                # eight canonical English definitions
+├── skills/                # methods and resources grouped by owner
+├── profiles/              # project constraints and native client guides
+├── instructions/          # shared working contract
+├── resources/automations/ # integration code, separate from skill discovery
+├── git-hooks/             # Git entries into the same publication gate
+├── tests/                 # existing suites; explicit user request required
 ├── resource-inventory.json
-└── migration.py           # inventario, protección y retirada explícita
+└── migration.py           # inventory, preservation and explicit retirement
 ```
 
-## Instalar
+## Methods and project workflows
 
-Python 3.11+, Git y Codex. Mantén este checkout fuera de `~/.codex`. Ajusta las
-raíces de `profiles/projects.json` si cambia el equipo. Desde esta carpeta:
+The library has 18 maintained skills. Only the five general methods are installed
+globally; each project receives its own workflows. Repository constraints belong
+in `profiles/`, and the eight agents supply working roles rather than additional
+skills for planning, logging, routing or review.
+Existing native enable/disable preferences still apply to installed entries.
+
+| Scope | Skills |
+| --- | --- |
+| General | `coding`, `mathematics`, `quant-research`, `writter`, `teach-from-first-principles` |
+| OmarOS | `fast-finder`, `engie-learning`, `brainteasers-quant`, `brainteasers-quant-notes`, `doc-forge`, `educational-video-script-architect`, `git-history-reviewer` |
+| KarimSpecificCase | `gs-interface-editor` |
+| tradinginterface | `component-builder` |
+| Sweeplab | `pde-intake`, `pde-results-review` |
+| Scilux | `scilux-lessons`, `scilux-documents` |
+
+Use the owner's profile for lab rules and cross-repository work. Document-format,
+design and skill-authoring tools remain with their native providers; their
+availability depends on the client. Constellation does not maintain copied
+provider catalogues or old slash-command aliases.
+
+The [automation map](profiles/automations.md) identifies integration code and
+its consumers. Automations do not appear as skills or start because this source
+is installed. Private client databases, task records and receipts are runtime
+data, not another source of instructions.
+
+## Install
+
+Use Python 3.11+, Git and a native client. Keep this checkout outside client
+homes. Project roots live in `profiles/projects.json`. From this checkout:
 
 ```sh
 python3 constellation.py install
 python3 constellation.py install --apply
-python3 -m unittest discover -s tests -v
 ```
 
-La primera orden muestra el plan. La segunda conserva recibos privados antes de
-cambiar entradas nativas. Los ajustes personales, autenticación, sesiones y
-privacidad siguen perteneciendo a Codex. La confianza de hooks se concede por
-su interfaz nativa y debe comprobarse en una sesión nueva. Las skills de terceros
-siguen instaladas por su proveedor. Cada repositorio conserva su Git y datos.
-
-## Usar
-
-Lee el perfil del dueño. Antes de editar, abre un encargo con rutas **exactas**
-y los IDs reales de los autores nativos. Un encargo por dueño Git permite
-trabajar en varios repositorios en paralelo sin compartir índices.
+The first command previews the full installation; the second applies it with
+private rollback receipts. It can touch all registered projects. For Copilot
+personal entries only, use the scoped commands:
 
 ```sh
-python3 constellation.py begin ejemplo < contrato.json
-python3 constellation.py check ejemplo pruebas -- python3 -m unittest discover -s tests
-python3 constellation.py status ejemplo
-python3 constellation.py review ejemplo < revision.json
-python3 constellation.py commit ejemplo 'Describe el cambio'
-python3 constellation.py push ejemplo
+python3 constellation.py install --client copilot
+python3 constellation.py install --client copilot --apply
 ```
 
-`contrato.json` contiene `root`, `requirement`, `coordinator`, `session_id`,
-`assignments` (ruta → ID del autor) y `required_checks` (p. ej. `["pruebas"]`).
-Cuando el hook usa un UUID y el catálogo un nombre canónico, `actor_sessions`
-asocia ese nombre con el UUID de ejecución dentro del encargo. Es información
-de encaminamiento, no una prueba de identidad. `session_id` es la sesión padre;
-el UUID del subagente llega como `agent_id`. Registra ambos antes de editar.
-La revisión contiene `reviewer`, `evidence`, `verdict` y
-`expected_fingerprint`, leído antes de revisar. El revisor es distinto de los
-autores y del coordinador. Un cambio de contenido o evidencia invalida la
-revisión. Guarda hitos curados mediante `checkpoint` con `{"summary":"..."}`.
-Para corregir o transferir una asignación, `assign` recibe `path`, `author` y
-`reason`: conserva los autores anteriores e invalida su evidencia. Registra el
-ID devuelto por la herramienta nativa; el entorno puede contener el del padre.
-Los registros privados viven en `~/.local/state/constellation`; no guardan
-conversaciones ni salidas de herramientas.
+Personal preferences, authentication, sessions and privacy belong to the native
+client. Inspect hook admission in a new native session. Third-party skills remain
+with their providers. Each repository retains its own Git and data.
 
-`PreToolUse` comprueba las rutas de ediciones estructuradas y comandos
-destructivos conocidos. No puede aislar todas las escrituras de un shell.
-`Stop` señala trabajo local pendiente una vez, sin inventar un cierre. Git
-controla el árbol candidato, los commits salientes y el destino exacto. La
-publicación preserva el índice ajeno y se confirma consultando el SHA remoto.
-Las identidades registradas permiten exigir independencia; no autentican al
-proceso ni garantizan la calidad intelectual de una revisión.
+The [Claude guide](profiles/claude.md) and [Copilot guide](profiles/copilot.md)
+explain native locations, preserved data and limits. The eight roles live only in
+`agents/*.toml`; installation generates Markdown adapters in private state.
+Clients share skills and scope controls while retaining native formats,
+permissions and trust. Reinstall after changing generated role or instruction
+sources. This local installation does not deploy cloud jobs.
 
-El monitor de Notes/Reminders conserva sus tres snapshots locales mediante
-recibo, hashes e índice exactos; esa vía automática no autoriza un push.
+`python3 constellation.py docs --provider copilot verify` checks local reference
+integrity; `search TEXT` searches and `refresh` explicitly downloads current
+official pages. Providers are `codex`, `claude`, `copilot` and `all`.
 
-## Recuperar o revertir
+## Engineering and parallel review
 
-Después de una interrupción: `python3 constellation.py recover ejemplo`.
-Consulta primero su resultado; si el remoto ya contiene el commit previsto,
-no se crea otro commit. Si cambió el destino o existe divergencia, se bloquea.
-Las pruebas y revisiones quedan congeladas durante la publicación. Si el remoto
-confirma el commit pero quedan ediciones locales del alcance, el encargo sigue
-abierto: repite `check`, `review` y `commit` en él. Conserva la publicación anterior
-y las ediciones; `recover` no las descarta.
+Write readable code with domain names, visible control flow, explicit contracts
+and useful failure handling. Abstractions solve current needs. The coding skill
+and canonical roles define this standard in English.
 
-Para revertir la instalación: `python3 constellation.py install --rollback RECIBO`.
-Los recibos se guardan fuera de Git y el rollback rechaza cambios posteriores.
-La retirada histórica tiene su manifiesto exacto y copia privada; recupera lo
-versionado desde Git y el estado local desde esa copia. No borres los recibos
-ni el historial mientras puedas necesitar la reversión.
+Do not create, change or run tests unless Omar explicitly requests them. Preserve
+existing tests. Static inspection, syntax/configuration validation and independent
+review are permitted; state their limits and leave test-dependent gates unmet.
+
+Use native parallel agents for independent tasks with exclusive file ownership.
+After integration and permitted checks, reviewers inspect the same fingerprint.
+A finding's verifier differs from its author and discoverer. Hooks enforce
+supported scope controls and remind about pending work; they do not launch agents
+or guarantee correctness. Copilot reviewers have no edit, shell or delegation
+tool, and a worker's completion is a handoff rather than final approval.
+
+## Work
+
+Read the owner's profile. Before editing, open a contract with **exact file
+paths** and real native author IDs. One contract per Git owner permits work in
+several repositories without sharing indexes.
+
+```sh
+python3 constellation.py begin example < contract.json
+python3 constellation.py check example whitespace -- git diff --check
+python3 constellation.py status example
+python3 constellation.py review example < review.json
+python3 constellation.py commit example 'Describe the change'
+python3 constellation.py push example
+```
+
+`contract.json` contains `root`, `requirement`, `coordinator`, `session_id`,
+`assignments` (path to native author ID) and `required_checks` (for example,
+`["whitespace"]`). Select checks appropriate to the change; whitespace alone
+establishes no behavioral correctness. Use `mode: "local"` for a local deliverable
+and close it with `finish` after checks and independent review. The default
+publication mode freezes the Git destination; publication also requires the
+user's authorization for that scope and destination.
+
+When hooks supply a UUID and the catalog supplies a canonical name,
+`actor_sessions` associates them within the task. This is routing, not
+authentication. `session_id` identifies the parent and `agent_id` the child;
+Copilot uses the corresponding camelCase fields. Register both before editing.
+Reviews contain `reviewer`, `evidence`, `verdict` and `expected_fingerprint`, read
+before review. Reviewers differ from authors and the coordinator. Later changes
+to content or evidence invalidate approval.
+
+Record curated milestones with `checkpoint` and `{"summary":"..."}`. To correct
+or transfer ownership, `assign` accepts `path`, `author` and `reason`; it retains
+previous authors and invalidates stale evidence. Use the ID returned by the
+native tool, not an inherited environment ID. Private records live under
+`~/.local/state/constellation`; they contain neither conversations nor tool output.
+
+Shared hooks inspect structured edits and recognized destructive commands.
+They cannot isolate arbitrary shell writes. Stop hooks report pending work
+without inventing completion. Git controls the candidate tree, outgoing commits
+and exact destination. Publication preserves foreign staged work and confirms
+the remote SHA. Recorded identities enforce declared independence; they neither
+authenticate processes nor certify the intellectual quality of a review.
+
+The Notes/Reminders monitor preserves its three local snapshots using exact
+receipts, hashes and indexes; this automation does not authorize a push.
+
+## Recover or roll back
+
+After an interruption, run `python3 constellation.py recover example` and inspect
+the result. If the remote already contains the intended commit, no duplicate is
+created. A changed destination or divergence blocks publication. Checks and
+reviews remain frozen during publication. If the remote confirms the commit but
+local scoped edits remain, the task stays open: repeat permitted checks, review
+and commit in that task. Recovery preserves the prior publication and local edits.
+
+Use `python3 constellation.py install --rollback RECEIPT` to reverse installation.
+Receipts stay outside Git; rollback rejects later edits. Historical retirement
+has an exact manifest and private backup. Recover versioned content from Git and
+local state from that backup. Retain receipts and history while recovery may be
+needed.
