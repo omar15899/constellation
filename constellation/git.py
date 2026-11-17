@@ -92,27 +92,16 @@ def _target_current(root: str | Path, frozen: dict[str, str]) -> None:
         raise GitError('Branch or remote push URL changed since task creation')
 
 
-def _paths(root: Path, paths: list[str]) -> list[str]:
-    """Validate literal file paths, including deleted files, inside this Git owner."""
-    if Path(_text(root, 'rev-parse', '--show-toplevel')).resolve() != root:
-        raise GitError('Task root must be the Git owner root')
+def _paths(root: Path, paths: list[str],
+           policy: dict[str, Any] | None = None) -> list[str]:
+    """Use the contract's literal-path validator for publication snapshots."""
+    from .state import StateError, validate_paths
     if not paths or len(paths) != len(set(paths)):
         raise GitError('Scope must contain distinct exact paths')
-    for name in paths:
-        parsed = PurePosixPath(name)
-        if (not name or name != str(parsed) or parsed.is_absolute()
-                or any(p in ('..', '.git') for p in parsed.parts)):
-            raise GitError('Unsafe scope path')
-        item = root
-        for part in parsed.parts:
-            item = item / part
-            if item.is_symlink():
-                raise GitError('Symlink scope is unsupported')
-            if item != root and (item / '.git').exists():
-                raise GitError('Scope crosses a nested Git owner')
-        if item.is_dir():
-            raise GitError('Scope requires exact files, not directories')
-    return sorted(paths)
+    try:
+        return list(validate_paths(root, {name: 'scope' for name in paths}, policy))
+    except StateError as exc:
+        raise GitError(str(exc)) from exc
 
 
 def _staged(root: str | Path, index: Path | None = None) -> set[str]:
@@ -121,13 +110,85 @@ def _staged(root: str | Path, index: Path | None = None) -> set[str]:
                  index=index).split(b'\0') if p}
 
 
-def _worktree_snapshot(root: str | Path, paths: list[str]) -> dict[str, Any]:
-    """Bind literal owned bytes and modes, including deletions, without staging."""
+def _index_entries(root: str | Path, index: Path | None = None) -> dict[str, list[str]]:
+    """Read index modes, object IDs and stages without reading their blobs."""
+    result: dict[str, list[str]] = {}
+    records = _run(root, 'ls-files', '--stage', '-z', index=index).split(b'\0')
+    for record in records:
+        if not record:
+            continue
+        metadata, raw_name = record.split(b'\t', 1)
+        name = raw_name.decode('utf-8', 'surrogateescape')
+        result.setdefault(name, []).append(metadata.decode('ascii'))
+    return result
+
+
+def _index_snapshot(root: str | Path, paths: list[str]) -> dict[str, list[str]]:
+    """Bind selected index entries, including an explicit absence or deletion."""
+    entries = _index_entries(root)
+    return {name: entries.get(name, []) for name in sorted(set(paths))}
+
+
+def _path_input(paths: list[str]) -> bytes:
+    """Encode exact names for Git's NUL-delimited stdin path interfaces."""
+    return b''.join(name.encode('utf-8', 'surrogateescape') + b'\0' for name in paths)
+
+
+def _tree_entries(root: str | Path, tree: str) -> dict[str, bytes]:
+    """Read tree entry modes and object IDs without opening file contents."""
+    result: dict[str, bytes] = {}
+    for record in _run(root, 'ls-tree', '-r', '-z', tree).split(b'\0'):
+        if record:
+            metadata, raw_name = record.split(b'\t', 1)
+            mode, _kind, object_id = metadata.split(b' ')
+            result[raw_name.decode('utf-8', 'surrogateescape')] = mode + b' ' + object_id
+    return result
+
+
+def _reset_index_paths(root: str | Path, tree: str, paths: list[str], index: Path) -> None:
+    """Replace owned index entries from a reviewed tree, preserving other entries.
+
+    Index-info input avoids command-line limits for large cleanup contracts and
+    never refreshes or follows a removed private worktree path.
+    """
+    entries = _tree_entries(root, tree)
+    encoded = {name: name.encode('utf-8', 'surrogateescape') for name in paths}
+    # Remove all owned entries first: a new link can replace an old directory
+    # only after its explicitly owned descendant entries have been removed.
+    records = [b'0 ' + b'0' * len(tree) + b'\t' + encoded[name] + b'\0' for name in paths]
+    records.extend(entries[name] + b'\t' + encoded[name] + b'\0'
+                   for name in paths if name in entries)
+    _run(root, 'update-index', '-z', '--index-info', data=b''.join(records), index=index)
+
+
+def _worktree_snapshot(root: str | Path, paths: list[str],
+                       policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Bind owned files or literal links without reading explicitly removed data.
+
+    Removal entries describe an index-only effect; their local files, if any,
+    are outside the publication and are deliberately neither opened nor hashed.
+
+    Args:
+        root: Exact Git owner root.
+        paths: Exact owned file, removal or declared leaf-link paths.
+        policy: Validated publication capabilities governing these paths.
+
+    Returns:
+        Regular-file hashes and modes, literal link targets, deletion markers,
+        or index-only removal markers for the exact scope.
+    """
     root = Path(root).resolve()
-    names = _paths(root, paths)
+    names = _paths(root, paths, policy)
+    removed = set((policy or {}).get('remove_paths', []))
     result: dict[str, Any] = {}
     for name in names:
+        if name in removed:
+            result[name] = {'remove_from_index': True}
+            continue
         path = root / name
+        if path.is_symlink():
+            result[name] = {'symlink_target': os.readlink(path), 'mode': 0o120000}
+            continue
         if not path.exists():
             result[name] = None
             continue
@@ -142,7 +203,8 @@ DEFAULT_PRIVATE = frozenset({'private', 'conversations', 'conversation_archives'
                              'transcripts', 'secrets', '.env', 'auth.json',
                              'sessions', 'rollouts', 'daemon_logs', 'sync_state',
                              '.sync_state', 'turn_states', 'archived_sessions',
-                             'credentials.json', '.netrc', 'id_rsa', 'id_ed25519'})
+                             'credentials.json', '.netrc', 'id_rsa', 'id_ed25519',
+                             '.playwright-mcp'})
 
 
 def private_path(path: str, policy: dict[str, Any] | None = None) -> bool:
@@ -165,8 +227,9 @@ def private_path(path: str, policy: dict[str, Any] | None = None) -> bool:
     # ordinary code: classify the data suffix, not merely the word 'daemon'.
     if any(part.casefold().endswith('_conversations') for part in parts):
         return True
-    if (name.startswith(('.env.', 'rollout-'))
-            or ('_daemon.' in name and name.endswith(('.json', '.jsonl', '.sqlite', '.db')))
+    if ((name.startswith('.env.') and name != '.env.example')
+            or name.startswith('rollout-')
+            or ('_daemon.' in name and name.endswith(('.json', '.jsonl', '.sqlite', '.db', '.log', '.err')))
             or ('_daemon.log' in name)
             or ('conversation' in name and name.endswith(('.json', '.jsonl', '.log')))):
         return True
@@ -209,29 +272,89 @@ def _temporary_index(root: str | Path, initial: Path | None = None) -> Iterator[
 
 def candidate(root: str | Path, paths: list[str], target: dict[str, str],
               policy: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build HEAD plus exact scope in an alternate index; leave real staging intact."""
+    """Build the exact reviewed worktree scope without changing real staging.
+
+    Explicit policy lists can adopt owned staging, publish literal leaf links,
+    or remove tracked entries while retaining their local data. Adopted staging
+    is fingerprinted, but current worktree bytes remain the publication source.
+    The default contract continues to reject overlap with existing staging.
+
+    Args:
+        root: Exact Git owner root.
+        paths: Complete literal scope, including replaced descendants.
+        target: Frozen remote, branch and destination ref.
+        policy: Project restrictions and explicit publication capabilities.
+
+    Returns:
+        The exact parent, candidate tree, snapshots and their fingerprint.
+
+    Raises:
+        GitError: Scope, current data, staging, destination or privacy violates
+            the declared contract. The real index remains untouched.
+    """
     from .state import effective_policy
     root = Path(root).resolve()
     policy = effective_policy(root, policy)
-    paths = _paths(root, paths)
+    paths = _paths(root, paths, policy)
+    removed = set(policy.get('remove_paths', []))
+    adopted = policy.get('adopt_staged_paths', [])
+    adopted_names = set(adopted)
     _target_current(root, target)
     if any((_git_dir(root) / name).exists() for name in
            ('MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply')):
         raise GitError('Complete the existing Git operation before publication')
-    if _staged(root) & set(paths):
+    scoped_index = _index_snapshot(root, paths)
+    if any(entry.rsplit(' ', 1)[-1] != '0'
+           for entries in scoped_index.values() for entry in entries):
+        raise GitError('Resolve unmerged scoped index entries before publication')
+    if (_staged(root) & set(paths)) - adopted_names:
         raise GitError('Scope overlaps already staged work')
-    if any(private_path(path, policy) for path in paths):
+    if any(private_path(path, policy) for path in paths if path not in removed):
         raise GitError('Private paths cannot enter a publication candidate')
     parent = _text(root, 'rev-parse', 'HEAD')
-    worktree = _worktree_snapshot(root, paths)
+    parent_entries = _tree_entries(root, parent)
+    for name in paths:
+        if name in removed:
+            continue
+        if (parent_entries.get(name, b'').startswith(b'160000 ')
+                or any(entry.startswith('160000 ') for entry in scoped_index[name])):
+            raise GitError('Gitlinks may only be removed from this Git owner')
+    adopted_index = {name: scoped_index[name] for name in sorted(adopted)}
+    worktree = _worktree_snapshot(root, paths, policy)
     with _temporary_index(root) as index:
         _run(root, 'read-tree', parent, index=index)
-        _run(root, 'add', '--all', '--', *paths, index=index)
+        if removed:
+            _run(root, 'update-index', '--force-remove', '-z', '--stdin',
+                 data=_path_input(sorted(removed)), index=index)
+        added = [name for name in paths if name not in removed
+                 and (worktree[name] is not None or name in parent_entries)]
+        ordinary = [name for name in added if name not in adopted_names]
+        if ordinary:
+            _run(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul',
+                 data=_path_input(ordinary), index=index)
+        adopted_files = [name for name in added if name in adopted_names]
+        if adopted_files:
+            # Existing staging is an explicit adoption contract, including
+            # files deliberately staged despite an ignore rule. Only those
+            # exact names may bypass ignore matching in the isolated index.
+            _run(root, 'add', '--all', '--force', '--pathspec-from-file=-', '--pathspec-file-nul',
+                 data=_path_input(adopted_files), index=index)
         tree = _text(root, 'write-tree', index=index)
-    if _text(root, 'rev-parse', 'HEAD') != parent or _worktree_snapshot(root, paths) != worktree:
-        raise GitError('HEAD or scoped bytes changed while preparing candidate; retry')
+    changed = {name.decode('utf-8', 'surrogateescape') for name in _run(
+        root, 'diff-tree', '--no-commit-id', '--name-only', '-r', '--no-renames', '-z',
+        parent, tree).split(b'\0') if name}
+    if changed - set(paths):
+        raise GitError('Candidate changes undeclared paths; include replaced descendants in scope')
+    if any(private_path(name, policy) for name in _tree_entries(root, tree)):
+        raise GitError('Candidate retains private tracked paths; declare index-only removals')
+    if (_text(root, 'rev-parse', 'HEAD') != parent
+            or _worktree_snapshot(root, paths, policy) != worktree
+            or (adopted and _index_snapshot(root, adopted) != adopted_index)):
+        raise GitError('HEAD, scoped bytes or adopted staging changed while preparing candidate; retry')
     value = {'root': str(root), 'paths': paths, 'parent': parent, 'tree': tree,
              'target': target, 'policy': policy or {}, 'worktree': worktree}
+    if adopted:
+        value['adopted_index'] = adopted_index
     value['guard_hashes'] = {str(path): _file_hash(path) for event in ('pre-commit', 'pre-push')
                              for path in _guard_paths(policy or {}, event)}
     value['fingerprint'] = _digest(value)
@@ -266,6 +389,47 @@ def _index_lock(root: str | Path) -> Iterator[tuple[Path, Path]]:
 def _journal_path(root: str | Path, task_id: str) -> Path:
     # Hash IDs so task labels never become filesystem paths.
     return _git_dir(root) / 'constellation' / 'publication' / (_digest(task_id) + '.json')
+
+
+def _preserve_index(root: str | Path, index: Path, task_id: str) -> dict[str, str]:
+    """Retain the original index and its staged objects before adopting staging.
+
+    The private index copy preserves stage metadata. A local tree ref keeps the
+    referenced blobs reachable through garbage collection; it is never a push
+    destination. Neither operation opens the worktree files represented there.
+
+    Args:
+        root: Exact Git owner root, with its real index lock already held.
+        index: The unchanged original index being adopted.
+        task_id: Native ledger task owning this publication.
+
+    Returns:
+        Private backup path and hash, preservation tree and local ref.
+
+    Raises:
+        GitError: Existing recovery data differs or staging cannot be safely
+            preserved. No branch or worktree file has been changed.
+    """
+    original_hash = _file_hash(index)
+    journal = _journal_path(root, task_id)
+    journal.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    backup = journal.with_name(journal.stem + '.original-' + original_hash + '.index')
+    if backup.exists():
+        if _file_hash(backup) != original_hash:
+            raise GitError('Original index recovery copy changed; inspect before publication')
+    else:
+        shutil.copyfile(index, backup)
+        with backup.open('rb') as stream:
+            os.fsync(stream.fileno())
+    # Build the preservation tree from another index so write-tree cannot
+    # refresh the real index or contend with its already-held lock.
+    with _temporary_index(root, backup) as original:
+        tree = _text(root, 'write-tree', index=original)
+    reference = 'refs/constellation/index-backups/' + _digest(task_id) + '/' + original_hash
+    _run(root, 'update-ref', reference, tree)
+    if _file_hash(index) != original_hash:
+        raise GitError('Original index changed while preserving adopted staging')
+    return {'path': str(backup), 'sha256': original_hash, 'tree': tree, 'ref': reference}
 
 
 def _project_guards(root: str | Path, tree: str, policy: dict[str, Any]) -> None:
@@ -329,18 +493,27 @@ def commit(store: Any, task_id: str, message: str) -> str:
             expected = fingerprint(task, current)
             if ready(task) != expected:
                 raise GitError('Candidate changed during publication')
+            index_backup = (_preserve_index(root, index, task_id)
+                            if _staged(root) & set(task['paths']) else None)
             sha = _text(root, 'commit-tree', current['tree'], '-p', current['parent'],
                         data=(message.rstrip() + '\n').encode())
             journal_path = _journal_path(root, task_id)
             prepared = journal_path.with_suffix('.index')
             prepared.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            original_entries = _index_entries(root, index)
             with _temporary_index(root, index) as replacement:
-                _run(root, 'reset', '-q', sha, '--', *task['paths'], index=replacement)
+                _reset_index_paths(root, current['tree'], task['paths'], replacement)
+                replacement_entries = _index_entries(root, replacement)
+                foreign = (set(original_entries) | set(replacement_entries)) - set(task['paths'])
+                if any(original_entries.get(name) != replacement_entries.get(name) for name in foreign):
+                    raise GitError('Preparing the owned index would change foreign staging')
                 shutil.copyfile(replacement, prepared)
             intent = {'task': task_id, 'phase': 'commit_pending', 'candidate': current,
                       'commit': sha, 'old_index': _file_hash(index),
                       'new_index': _file_hash(prepared), 'evidence': _publication_evidence(task),
                       'evidence_snapshot': copy.deepcopy({'checks': task['checks'], 'reviews': task['reviews']})}
+            if index_backup:
+                intent['index_backup'] = index_backup
             if continuation:
                 history = task.setdefault('publications', [])
                 if not any(item['commit'] == previous['commit'] for item in history):
@@ -358,6 +531,8 @@ def commit(store: Any, task_id: str, message: str) -> str:
                                    'worktree': current['worktree'], 'evidence': intent['evidence'],
                                    'evidence_snapshot': intent['evidence_snapshot'],
                                    'status': 'committed'}
+            if index_backup:
+                task['publication']['index_backup'] = index_backup
             prepared.unlink(missing_ok=True)
             return sha
 
@@ -393,7 +568,7 @@ def _close_verified(store: Any, task: dict[str, Any]) -> None:
     """Close only when remote verification leaves no owned local work behind."""
     publication = task['publication']
     try:
-        pending = (_worktree_snapshot(task['root'], task['paths']) != publication['worktree']
+        pending = (_worktree_snapshot(task['root'], task['paths'], task.get('policy')) != publication['worktree']
                    or bool(_staged(task['root']) & set(task['paths'])))
     except (GitError, OSError):
         pending = True
@@ -576,6 +751,8 @@ def recover(store: Any, task_id: str) -> dict[str, Any]:
                                'worktree': candidate_value['worktree'], 'evidence': intent['evidence'],
                                'evidence_snapshot': intent['evidence_snapshot'],
                                'status': 'committed'}
+        if intent.get('index_backup'):
+            task['publication']['index_backup'] = intent['index_backup']
         if intent['phase'] in ('push_pending', 'verified'):
             if remote_sha(root, frozen) == sha:
                 intent['phase'] = 'verified'

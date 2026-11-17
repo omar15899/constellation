@@ -27,6 +27,9 @@ class StateError(ValueError):
     """A task would violate scope, evidence or publication invariants."""
 
 
+PUBLICATION_PATH_OPTIONS = ("adopt_staged_paths", "remove_paths", "symlink_paths")
+
+
 def now() -> str:
     """Return an unambiguous UTC timestamp for curated evidence."""
     return datetime.now(timezone.utc).isoformat()
@@ -47,23 +50,34 @@ def git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def validate_paths(root: Path, assignments: Mapping[str, str]) -> dict[str, str]:
-    """Validate exact file ownership and reject aliases and nested Git owners.
+def validate_paths(root: Path, assignments: Mapping[str, str],
+                   policy: Mapping[str, Any] | None = None) -> dict[str, str]:
+    """Validate exact ownership and explicit publication path capabilities.
 
     Args:
         root: Canonical Git worktree root.
         assignments: Exact relative file paths mapped to native author IDs.
+        policy: Optional exact path lists for adopting staging, removing index
+            entries, and publishing leaf symbolic links. A removal concerns
+            only this owner's Git tree; its worktree path is never followed.
 
     Returns:
         A sorted copy of the validated assignment map.
 
     Raises:
-        StateError: A path is ambiguous, traverses a link, or leaves this owner.
+        StateError: A path or capability is ambiguous, traverses an undeclared
+            link, or leaves this Git owner.
     """
-    if not assignments:
+    if not isinstance(assignments, Mapping) or not assignments:
         raise StateError("A change requires at least one exact file path")
-    folded: set[str] = set()
+    if policy is not None and not isinstance(policy, Mapping):
+        raise StateError("Publication policy must be an object")
+    if Path(git(root, "rev-parse", "--show-toplevel")).resolve() != root:
+        raise StateError("Root must be the exact Git owner")
+    folded: dict[str, str] = {}
     for value, author in assignments.items():
+        if not isinstance(value, str):
+            raise StateError("Assignments require literal relative file paths")
         path = PurePosixPath(value)
         if (not isinstance(author, str) or not author.strip() or not value
                 or path.is_absolute() or str(path) != value or "\\" in value
@@ -72,33 +86,64 @@ def validate_paths(root: Path, assignments: Mapping[str, str]) -> dict[str, str]
             raise StateError("Assignments require literal relative file paths and author IDs")
         if value.casefold() in folded:
             raise StateError("Case aliases cannot have separate owners")
-        folded.add(value.casefold())
+        folded[value.casefold()] = value
+
+    capabilities: dict[str, set[str]] = {}
+    for option in PUBLICATION_PATH_OPTIONS:
+        declared = (policy or {}).get(option, [])
+        if (not isinstance(declared, list)
+                or any(not isinstance(name, str) for name in declared)
+                or len(declared) != len(set(declared))
+                or not set(declared).issubset(assignments)):
+            raise StateError(f"{option} must list distinct exact owned paths")
+        capabilities[option] = set(declared)
+    removals = capabilities["remove_paths"]
+    symlinks = capabilities["symlink_paths"]
+    if removals & symlinks:
+        raise StateError("A path cannot be both removed and published as a link")
+
+    owner_by_parent: dict[Path, Path] = {}
+    for value in assignments:
+        path = PurePosixPath(value)
+        for ancestor in path.parents:
+            ancestor_name = folded.get(ancestor.as_posix().casefold())
+            if ancestor_name is not None and not (
+                    ancestor_name in symlinks and value in removals):
+                raise StateError("Only explicit link replacements may remove scoped descendants")
+        # Removal operates on this owner's index, even when an old tracked tree
+        # has become a symlink locally. Task creation verifies tracked ownership;
+        # later snapshots must also work after those entries have been removed.
+        if value in removals:
+            continue
         current = root
         for part in path.parts:
             current /= part
             if current.is_symlink():
-                raise StateError("Scope cannot traverse symbolic links")
-        if current.is_dir():
-            raise StateError("Scope contains a directory; enumerate exact files")
-        if current.exists() and not stat.S_ISREG(current.stat().st_mode):
-            raise StateError("Scope supports regular files and deletions only")
+                if current != root / value or value not in symlinks:
+                    raise StateError("Scope cannot traverse symbolic links")
+        if not current.is_symlink():
+            if current.is_dir():
+                raise StateError("Scope contains a directory; enumerate exact files")
+            if current.exists() and not stat.S_ISREG(current.stat().st_mode):
+                raise StateError("Scope supports regular files, declared links and deletions only")
         parent = current.parent
         while not parent.exists():
             parent = parent.parent
-        if Path(git(parent, "rev-parse", "--show-toplevel")).resolve() != root:
+        if parent not in owner_by_parent:
+            owner_by_parent[parent] = Path(git(parent, "rev-parse", "--show-toplevel")).resolve()
+        if owner_by_parent[parent] != root:
             raise StateError("Scope crosses a different Git owner")
     names = sorted(assignments)
-    if any(second.startswith(first + "/") for first in names for second in names):
-        raise StateError("A file and its descendants cannot share scope")
     return {name: assignments[name] for name in names}
 
 
 def effective_policy(root: str | Path, supplied: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Add current central restrictions and bind the relevant owner instructions.
 
-    Explicit policy may strengthen restrictions. It cannot remove the project's
-    private patterns or preserved Git validators. Re-reading this policy for
-    each candidate makes a later profile edit invalidate earlier evidence.
+    Explicit policy cannot remove the project's private patterns or preserved
+    Git validators. Exact publication capabilities are validated against the
+    owned paths separately. Re-reading this policy for each candidate makes a
+    later profile edit invalidate earlier evidence.
     """
     root = Path(root).resolve()
     policy = dict(supplied or {})
@@ -133,19 +178,33 @@ def artifact_fingerprint(task: Mapping[str, Any], candidate_value: Any = None) -
     is neither included nor changed. Every call rechecks current file bytes.
     """
     root = Path(task["root"])
-    validate_paths(root, task["assignments"])
+    policy = effective_policy(root, task.get("policy"))
+    validate_paths(root, task["assignments"], policy)
+    if task.get("mode", "publish") == "local" and any(
+            policy.get(option) for option in PUBLICATION_PATH_OPTIONS):
+        raise StateError("Publication path capabilities require publication mode")
+    from .git import private_path
+
     instructions: dict[str, str | None] = {}
+    instruction_parents = {root}
     for name in task["paths"]:
-        parent = (root / name).parent
-        while parent.is_relative_to(root):
-            instruction = parent / "AGENTS.md"
-            if instruction.is_symlink() or (instruction.exists() and not instruction.is_file()):
-                raise StateError("Applicable instructions must be regular files")
-            instructions[str(instruction.relative_to(root))] = (
-                hashlib.sha256(instruction.read_bytes()).hexdigest() if instruction.exists() else None)
-            if parent == root:
+        # Bind accessible public ancestor rules even for index-only removals,
+        # but never enter a private subtree or follow a replaced skill link.
+        parent = root
+        for part in PurePosixPath(name).parts[:-1]:
+            parent /= part
+            if private_path(parent.relative_to(root).as_posix(), policy) or parent.is_symlink():
                 break
-            parent = parent.parent
+            instruction_parents.add(parent)
+    for parent in sorted(instruction_parents):
+        instruction = parent / "AGENTS.md"
+        relative_instruction = instruction.relative_to(root).as_posix()
+        if private_path(relative_instruction, policy):
+            continue
+        if instruction.is_symlink() or (instruction.exists() and not instruction.is_file()):
+            raise StateError("Applicable instructions must be regular files")
+        instructions[relative_instruction] = (
+            hashlib.sha256(instruction.read_bytes()).hexdigest() if instruction.exists() else None)
     if task.get("mode", "publish") == "local":
         files = {}
         for name in task["paths"]:
@@ -400,13 +459,27 @@ class Store:
             raise StateError("A change needs a requirement and coordinator ID")
         if Path(git(root, "rev-parse", "--show-toplevel")).resolve() != root:
             raise StateError("Root must be the exact Git owner")
-        owners = validate_paths(root, assignments)
-        from .git import target as publication_target
+        policy = effective_policy(root, policy)
+        owners = validate_paths(root, assignments, policy)
+        if mode == "local" and any(policy.get(option) for option in PUBLICATION_PATH_OPTIONS):
+            raise StateError("Publication path capabilities require publication mode")
+        from .git import _run, target as publication_target
+
+        removals = set(policy.get("remove_paths", []))
+        if removals:
+            # Inspect only Git names. Worktree traversal could follow a replaced
+            # skill directory or expose private data that must stay local.
+            tracked_names = {
+                name.decode("utf-8", "surrogateescape")
+                for output in (_run(root, "ls-files", "--cached", "-z"),
+                               _run(root, "ls-tree", "-r", "--name-only", "-z", "HEAD"))
+                for name in output.split(b"\0") if name}
+            if not removals.issubset(tracked_names):
+                raise StateError("Index removals must name entries tracked by this Git owner")
         checks = list(required_checks)
         if not checks or len(set(checks)) != len(checks) or not all(checks):
             raise StateError("Declare unique required checks")
         target = publication_target(root, remote, branch, ref) if mode == "publish" else None
-        policy = effective_policy(root, policy)
         task = {"schema": 1, "id": task_id, "root": str(root),
                 "requirement": requirement, "assignments": owners, "paths": list(owners),
                 "authors": {path: [author] for path, author in owners.items()},
@@ -475,6 +548,8 @@ class Store:
                 raise StateError("Cannot reassign a closed task or a publication in progress")
             if path not in task["assignments"]:
                 raise StateError("Reassignment cannot extend the task's declared scope")
+            validate_paths(Path(task["root"]), task["assignments"],
+                           effective_policy(task["root"], task.get("policy")))
             previous = task["assignments"][path]
             previous_owner_session = task.get("session_id", task["coordinator"])
             if author == previous and (session_id is None

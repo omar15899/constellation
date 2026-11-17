@@ -144,6 +144,30 @@ authenticate processes nor certify the intellectual quality of a review.
 The Notes/Reminders monitor preserves its three local snapshots using exact
 receipts, hashes and indexes; this automation does not authorize a push.
 
+### Publish existing work and remove private tracking
+
+Existing staging remains outside a task by default. When the user authorizes
+publishing that work, the contract's `policy` can declare three exact path lists:
+
+- `adopt_staged_paths` includes owned staged paths. Publication uses the current
+  worktree version; the reviewed fingerprint also binds the staged object IDs
+  and modes. A private index backup and local recovery ref retain the previous
+  staging before the owned entries change. Foreign staging remains untouched.
+- `remove_paths` removes owned tracked paths from the candidate and index without
+  reading or deleting their local files. This supports private-data cleanup and
+  removal of old tracked descendants beneath a replacement skill link. Paths
+  may be tracked in HEAD or only in the index.
+- `symlink_paths` permits owned leaf links. Review binds the link target text,
+  without following it. Other paths cannot traverse a link; every removed
+  descendant of a replacement directory must have explicit ownership.
+
+These options require declared ownership and independent review; they do not
+permit private content in an outgoing tree. Source templates named
+`.env.example` are distinguished from environment secrets; private parent
+directories and project restrictions still apply. Browser captures and daemon
+output remain private runtime data. Keep removed local data ignored in its
+owning repository so a later task cannot accidentally propose it again.
+
 ## Recover or roll back
 
 After an interruption, run `python3 constellation.py recover example` and inspect
