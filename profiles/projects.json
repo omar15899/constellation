@@ -18,25 +18,38 @@
       "git_hooks_before": "/Users/omarkhalil/.codex/constellation-vault-guards/f2a88a8410af70be30273319549d4bd9528c9d36c2468d0c24a0f1ecafe72ce7",
       "preserve_git_hook_chain": null,
       "private_patterns": [
-        "06_Knowledge_Base/Mathematics/Finance/ENGIE/Private/**",
-        "09_Data_Sources/*_Conversations/**",
-        "09_Data_Sources/Email_Exports/by_message/**",
-        "09_Data_Sources/Email_Exports/snapshots/**",
-        "09_Data_Sources/Email_Exports/backfill/**",
-        "09_Data_Sources/Email_Exports/index.json",
-        "11_Documents_and_Reports/Email/**",
-        "docs/sk_runs/**",
+        "**/*_daemon.err",
+        "**/*_daemon.log",
         "**/.sync_state/**",
+        "**/session_logs/**",
         "**/turn_states/**",
         ".claude/cache/**",
-        ".claude/run/**",
         ".claude/logs/**",
+        ".claude/run/**",
+        ".claude/scheduled_tasks.lock",
+        ".claude/worktrees/**",
         ".codex/cache/**",
-        ".codex/sessions/**",
         ".codex/log/**",
+        ".codex/sessions/**",
         ".codex/state/**",
-        "**/*_daemon.log",
-        "**/*_daemon.err"
+        ".codex_NOTUSE/cache/**",
+        ".playwright-mcp/**",
+        "06_Knowledge_Base/Mathematics/Finance/ENGIE/Private/**",
+        "09_Data_Sources/*_Conversations/**",
+        "09_Data_Sources/Email_Exports/backfill/**",
+        "09_Data_Sources/Email_Exports/by_message/**",
+        "09_Data_Sources/Email_Exports/index.json",
+        "09_Data_Sources/Email_Exports/snapshots/**",
+        "09_Data_Sources/Plaid/**",
+        "11_Documents_and_Reports/Email/**",
+        "docs/*_daemon.err",
+        "docs/*_daemon.log",
+        "docs/*_sync_daily.err",
+        "docs/event_logs/**",
+        "docs/hook_logs/**",
+        "docs/sk_runs/**",
+        "docs/telemetry/**",
+        "docs/worktree_logs/**"
       ],
       "filesystem_identity": {
         "owner": [
@@ -101,7 +114,9 @@
       "management": "native",
       "git_hooks_before": "",
       "preserve_git_hook_chain": null,
-      "private_patterns": []
+      "private_patterns": [
+        ".claude/cache/**"
+      ]
     },
     {
       "id": "mmarv1",
@@ -183,6 +198,7 @@
       "git_hooks_before": "",
       "preserve_git_hook_chain": "/Users/omarkhalil/GitHub/Scilux/.claude/git-hooks",
       "private_patterns": [
+        "docs/sessions/**",
         "reference",
         "reference/**",
         "workspace",
@@ -214,7 +230,12 @@
       "management": "native",
       "git_hooks_before": ".githooks",
       "preserve_git_hook_chain": "/Users/omarkhalil/GitHub/Sweeplab/.githooks",
-      "private_patterns": []
+      "private_patterns": [
+        ".claude/cache/**",
+        ".playwright-mcp/**",
+        "docs/hook_logs/**",
+        "outputs/**/exec_logs/*.log"
+      ]
     },
     {
       "id": "brainteasers-asincronas",
@@ -232,7 +253,9 @@
       "management": "native",
       "git_hooks_before": "",
       "preserve_git_hook_chain": null,
-      "private_patterns": []
+      "private_patterns": [
+        ".claude/docs/session_logs/**"
+      ]
     },
     {
       "id": "ruflo",
