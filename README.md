@@ -14,7 +14,7 @@ Constellation/
 ├── instructions/          # shared working contract
 ├── resources/automations/ # integration code, separate from skill discovery
 ├── git-hooks/             # Git entries into the same publication gate
-├── tests/                 # existing suites; explicit user request required
+├── tests/                 # existing suites and focused regressions
 ├── resource-inventory.json
 └── migration.py           # inventory, preservation and explicit retirement
 ```
@@ -48,47 +48,107 @@ data, not another source of instructions.
 
 ## Install
 
-Use Python 3.11+, Git and a native client. Keep this checkout outside client
-homes. Project roots live in `profiles/projects.json`. From this checkout:
+Use Python 3.11+, Git and the client you want to configure. Keep the Constellation
+checkout or extracted source package in a stable location outside client homes.
+Run the installer with `python3 constellation.py` on macOS or Linux and
+`py -3 .\constellation.py` in Windows PowerShell.
+On Windows, put Git for Windows on your `PATH` or set `CONSTELLATION_GIT` to
+the absolute path of its `git.exe`.
+
+| Client | Installer selection | Platform |
+| --- | --- | --- |
+| Codex | `--client codex` | Windows, macOS, Linux |
+| Claude Code | `--client claude` | Windows, macOS, Linux |
+| GitHub Copilot CLI | `--client copilot` | Windows, macOS, Linux |
+| GitHub Copilot in Microsoft Visual Studio | `--client visual-studio` | Windows |
+
+Use a native client version that supports the capabilities you need. From this
+checkout, preview the CLI client configuration and apply it after inspecting
+the proposed writes and conflicts.
 
 ```sh
 python3 constellation.py install
 python3 constellation.py install --apply
 ```
 
-The first command previews the full installation; the second applies it with
-private rollback receipts. It can touch all registered projects. For Copilot
-personal entries only, use the scoped commands:
+The default `all` selection includes Codex, Claude Code and Copilot CLI and can
+touch registered projects. To set up Copilot inside Visual Studio, select the
+repository or the personal agents directory configured in the IDE. For example,
+from this checkout in PowerShell, with the exact root of a local Git repository:
 
-```sh
-python3 constellation.py install --client copilot
-python3 constellation.py install --client copilot --apply
+```powershell
+py -3 .\constellation.py install --client visual-studio --project-root 'C:\Projects\Example'
+py -3 .\constellation.py install --client visual-studio --project-root 'C:\Projects\Example' --apply
 ```
 
-Personal preferences, authentication, sessions and privacy belong to the native
-client. Inspect hook admission in a new native session. Third-party skills remain
-with their providers. Each repository retains its own Git and data.
+See the [Visual Studio guide](profiles/visual-studio.md) for personal discovery,
+available versions and verification inside Copilot Chat. Client trust,
+authentication, model choice and personal preferences are managed in the client.
 
-The [Claude guide](profiles/claude.md) and [Copilot guide](profiles/copilot.md)
-explain native locations, preserved data and limits. The eight roles live only in
-`agents/*.toml`; installation generates Markdown adapters in private state.
-Clients share skills and scope controls while retaining native formats,
-permissions and trust. Reinstall after changing generated role or instruction
-sources. This local installation does not deploy cloud jobs.
+On macOS and Linux, the CLI installers use links for shared resources. The
+Windows CLI installers and Visual Studio target produce regular files and skill
+directories. Reinstall after editing canonical resources. The installer records
+private rollback receipts and reports existing entries that need attention.
+Windows installation leaves repository Git hook configuration as it was.
+On Windows, an installation and its receipt need to be on the same local
+volume. Select `install --state-dir` on the target volume if necessary.
+
+The [Claude guide](profiles/claude.md) and [Copilot CLI guide](profiles/copilot.md)
+describe native discovery and hook admission. The [automation map](profiles/automations.md)
+describes separately installed integrations.
+
+### Projects on another machine
+
+The shared registry in `profiles/projects.json` defines project IDs, policies and
+profiles. Bind IDs to an exact local checkout with a private `projects.json`.
+On Windows the default location is `%LOCALAPPDATA%\Constellation\projects.json`.
+On macOS and Linux it is `~/.local/state/constellation/projects.json`.
+Let the installer create a new private state directory on the first installation,
+then add the registry if needed. To register projects before the first
+installation, store the file in a private location and set
+`CONSTELLATION_PROJECTS_FILE` to its absolute path. The installer and tooling in
+native client sessions need the same mapping.
+
+```json
+{
+  "projects": {
+    "sweeplab": "D:/Projects/Sweeplab",
+    "scilux": "D:/Projects/Scilux"
+  }
+}
+```
+
+Use the actual paths on your machine. Existing matching legacy registrations are
+retained. Constellation binds its own project automatically when its source is a
+Git checkout. Resolve legacy path examples in project profiles against the
+actual local project root.
+General skills work across unrelated repositories. Project skills are installed
+only for their registered owners. Their resources may require project data,
+additional libraries or operating-system tools.
+
+Set `CONSTELLATION_SKILL_PYTHON` to the absolute path of a Python interpreter with
+a skill's dependencies. Otherwise `skill-run` uses a configured group interpreter
+when available, or the Python running Constellation. OmarOS Fast Finder, ENGIE
+learning capture, and the Brainteasers production and course scripts rely on
+POSIX filesystem primitives. Use those scripts from macOS or Linux. Their skill
+documents and other resources are part of the shared catalogue on Windows.
 
 `python3 constellation.py docs --provider copilot verify` checks local reference
 integrity; `search TEXT` searches and `refresh` explicitly downloads current
 official pages. Providers are `codex`, `claude`, `copilot` and `all`.
+The documentation snapshot tool currently requires macOS or Linux.
 
 ## Engineering and parallel review
 
-Write readable code with domain names, visible control flow, explicit contracts
-and useful failure handling. Abstractions solve current needs. The coding skill
-and canonical roles define this standard in English.
+Make the smallest complete change that meets the requirement. Preserve existing
+contracts, reuse domain logic, and favor clear control flow and efficient
+algorithms. Add abstractions when they solve a present need. Use Google Style
+docstrings for Python. The coding skill and canonical roles explain the standard.
 
-Do not create, change or run tests unless Omar explicitly requests them. Preserve
-existing tests. Static inspection, syntax/configuration validation and independent
-review are permitted; state their limits and leave test-dependent gates unmet.
+Start with static inspection and independent review. Preserve existing tests and
+skip new ones by default. Keep test work focused when requested, required by the
+project, or necessary to cover a concrete regression risk. Honor tighter limits
+and report the scope and limits of the evidence.
 
 Use native parallel agents for independent tasks with exclusive file ownership.
 After integration and permitted checks, reviewers inspect the same fingerprint.
@@ -132,7 +192,9 @@ Record curated milestones with `checkpoint` and `{"summary":"..."}`. To correct
 or transfer ownership, `assign` accepts `path`, `author` and `reason`; it retains
 previous authors and invalidates stale evidence. Use the ID returned by the
 native tool, not an inherited environment ID. Private records live under
-`~/.local/state/constellation`; they contain neither conversations nor tool output.
+`~/.local/state/constellation` on macOS and Linux and
+`%LOCALAPPDATA%\Constellation` on Windows. They contain neither conversations nor
+tool output.
 
 Shared hooks inspect structured edits and recognized destructive commands.
 They cannot isolate arbitrary shell writes. Stop hooks report pending work

@@ -23,13 +23,17 @@ import tempfile
 from typing import Any, Iterator
 from urllib.parse import urlsplit
 
+from .platform_support import (IS_WINDOWS, git_executable, read_ledger_record, replace_ledger_record,
+                               secure_mkdir, validate_windows_lookup)
+
 
 class GitError(RuntimeError):
     """A publication invariant or Git operation failed."""
 
 
 def _run(root: str | Path, *args: str, data: bytes | None = None,
-         index: str | Path | None = None, timeout: int = 60) -> bytes:
+         index: str | Path | None = None, timeout: int = 60,
+         allowed_exit: tuple[int, ...] = (0,)) -> bytes:
     """Run Git with no inherited repository redirection and bounded execution."""
     env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     env['GIT_LITERAL_PATHSPECS'] = '1'
@@ -37,13 +41,14 @@ def _run(root: str | Path, *args: str, data: bytes | None = None,
     env['GIT_TERMINAL_PROMPT'] = '0'
     if index is not None:
         env['GIT_INDEX_FILE'] = str(index)
+    executable = git_executable(project=Path(root).absolute())
     try:
-        result = subprocess.run(['git', '--no-replace-objects', '-C', str(root), *args], input=data,
+        result = subprocess.run([executable, '--no-replace-objects', '-C', str(root), *args], input=data,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env=env, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GitError('Git operation failed or timed out; inspect local intent') from exc
-    if result.returncode:
+    if result.returncode not in allowed_exit:
         # Do not persist or echo repository data, URLs, or credential helpers.
         raise GitError(f'Git {args[0]} failed (exit {result.returncode})')
     return result.stdout
@@ -243,7 +248,32 @@ def private_path(path: str, policy: dict[str, Any] | None = None) -> bool:
                    for pattern in policy.get('private_patterns', []))
 
 
-def _guard_paths(policy: dict[str, Any], event: str) -> list[Path]:
+def _configured_pre_commit(root: Path) -> bool:
+    """Detect pre-commit commands configured through recent Git versions."""
+    entries = _run(root, 'config', '--null', '--get-regexp',
+                   r'^hook\..+\.(event|enabled)$', allowed_exit=(0, 1))
+    pre_commit: set[bytes] = set()
+    disabled: set[bytes] = set()
+    for record in entries.split(b'\0'):
+        key, separator, value = record.partition(b'\n')
+        name, _, property_name = key.rpartition(b'.')
+        if property_name == b'event':
+            if not separator:
+                raise GitError('A configured Git hook is missing its event value')
+            if value == b'pre-commit':
+                pre_commit.add(name)
+            elif not value:
+                pre_commit.discard(name)
+        elif property_name == b'enabled':
+            if separator and value.lower() in {b'', b'false', b'no', b'off', b'0'}:
+                disabled.add(name)
+            else:
+                disabled.discard(name)
+    return bool(pre_commit - disabled)
+
+
+def _guard_paths(root: str | Path, policy: dict[str, Any], event: str) -> list[Path]:
+    root = Path(root)
     paths = [Path(name) for name in policy.get(event.replace('-', '_') + '_hooks', [])]
     chain = policy.get('preserve_git_hook_chain', [])
     if isinstance(chain, str):
@@ -252,7 +282,66 @@ def _guard_paths(policy: dict[str, Any], event: str) -> list[Path]:
         hook = Path(directory) / event
         if hook.exists():
             paths.append(hook)
-    return list(dict.fromkeys(paths))
+    canonical = Path(__file__).resolve().parents[1] / 'git-hooks' / event
+    retained = [path for path in dict.fromkeys(paths) if path.resolve() != canonical]
+    if event == 'pre-commit':
+        # commit-tree bypasses the native commit event. Never omit a current
+        # project validator simply because installation left its hooks intact.
+        if _configured_pre_commit(root):
+            raise GitError('Configure Git pre-commit validation as a retained executable path before publishing')
+        hook_path = _run(root, 'rev-parse', '--git-path', 'hooks/pre-commit')
+        hook_path = hook_path.removesuffix(b'\n')
+        if IS_WINDOWS:
+            hook_path = hook_path.removesuffix(b'\r')
+        hook = root / os.fsdecode(hook_path)
+        alternatives = [hook, hook.with_name(hook.name + '.exe')] if IS_WINDOWS else [hook]
+        for path in alternatives:
+            try:
+                regular = stat.S_ISREG(path.stat().st_mode)
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            if not regular or not IS_WINDOWS and not os.access(path, os.X_OK):
+                continue
+            if path != canonical and path not in retained:
+                raise GitError(f'Active Git pre-commit validator must be retained and reviewed: {path}')
+            break
+    return retained
+
+
+def _guard_command(root: Path, executable: Path) -> list[str]:
+    """Resolve one preserved project hook to its platform interpreter.
+
+    Executables on Unix run directly. With Git for Windows, run PE executables
+    directly and use Git's own shell for the supported hook shebangs.
+    """
+    if not executable.is_absolute() or not executable.is_file():
+        raise GitError('Preserved project guard is unavailable')
+    if not IS_WINDOWS:
+        if not os.access(executable, os.X_OK):
+            raise GitError('Preserved project guard must be executable')
+        return [str(executable)]
+    validate_windows_lookup(executable)
+    if executable.suffix.casefold() == '.exe':
+        return [str(executable)]
+    with executable.open('rb') as hook:
+        shebang = hook.readline(256).rstrip(b'\r\n')
+    interpreters = {
+        b'#!/bin/sh': 'sh.exe',
+        b'#!/usr/bin/env sh': 'sh.exe',
+        b'#!/bin/bash': 'bash.exe',
+        b'#!/usr/bin/env bash': 'bash.exe',
+    }
+    selected = interpreters.get(shebang)
+    if selected is None:
+        raise GitError('Windows preserved guards need an .exe or a supported Git shell shebang')
+    git_exec = Path(_text(root, '--exec-path'))
+    if not git_exec.is_absolute() or len(git_exec.parents) < 3:
+        raise GitError('Cannot locate Git for Windows to run a preserved guard')
+    shell = git_exec.parents[2] / 'bin' / selected
+    validate_windows_lookup(shell)
+    if not shell.is_file():
+        raise GitError('Git for Windows shell is unavailable for a preserved guard')
+    return [str(shell), executable.as_posix()]
 
 
 @contextlib.contextmanager
@@ -356,19 +445,23 @@ def candidate(root: str | Path, paths: list[str], target: dict[str, str],
     if adopted:
         value['adopted_index'] = adopted_index
     value['guard_hashes'] = {str(path): _file_hash(path) for event in ('pre-commit', 'pre-push')
-                             for path in _guard_paths(policy or {}, event)}
+                             for path in _guard_paths(root, policy or {}, event)}
     value['fingerprint'] = _digest(value)
     return value
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    secure_mkdir(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix='.intent-')
-    with os.fdopen(fd, 'w') as stream:
-        json.dump(value, stream, sort_keys=True)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(tmp, path)
+    temporary = Path(tmp)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(value, stream, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        replace_ledger_record(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
@@ -412,14 +505,14 @@ def _preserve_index(root: str | Path, index: Path, task_id: str) -> dict[str, st
     """
     original_hash = _file_hash(index)
     journal = _journal_path(root, task_id)
-    journal.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    secure_mkdir(journal.parent)
     backup = journal.with_name(journal.stem + '.original-' + original_hash + '.index')
     if backup.exists():
         if _file_hash(backup) != original_hash:
             raise GitError('Original index recovery copy changed; inspect before publication')
     else:
         shutil.copyfile(index, backup)
-        with backup.open('rb') as stream:
+        with backup.open('rb+') as stream:
             os.fsync(stream.fileno())
     # Build the preservation tree from another index so write-tree cannot
     # refresh the real index or contend with its already-held lock.
@@ -439,7 +532,7 @@ def _project_guards(root: str | Path, tree: str, policy: dict[str, Any]) -> None
     identify non-Constellation hooks before replacing the native hooksPath.
     Guards may inspect the worktree but must not alter candidate staged bytes.
     """
-    hooks = _guard_paths(policy, 'pre-commit')
+    hooks = _guard_paths(root, policy, 'pre-commit')
     if not hooks:
         return
     with _temporary_index(root) as index:
@@ -447,11 +540,9 @@ def _project_guards(root: str | Path, tree: str, policy: dict[str, Any]) -> None
         env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
         env['GIT_INDEX_FILE'] = str(index)
         for name in hooks:
-            executable = Path(name)
-            if not executable.is_absolute() or not executable.is_file() or not os.access(executable, os.X_OK):
-                raise GitError('Preserved project pre-commit guard is unavailable')
+            argv = _guard_command(root, name)
             try:
-                result = subprocess.run([str(executable)], cwd=root, env=env,
+                result = subprocess.run(argv, cwd=root, env=env,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         timeout=120, check=False)
             except (OSError, subprocess.TimeoutExpired) as exc:
@@ -499,7 +590,7 @@ def commit(store: Any, task_id: str, message: str) -> str:
                         data=(message.rstrip() + '\n').encode())
             journal_path = _journal_path(root, task_id)
             prepared = journal_path.with_suffix('.index')
-            prepared.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            secure_mkdir(prepared.parent)
             original_entries = _index_entries(root, index)
             with _temporary_index(root, index) as replacement:
                 _reset_index_paths(root, current['tree'], task['paths'], replacement)
@@ -633,7 +724,7 @@ def pre_push(root: str | Path, remote: str, url: str, lines: str, store: Any) ->
                 or local_ref not in (f"refs/heads/{frozen['branch']}", sha)):
             raise GitError('Push target differs from the reviewed destination')
         policy = effective_policy(root, task.get('policy'))
-        preserved_hooks.update(_guard_paths(policy, 'pre-push'))
+        preserved_hooks.update(_guard_paths(root, policy, 'pre-push'))
         outgoing = check_outgoing(root, sha, old, policy)
         if any(commit not in approved for commit in outgoing):
             raise GitError('Outgoing history includes commits without review records')
@@ -644,15 +735,14 @@ def pre_push(root: str | Path, remote: str, url: str, lines: str, store: Any) ->
             if _text(root, 'rev-parse', commit_sha + '^{tree}') != record['publication']['tree']:
                 raise GitError('Publication record tree mismatch')
             current_guards = {str(path): _file_hash(path) for event in ('pre-commit', 'pre-push')
-                              for path in _guard_paths(policy, event)}
+                              for path in _guard_paths(root, policy, event)}
             if record['publication'].get('guard_hashes', {}) != current_guards:
                 raise GitError('Project guards changed after review')
     for hook in sorted(preserved_hooks):
-        if not hook.is_absolute() or not hook.is_file() or not os.access(hook, os.X_OK):
-            raise GitError('Preserved pre-push guard is unavailable')
+        argv = _guard_command(root, hook)
         env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
         try:
-            result = subprocess.run([str(hook), remote, url], cwd=root, env=env,
+            result = subprocess.run([*argv, remote, url], cwd=root, env=env,
                                     input=lines.encode(), stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, timeout=120, check=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -700,7 +790,7 @@ def push(store: Any, task_id: str) -> str:
         pub.update(status='push_pending', remote_before=old)
         store.save_locked(task)
         journal_path = _journal_path(root, task_id)
-        intent = json.loads(journal_path.read_text())
+        intent = json.loads(read_ledger_record(journal_path))
         intent.update(phase='push_pending', remote_before=old)
         _atomic_json(journal_path, intent)
         _run(root, 'push', '--no-follow-tags', frozen['remote'], f"{sha}:{frozen['ref']}", timeout=120)
@@ -722,7 +812,7 @@ def recover(store: Any, task_id: str) -> dict[str, Any]:
         path = _journal_path(root, task_id)
         if not path.exists():
             raise GitError('No publication intent to recover')
-        intent = json.loads(path.read_text())
+        intent = json.loads(read_ledger_record(path))
         sha, candidate_value = intent['commit'], intent['candidate']
         head = _text(root, 'rev-parse', 'HEAD')
         if head != sha and not (intent['phase'] == 'commit_pending' and head == candidate_value['parent']):

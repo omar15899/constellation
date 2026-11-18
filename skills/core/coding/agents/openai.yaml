@@ -1,6 +1,6 @@
 interface:
   display_name: "Coding"
-  short_description: "Readable software and independent review"
-  default_prompt: "Use $coding to implement this change with explicit contracts, readable code, independent review, and tests only if I explicitly request them."
+  short_description: "Small, readable software changes and independent review"
+  default_prompt: "Use $coding to make the smallest correct change with readable code, explicit contracts, and focused verification."
 policy:
   allow_implicit_invocation: true

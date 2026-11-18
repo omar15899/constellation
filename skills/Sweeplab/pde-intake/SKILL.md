@@ -4,7 +4,7 @@ description: Classify and formulate a PDE problem for Sweeplab, identifying its 
 ---
 # PDE intake
 
-Read the [Sweeplab profile](../../../profiles/sweeplab.md), the applicable owner instructions and the current `src/specs.py`, `src/mesh.py` and `src/sdc_gate.py` contracts. Resolve project paths against `/Users/omarkhalil/GitHub/Sweeplab`. Find related implementations under the current `labs/` tree; the former top-level `cases/` tree is not an entry point.
+Read the [Sweeplab profile](../../../profiles/sweeplab.md), the applicable owner instructions and the current `src/specs.py`, `src/mesh.py` and `src/sdc_gate.py` contracts. Resolve project paths against the local Sweeplab Git root. Find related implementations under the current `labs/` tree; the former top-level `cases/` tree is not an entry point.
 
 Produce the analysis needed for the requested decision. An explanation can remain in conversation; recording a formulation requires an authorized output path. Do not create a run or choose implementation parameters merely because a PDE was supplied.
 

@@ -33,8 +33,10 @@ La solicitud de captura autoriza títulos, carpetas y enlaces rutinarios.
    Asigna un UUID de evento estable antes del primer intento y consérvalo al
    reintentar. Una nueva sesión de estudio tiene otro evento, aunque use el mismo
    tema. Una corrección lleva un UUID nuevo y `correction_of`.
-6. Ejecuta `prepare` y `apply` mediante la entrada central
-   `python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py` del [contrato](references/capture_contract.md).
+6. Usa el CLI central desde macOS o Linux. Define `CONSTELLATION_CHECKOUT` con
+   la ruta a tu copia de Constellation y ejecuta `prepare` y `apply` con
+   `python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py`
+   según el [contrato](references/capture_contract.md).
    Declara los destinos exactos preparados en un encargo local antes de aplicar.
    La captura exige el vault registrado en ese dispositivo. Comprueba el resultado y
    lee los archivos persistidos. Ante error, conserva la identidad y usa `status`

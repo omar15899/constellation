@@ -7,23 +7,47 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import sys
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Protocol, Sequence
 import uuid
+
+from .platform_support import (
+    default_state_dir,
+    git_executable,
+    is_reparse,
+    read_ledger_record,
+    replace_ledger_record,
+    secure_mkdir,
+    validate_windows_lookup,
+    verify_windows_private_entry,
+    windows_copy_dacl,
+    windows_dacl_fingerprint,
+)
+from .projects import load_projects, relocate_entries
 
 BEGIN = '# BEGIN Constellation native entries'
 END = '# END Constellation native entries'
+CLIENTS = ('all', 'codex', 'claude', 'copilot', 'visual-studio')
+UNREAD = object()
+
+
+class AddOperation(Protocol):
+    """Record a native install operation and optionally bind its observed input."""
+
+    def __call__(self, path: Path, kind: str, value: str | None = None, *,
+                 expected_content: object = UNREAD, project_root: Path | None = None) -> bool: ...
 
 
 def _json(value: Any) -> str:
@@ -35,7 +59,11 @@ def fingerprint(path: Path) -> str | None:
     if not path.exists() and not path.is_symlink():
         return None
     digest = hashlib.sha256()
-    paths = [path] + (sorted(path.rglob('*')) if path.is_dir() and not path.is_symlink() else [])
+    if os.name == 'nt' and is_reparse(path):
+        raise ValueError(f'Cannot fingerprint a Windows reparse point: {path}')
+    paths = [path]
+    if path.is_dir() and not path.is_symlink():
+        paths.extend(sorted(_tree_paths(path)))
     for item in paths:
         mode = item.lstat().st_mode
         digest.update(str(item.relative_to(path)).encode())
@@ -49,6 +77,113 @@ def fingerprint(path: Path) -> str | None:
         else:
             raise ValueError(f'Unsupported filesystem object: {item}')
     return digest.hexdigest()
+
+
+def _tree_paths(root: Path) -> list[Path]:
+    """Enumerate a tree without traversing a symbolic link or junction."""
+    paths: list[Path] = []
+    pending = [root]
+    while pending:
+        for child in pending.pop().iterdir():
+            if os.name == 'nt' and is_reparse(child):
+                raise ValueError(f'Cannot traverse a Windows reparse point: {child}')
+            paths.append(child)
+            if not child.is_symlink() and child.is_dir():
+                pending.append(child)
+    return paths
+
+
+def _portable_path(path: Path) -> None:
+    """Reject substituted directories, leaf links, and ambiguous destinations."""
+    if not path.is_absolute() or '..' in path.parts:
+        raise ValueError(f'Installation path must be absolute and without traversal: {path}')
+    if os.name == 'nt':
+        validate_windows_lookup(path)
+    for entry in reversed((path, *path.parents)):
+        if entry.is_symlink() or is_reparse(entry):
+            raise ValueError(f'Installation path traverses a link or reparse point: {entry}')
+        if entry != path and entry.exists() and not entry.is_dir():
+            raise ValueError(f'Installation parent is not a directory: {entry}')
+    if path.is_file() and path.lstat().st_nlink > 1:
+        raise ValueError(f'Installation path is a multiply linked file: {path}')
+
+
+def _managed_entries(source: Path, state_dir: Path) -> dict[Path, Mapping[str, Any] | None]:
+    """Return the latest recorded material and ACL ownership of each entry."""
+    directory = state_dir / 'installations'
+    _portable_path(directory)
+    managed: dict[Path, Mapping[str, Any] | None] = {}
+    receipts = []
+    for path in directory.glob('*/receipt.json'):
+        _portable_path(path)
+        receipt = json.loads(read_ledger_record(path))
+        if Path(receipt['source']) == source and receipt['status'] != 'reverted':
+            receipts.append(receipt)
+    for receipt in sorted(receipts, key=lambda row: row.get('created_ns', 0), reverse=True):
+        for operation in receipt['operations']:
+            if operation.get('managed') and operation['status'] != 'reverted':
+                owner = None
+                if receipt['status'] == 'installed' and operation['status'] == 'applied':
+                    owner = operation
+                managed.setdefault(Path(operation['path']), owner)
+    return managed
+
+
+def _windows_acl_snapshot(path: Path, *, tree: bool, private: bool = False) -> str:
+    """Bind discretionary ACLs and owners without following aliases.
+
+    A recovery object keeps its native ACL after a same-volume rename. Check
+    every retained entry when private access is required, since protection at
+    an ancestor alone does not prevent Windows traverse bypass.
+    """
+    paths = [path, *sorted(_tree_paths(path))] if tree else [path]
+    fingerprints = {}
+    for entry in paths:
+        if private:
+            verify_windows_private_entry(entry)
+        fingerprints[entry.relative_to(path).as_posix()] = windows_dacl_fingerprint(entry)
+    if not tree:
+        return fingerprints['.']
+    return hashlib.sha256(json.dumps(fingerprints, sort_keys=True).encode('utf-8')).hexdigest()
+
+
+def _projected_files(source: Path, skill: Path) -> dict[Path, bytes]:
+    """Read a skill tree and preserve Markdown links to shared source resources."""
+    if not skill.is_relative_to(source / 'skills'):
+        raise ValueError(f'Skill projection leaves the canonical skills directory: {skill}')
+    _portable_path(skill)
+    if (source / '.git').exists():
+        from .git import _run
+
+        output = _run(source, 'ls-files', '-z', '--', skill.relative_to(source).as_posix())
+        paths = [source / os.fsdecode(name) for name in output.split(b'\0') if name]
+    else:
+        paths = [path for path in _tree_paths(skill) if not path.is_dir() or path.is_symlink()]
+    files: dict[Path, bytes] = {}
+    for path in sorted(paths):
+        _portable_path(path)
+        if not path.is_file():
+            raise ValueError(f'Canonical skill resource is not a regular file: {path}')
+        data = path.read_bytes()
+        if path.suffix.lower() == '.md':
+            def canonical_link(match: re.Match[str]) -> str:
+                target = (path.parent / match.group()).resolve()
+                if target.is_relative_to(source) and not target.is_relative_to(skill):
+                    return target.as_uri()
+                return match.group()
+
+            text = re.sub(r'(?<=\]\()\.\.(?:/[^\s)#?]+)+', canonical_link, data.decode('utf-8'))
+            data = text.encode('utf-8')
+        files[path.relative_to(skill)] = data
+    if Path('SKILL.md') not in files:
+        raise ValueError(f'Missing canonical skill entry point: {skill}')
+    return files
+
+
+def _projection_digest(files: Mapping[Path, bytes]) -> str:
+    """Bind each relative filename to the exact bytes installed for the skill."""
+    entries = {name.as_posix(): hashlib.sha256(data).hexdigest() for name, data in files.items()}
+    return hashlib.sha256(json.dumps(entries, sort_keys=True).encode('utf-8')).hexdigest()
 
 
 def _toml_blocks(text: str) -> list[str]:
@@ -95,7 +230,7 @@ def _native_config(text: str, source: Path, home: Path, entries: list[dict[str, 
     for agent in agents:
         result += f'\n[agents.{json.dumps(agent["name"])}]\n'
         result += f'description = {json.dumps(agent["description"], ensure_ascii=False)}\n'
-        result += f'config_file = {json.dumps(str(agent["path"]))}\n'
+        result += f'config_file = {json.dumps(str(agent["path"]), ensure_ascii=False)}\n'
     # Read presence before removing managed markers, which may enclose an
     # existing disabled entry. A removed plugin must stay absent on reinstall.
     if 'constellation@constellation' in original_config.get('plugins', {}):
@@ -135,7 +270,7 @@ def _verify_skill_parent(operation: Mapping[str, Any]) -> None:
 def _retire_stale_skill_links(source: Path, directories: Sequence[Path],
                              desired: Mapping[str, str], protected: set[str],
                              operations: dict[str, dict[str, Any]],
-                             add: Callable[[Path, str, str | None], None]) -> dict[str, Any]:
+                             add: AddOperation, project_directories: Mapping[Path, Path]) -> dict[str, Any]:
     """Reconcile direct canonical skill aliases with this installation's scope.
 
     Ownership requires an absolute lexical target of the exact form
@@ -150,6 +285,7 @@ def _retire_stale_skill_links(source: Path, directories: Sequence[Path],
         protected: Conflict paths, including Claude's retained project fallbacks.
         operations: Existing reversible operation map, augmented with parent guards.
         add: Common operation collector with expected content fingerprints.
+        project_directories: Expected Git owner for project discovery directories.
 
     Returns:
         Exact retired links and conflicts that remain untouched.
@@ -169,10 +305,13 @@ def _retire_stale_skill_links(source: Path, directories: Sequence[Path],
         if not directory.exists() and not directory.is_symlink():
             continue
         try:
+            project_root = project_directories.get(directory)
+            if project_root is not None:
+                verify_project_entry_owner(directory, project_root)
             ancestry = _skill_parent_identity(directory)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
             conflicts.append({'path': str(directory),
-                              'reason': 'Skill discovery directory has unsafe or unavailable ancestry'})
+                              'reason': f'Cannot retire skills in this directory: {error}'})
             continue
         for path in sorted(directory.iterdir()):
             if str(path) in desired or str(path) in protected or not path.is_symlink():
@@ -203,7 +342,7 @@ def _retire_stale_skill_links(source: Path, directories: Sequence[Path],
                 continue
             if _skill_parent_identity(directory) != ancestry:
                 raise ValueError(f'Skill discovery parent changed while planning: {directory}')
-            add(path, 'remove', None)
+            add(path, 'remove', None, project_root=project_root)
             operation = operations.get(str(path))
             if operation is None:
                 continue
@@ -224,105 +363,87 @@ def _retire_stale_skill_links(source: Path, directories: Sequence[Path],
     return {'retired_skill_links': retired, 'skill_link_conflicts': conflicts}
 
 
-def build_plan(source: Path, home: Path | None = None, state_dir: Path | None = None,
-               *, client: str = 'all', copilot_home: Path | None = None) -> dict[str, Any]:
-    """Describe native installation without changing files.
+def _powershell_command(argv: Sequence[str]) -> str:
+    """Quote local paths literally and propagate the native hook exit code."""
+    quoted = ["'" + value.replace("'", "''") + "'" for value in argv]
+    return '& ' + ' '.join(quoted) + '; exit $LASTEXITCODE'
 
-    Args:
-        source: Canonical Constellation checkout.
-        home: Native clients' home owner. Project roots still come from the inventory;
-            tests must supply an isolated inventory as well as an alternate home.
-        state_dir: Private backup destination, outside source and project data.
-        client: All native integrations, or only Copilot's personal entries.
-        copilot_home: Explicit Copilot configuration directory when customized.
 
-    Returns:
-        A plan containing exact expected input fingerprints and desired operations.
-    """
-    source = source.resolve()
-    home = (home or Path.home()).resolve()
-    state_dir = (state_dir or home / '.local/state/constellation').resolve()
-    if client not in {'all', 'copilot'}:
-        raise ValueError('Select all clients or the Copilot-only installation')
-    from .copilot import directory_trees_overlap, plan_entries as copilot_entries
-    if directory_trees_overlap(state_dir, source):
-        raise ValueError('Installation receipts and source must use separate directory trees')
-    inventory = json.loads((source / 'resource-inventory.json').read_text())
-    entries = inventory['entries']
-    agents = []
-    for path in sorted((source / 'agents').glob('*.toml')):
-        data = tomllib.loads(path.read_text())
-        for key in ('name', 'description', 'developer_instructions'):
-            if not isinstance(data.get(key), str) or not data[key]:
-                raise ValueError(f'Agent lacks {key}: {path}')
-        agents.append({**data, 'path': path})
-    if len(agents) != 8 or len({a['name'] for a in agents}) != 8:
-        raise ValueError('Expected exactly eight distinct preserved agents')
-    operations: dict[str, dict[str, Any]] = {}
-    desired_links: dict[str, str] = {}
+def _owned_codex_hook(handler: Mapping[str, Any], source: Path, home: Path) -> bool:
+    """Identify previous output by exact script and action, irrespective of state root."""
+    command = handler.get('command')
+    if handler.get('type') != 'command' or not isinstance(command, str):
+        return False
+    if os.name == 'nt':
+        argv = [argument.replace("''", "'") for argument in re.findall(r"'((?:[^']|'')*)'", command)]
+        if not argv or _powershell_command(argv) != command:
+            return False
+    else:
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            return False
+    if len(argv) < 2 or not Path(argv[0]).name.casefold().startswith(('python', 'py.')):
+        return False
+    target = Path(argv[1])
+    if target == source / 'constellation.py':
+        tail = argv[2:]
+        if len(tail) >= 2 and tail[0] == '--state-dir':
+            tail = tail[2:]
+        return tail in (['hook', 'pre-tool'], ['hook', 'stop'])
+    return target == home / '.codex/hooks/omaros_permission_guard.py'
 
-    def add(path: Path, kind: str, value: str | None = None) -> None:
-        if kind == 'symlink' and value is not None:
-            desired_links[str(path)] = value
-        current = fingerprint(path)
-        if kind == 'symlink' and path.is_symlink() and os.readlink(path) == value:
-            operations.pop(str(path), None)
-            return
-        if kind == 'write' and path.is_file() and not path.is_symlink() and path.read_text() == value:
-            return
-        if kind == 'remove' and current is None:
-            return
-        operation = {'path': str(path), 'kind': kind, 'value': value, 'before': current}
-        if kind == 'write':
-            # Replacing a native settings file must not broaden its permissions.
-            private = path.name in {'config.toml', 'settings.json', 'settings.local.json'} or path.is_relative_to(state_dir)
-            operation['mode'] = (stat.S_IMODE(path.stat().st_mode)
-                                 if path.is_file() and not path.is_symlink()
-                                 else 0o600 if private else 0o644)
-        operations[str(path)] = operation
 
-    copilot = copilot_entries(source, home, state_dir, agents, entries, add,
-                              copilot_home=copilot_home)
-    if client == 'copilot':
-        retirement = _retire_stale_skill_links(
-            source, [home / '.agents/skills'], desired_links,
-            {row['path'] for row in copilot['copilot_conflicts']}, operations, add)
-        return {'schema': 1, 'source': str(source), 'home': str(home),
-                'state_dir': str(state_dir), 'client': client,
-                'operations': list(operations.values()),
-                'agent_names': [row['name'] for row in agents],
-                'skill_links': copilot['copilot_shared_skills'],
-                'preserved_variants': [], 'hook_trust': 'pending_native_review', **copilot, **retirement}
-
+def _codex_entries(source: Path, home: Path, state_dir: Path,
+                   agents: list[dict[str, Any]], entries: list[dict[str, Any]],
+                   projects: list[dict[str, Any]], add: AddOperation) -> dict[str, Any]:
+    """Plan Codex settings and the shared skill discovery locations."""
     codex = home / '.codex'
     config = codex / 'config.toml'
-    add(config, 'write', _native_config(config.read_text() if config.exists() else '', source, home, entries, agents))
     instructions = source / 'instructions/AGENTS.md'
-    if instructions.is_file():
-        add(codex / 'AGENTS.md', 'symlink', str(instructions))
-    for path in (codex / 'agents').glob('*.toml'):
-        data = tomllib.loads(path.read_text())
-        if data.get('name') in {row['name'] for row in agents}:
-            add(path, 'remove')
     hooks_path = codex / 'hooks.json'
-    hooks = json.loads(hooks_path.read_text()) if hooks_path.exists() else {'hooks': {}}
+    if os.name == 'nt':
+        for path in (config, hooks_path):
+            _portable_path(path)
+    config_bytes = config.read_bytes() if config.exists() else None
+    config_text = config_bytes.decode('utf-8') if config_bytes is not None else ''
+    add(config, 'write', _native_config(config_text, source, home, entries, agents),
+        expected_content=config_bytes)
+    if instructions.is_file():
+        if os.name == 'nt':
+            add(codex / 'AGENTS.md', 'managed-write', instructions.read_bytes().decode('utf-8'))
+        else:
+            add(codex / 'AGENTS.md', 'symlink', str(instructions))
+    if os.name != 'nt':
+        for path in (codex / 'agents').glob('*.toml'):
+            data = tomllib.loads(path.read_text(encoding='utf-8'))
+            if data.get('name') in {row['name'] for row in agents}:
+                add(path, 'remove', None)
+
+    hooks_bytes = hooks_path.read_bytes() if hooks_path.exists() else None
+    hooks = json.loads(hooks_bytes) if hooks_bytes is not None else {'hooks': {}}
     hook_groups = hooks.setdefault('hooks', {})
     for event, groups in list(hook_groups.items()):
         retained = []
         for group in groups:
-            handlers = [h for h in group.get('hooks', []) if not any(marker in h.get('command', '') for marker in ('constellation', 'omaros_permission_guard.py'))]
+            handlers = [handler for handler in group.get('hooks', [])
+                        if not _owned_codex_hook(handler, source, home)]
             if handlers:
                 retained.append({**group, 'hooks': handlers})
         hook_groups[event] = retained
-    import shlex
-    command = f'{shlex.quote(os.sys.executable)} {shlex.quote(str(source / "constellation.py"))} hook'
+    argv = [sys.executable, str(source / 'constellation.py')]
+    if state_dir != default_state_dir().resolve():
+        argv.extend(['--state-dir', str(state_dir)])
+    argv.append('hook')
     for event, action in [('PreToolUse', 'pre-tool'), ('Stop', 'stop')]:
-        hook_groups.setdefault(event, []).append({'hooks': [{'type': 'command', 'command': f'{command} {action}', 'timeout': 10}]})
+        command = _powershell_command([*argv, action]) if os.name == 'nt' else shlex.join([*argv, action])
+        handler = {'type': 'command', 'command': command, 'timeout': 10}
+        if os.name == 'nt':
+            handler['commandWindows'] = command
+        hook_groups.setdefault(event, []).append({'hooks': [handler]})
     hooks['hooks'] = {event: groups for event, groups in hook_groups.items() if groups}
-    add(hooks_path, 'write', _json(hooks))
+    add(hooks_path, 'write', _json(hooks), expected_content=hooks_bytes)
     core_names = {row['name'] for row in entries if row['group'] == 'core'}
-    profiles_file = source / 'profiles/projects.json'
-    projects = json.loads(profiles_file.read_text()).get('projects', []) if profiles_file.exists() else []
     native_roots = {Path(row['root']).resolve() for row in projects
                     if row.get('management') == 'native' and Path(row['root']).exists()}
     native_projects = [Path(row['root']) for row in projects if row.get('management') == 'native'
@@ -352,30 +473,339 @@ def build_plan(source: Path, home: Path | None = None, state_dir: Path | None = 
             if str(destination) in links:
                 skipped_variants.append(row['destination'])
                 continue
-            add(destination, 'symlink', str(target))
-            links.append(str(destination))
+            kind = 'managed-tree' if os.name == 'nt' else 'symlink'
+            if add(destination, kind, str(target), project_root=root if group != 'core' else None):
+                links.append(str(destination))
+    return {'skill_links': links, 'preserved_variants': skipped_variants}
+
+
+def _verify_git_root(root: Path) -> None:
+    """Require an exact Git owner before planning or applying project payloads."""
+    from .git import GitError, _run
+
+    if os.name == 'nt':
+        validate_windows_lookup(root)
+    try:
+        top = _run(root, 'rev-parse', '--show-toplevel')
+    except GitError as error:
+        raise ValueError(f'Project installation requires the exact Git owner: {root}') from error
+    if Path(os.fsdecode(top.rstrip(b'\r\n'))).resolve() != root:
+        raise ValueError(f'Project installation requires the exact Git owner: {root}')
+
+
+def verify_project_entry_owner(path: Path, project_root: Path) -> None:
+    """Reject project entries that cross into another Git owner or linked parent.
+
+    Args:
+        path: Scope entry below the known exact Git worktree root.
+        project_root: Expected owner verified at the beginning of the operation.
+
+    Raises:
+        ValueError: The path escapes the scope or may belong to a nested checkout.
+        OSError: Filesystem metadata cannot be inspected safely.
+    """
+    if not path.is_relative_to(project_root) or path == project_root:
+        raise ValueError(f'Project entry must be below its declared Git owner: {path}')
+    relative = path.relative_to(project_root)
+    if any(part.casefold() in {'..', '.git'} for part in relative.parts):
+        raise ValueError(f'Project entry traverses a parent or Git internals: {path}')
+    current = project_root
+    for part in relative.parts:
+        current /= part
+        if is_reparse(current):
+            if current != path:
+                raise ValueError(f'Project entry crosses a linked directory: {current}')
+            # A symbolic-link leaf can be an explicitly managed legacy alias.
+            break
+        metadata = current / '.git'
+        if current.is_dir() and (metadata.exists() or is_reparse(metadata)):
+            raise ValueError(f'Project entry belongs to a nested Git worktree: {current}')
+
+
+def _git_config(root: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
+    """Read or change configuration without inheriting Git redirections."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    return subprocess.run([git_executable(project=root), '-C', str(root), 'config', *arguments],
+                          capture_output=True, env=env, timeout=60, check=False)
+
+
+def _effective_hooks(root: Path) -> dict[str, Any]:
+    """Inspect Git's active configuration and executable hook files."""
+    from .git import _run
+
+    result = _git_config(root, '--null', '--path', '--get', 'core.hooksPath')
+    if result.returncode not in (0, 1):
+        raise ValueError(f'Cannot inspect effective Git hook configuration: {root}')
+    configured = os.fsdecode(result.stdout.removesuffix(b'\0')) if result.returncode == 0 else None
+    output = _run(root, 'rev-parse', '--path-format=absolute', '--git-path', 'hooks')
+    directory = Path(os.fsdecode(output.rstrip(b'\r\n'))).resolve()
+    if configured is not None:
+        directory = (root / configured).resolve()
+    active = sorted(
+        entry.name for entry in directory.iterdir()
+        if not entry.name.endswith('.sample') and not entry.name.startswith('.')
+        and entry.is_file() and os.access(entry, os.X_OK)
+    ) if directory.is_dir() else []
+    return {'configured': configured, 'directory': str(directory), 'active': active}
+
+
+def _git_entries(source: Path, projects: Sequence[Mapping[str, Any]],
+                 operations: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Plan Git installation while retaining unknown or unsupported hook paths."""
+    skipped: list[str] = []
+    conflicts: list[dict[str, str]] = []
+    desired = source / 'git-hooks'
     for project in projects:
-        if project.get('management') != 'native':
-            continue
         root = Path(project['root'])
-        if not root.exists():
+        if os.name == 'nt':
+            skipped.append(str(root))
             continue
-        desired = str(source / 'git-hooks')
-        before_values = _git_hooks(root)
-        if len(before_values) > 1:
+        before = _git_hooks(root)
+        if len(before) > 1:
             raise ValueError(f'Ambiguous multiple core.hooksPath values: {root}')
-        if before_values != [desired]:
-            operations[str(root / '.git/config:core.hooksPath')] = {'path': str(root), 'kind': 'git-hooks', 'value': desired, 'before': _values_fingerprint(before_values), 'before_values': before_values}
-    from .claude import plan_entries
-    claude = plan_entries(source, home, state_dir, projects, agents, entries, add)
-    discovery_roots = [home] + [Path(row['root']) for row in projects
-                               if row.get('management') == 'native']
-    retirement = _retire_stale_skill_links(
-        source, [root / folder for root in discovery_roots
-                 for folder in ('.agents/skills', '.claude/skills')], desired_links,
-        {row['path'] for row in claude['claude_conflicts'] + copilot['copilot_conflicts']},
-        operations, add)
-    return {'schema': 1, 'source': str(source), 'home': str(home), 'state_dir': str(state_dir), 'client': client, 'operations': list(operations.values()), 'agent_names': [row['name'] for row in agents], 'skill_links': links, 'preserved_variants': skipped_variants, 'hook_trust': 'pending_native_review', **claude, **copilot, **retirement}
+        effective = _effective_hooks(root)
+        active_directory = Path(effective['directory'])
+        if active_directory == desired:
+            continue
+        chain = project.get('preserve_git_hook_chain') or []
+        chain = [chain] if isinstance(chain, str) else chain
+        approved = {(root / directory).resolve() for directory in chain}
+        earlier = project.get('git_hooks_before')
+        known = active_directory in approved or (earlier and active_directory == (root / earlier).resolve())
+        if effective['configured'] is not None and not known:
+            conflicts.append({'path': str(root), 'reason': 'Preserved an unregistered core.hooksPath'})
+            continue
+        active = set(effective['active'])
+        if active and (active_directory not in approved or active - {'pre-commit', 'pre-push'}):
+            conflicts.append({'path': str(root), 'reason': 'Preserved active Git hooks outside the supported chain'})
+            continue
+        operations[str(root / '.git/config:core.hooksPath')] = {
+            'path': str(root), 'kind': 'git-hooks', 'value': str(desired),
+            'before': _values_fingerprint(before), 'before_values': before,
+            'effective_hooks_before': effective,
+        }
+    return {'git_hook_projects_skipped': skipped, 'git_hook_conflicts': conflicts}
+
+
+def build_plan(source: Path, home: Path | None = None, state_dir: Path | None = None,
+               *, client: str = 'all', copilot_home: Path | None = None,
+               visual_studio_agent_dir: Path | None = None,
+               project_root: Path | None = None) -> dict[str, Any]:
+    """Describe native installation without changing files.
+
+    Args:
+        source: Canonical Constellation checkout.
+        home: Native clients' home owner. Project mappings remain machine-local.
+        state_dir: Private backup destination, outside source and project data.
+        client: One native surface, or all command-line integrations.
+        copilot_home: Explicit Copilot CLI directory when customized.
+        visual_studio_agent_dir: Explicit Visual Studio personal agent directory.
+        project_root: Exact Git repository for a Visual Studio workspace install.
+
+    Returns:
+        Planned operations with expected fingerprints and preserved conflicts.
+    """
+    if client not in CLIENTS:
+        raise ValueError(f'Select an installation client from {", ".join(CLIENTS)}')
+    visual_studio_options = int(visual_studio_agent_dir is not None) + int(project_root is not None)
+    if client == 'visual-studio' and visual_studio_options != 1:
+        raise ValueError('Visual Studio requires exactly one of --visual-studio-agent-dir or --project-root')
+    if client != 'visual-studio' and visual_studio_options:
+        raise ValueError('Visual Studio scope options require --client visual-studio')
+
+    from .copilot import directory_trees_overlap, plan_entries as copilot_entries
+
+    source = source.resolve()
+    home = (home or Path.home()).expanduser().absolute()
+    state_dir = (state_dir or default_state_dir(home)).expanduser().absolute()
+    if os.name == 'nt' or client == 'visual-studio':
+        _portable_path(home)
+        _portable_path(state_dir)
+    home, state_dir = home.resolve(), state_dir.resolve()
+    if directory_trees_overlap(state_dir, source):
+        raise ValueError('Installation receipts and source must use separate directory trees')
+    install_project_payloads = client in {'all', 'codex', 'claude'}
+    projects = load_projects(source, home, state_dir=state_dir) if install_project_payloads or project_root else []
+    native_projects = [
+        row for row in projects
+        if install_project_payloads and row.get('management') == 'native' and Path(row['root']).exists()
+    ]
+    for row in native_projects:
+        _verify_git_root(Path(row['root']))
+    if any(directory_trees_overlap(state_dir, Path(row['root'])) for row in projects):
+        raise ValueError('Installation receipts and registered projects must use separate directory trees')
+    if project_root and directory_trees_overlap(state_dir, project_root.resolve()):
+        raise ValueError('Installation receipts and the Visual Studio project must use separate directory trees')
+    if project_root is not None:
+        candidate_root = project_root.expanduser().absolute()
+        _portable_path(candidate_root)
+        _verify_git_root(candidate_root.resolve())
+    if visual_studio_agent_dir is not None:
+        agent_root = visual_studio_agent_dir.expanduser().resolve()
+        if directory_trees_overlap(state_dir, agent_root) or directory_trees_overlap(source, agent_root):
+            raise ValueError('Visual Studio agents must be separate from source and private state')
+    if os.name == 'nt':
+        visual_studio_scope = project_root or visual_studio_agent_dir
+        if (visual_studio_scope is not None
+                and visual_studio_scope.expanduser().absolute().drive.casefold() != state_dir.drive.casefold()):
+            raise ValueError('Visual Studio scope and receipts must share a volume; select a private --state-dir on that volume')
+    inventory = json.loads((source / 'resource-inventory.json').read_bytes())
+    entries = relocate_entries(source, inventory['entries'], projects)
+    agents = []
+    for path in sorted((source / 'agents').glob('*.toml')):
+        data = tomllib.loads(path.read_bytes().decode('utf-8'))
+        for key in ('name', 'description', 'developer_instructions'):
+            if not isinstance(data.get(key), str) or not data[key]:
+                raise ValueError(f'Agent lacks {key}: {path}')
+        agents.append({**data, 'path': path})
+    if len(agents) != 8 or len({a['name'] for a in agents}) != 8:
+        raise ValueError('Expected exactly eight distinct preserved agents')
+
+    operations: dict[str, dict[str, Any]] = {}
+    desired_links: dict[str, str] = {}
+    conflicts: list[dict[str, str]] = []
+    managed_entries: dict[Path, Mapping[str, Any] | None] | None = None
+
+    def add(path: Path, kind: str, value: str | None = None, *,
+            expected_content: object = UNREAD, project_root: Path | None = None) -> bool:
+        """Accept an operation, or preserve a colliding portable native entry."""
+        nonlocal managed_entries
+        managed = kind in {'managed-write', 'managed-tree'}
+        if kind == 'managed-write':
+            kind = 'write'
+        tree = kind == 'managed-tree'
+        portable = managed or os.name == 'nt' or client == 'visual-studio'
+        if project_root is not None:
+            try:
+                verify_project_entry_owner(path, project_root)
+            except (OSError, ValueError) as error:
+                conflicts.append({'path': str(path), 'reason': str(error)})
+                return False
+        if kind == 'symlink' and value is not None:
+            desired_links[str(path)] = value
+        if portable:
+            try:
+                _portable_path(path)
+                if os.name == 'nt' and path.drive.casefold() != state_dir.drive.casefold():
+                    raise ValueError(f'Destination and receipts must be on the same volume: {path}')
+                if kind == 'write' and path.exists() and not path.is_file():
+                    raise ValueError(f'Expected a regular file at the native destination: {path}')
+            except ValueError as error:
+                conflicts.append({'path': str(path), 'reason': str(error)})
+                return False
+        if managed:
+            if managed_entries is None:
+                managed_entries = _managed_entries(source, state_dir)
+            if ((path in managed_entries and managed_entries[path] is None)
+                    or (path.exists() and path not in managed_entries)):
+                conflicts.append({'path': str(path), 'reason': 'Existing entry lacks a completed Constellation receipt'})
+                return False
+        try:
+            current = fingerprint(path)
+        except ValueError as error:
+            if not managed:
+                raise
+            conflicts.append({'path': str(path), 'reason': str(error)})
+            return False
+        current_acl = None
+        if os.name == 'nt' and current is not None:
+            try:
+                current_acl = _windows_acl_snapshot(path, tree=tree, private=True)
+            except (OSError, ValueError) as error:
+                conflicts.append({'path': str(path), 'reason': f'Cannot safely retain existing entry: {error}'})
+                return False
+        if managed and current is not None:
+            owner = managed_entries.get(path) if managed_entries is not None else None
+            if (owner is None or current != owner['after'] or current_acl != owner.get('after_acl')
+                    or (os.name == 'nt' and tree and owner.get('acl_scope') != 'tree')):
+                conflicts.append({'path': str(path), 'reason': 'Managed content or access changed since installation'})
+                return False
+        if expected_content is not UNREAD:
+            actual_content = path.read_bytes() if path.exists() else None
+            if actual_content != expected_content or fingerprint(path) != current:
+                raise ValueError(f'Native write input changed while planning: {path}')
+        if kind == 'symlink' and path.is_symlink() and os.readlink(path) == value:
+            operations.pop(str(path), None)
+            return True
+        if kind == 'write' and path.is_file() and not path.is_symlink() and path.read_bytes() == value.encode('utf-8'):
+            return True
+        if kind == 'remove' and current is None:
+            return True
+
+        operation = {'path': str(path), 'kind': kind, 'value': value, 'before': current}
+        if project_root is not None:
+            operation['project_root'] = str(project_root)
+        if portable:
+            operation['portable'] = True
+        if managed:
+            operation['managed'] = True
+        if os.name == 'nt':
+            operation['acl_scope'] = 'tree' if tree else 'entry'
+            operation['before_acl'] = current_acl
+        if tree:
+            files = _projected_files(source, Path(value))
+            if current is not None and path.is_dir():
+                native_paths = [entry for entry in _tree_paths(path) if entry.is_file()]
+                if files.keys() == {entry.relative_to(path) for entry in native_paths} and all(
+                    entry.read_bytes() == files[entry.relative_to(path)] for entry in native_paths
+                ):
+                    return True
+            operation['projection'] = _projection_digest(files)
+        elif kind == 'write':
+            # Prior permissions and DACLs are retained across native replacement.
+            private = path.name in {'config.toml', 'settings.json', 'settings.local.json'} or path.is_relative_to(state_dir)
+            operation['mode'] = (stat.S_IMODE(path.stat().st_mode)
+                                 if path.is_file() and not path.is_symlink()
+                                 else 0o600 if private else 0o644)
+        operations[str(path)] = operation
+        return True
+
+    result: dict[str, Any] = {
+        'schema': 1, 'source': str(source), 'home': str(home), 'state_dir': str(state_dir), 'client': client,
+        'agent_names': [row['name'] for row in agents], 'skill_links': [], 'preserved_variants': [],
+        'hook_trust': 'pending_native_review', 'git_hook_projects_skipped': [], 'git_hook_conflicts': [],
+        'retired_skill_links': [], 'skill_link_conflicts': [], 'install_conflicts': conflicts,
+        'claude_conflicts': [], 'claude_domain_documents': [], 'copilot_conflicts': [],
+    }
+    discovery_directories: list[Path] = []
+    if client in {'all', 'copilot'}:
+        result.update(copilot_entries(source, home, state_dir, agents, entries, add,
+                                      copilot_home=copilot_home))
+        result['skill_links'] = result['copilot_shared_skills']
+        discovery_directories.append(home / '.agents/skills')
+    if client in {'all', 'codex'}:
+        result.update(_codex_entries(source, home, state_dir, agents, entries, projects, add))
+        discovery_directories.extend(root / '.agents/skills' for root in
+                                     [home, *(Path(row['root']) for row in projects if row['management'] == 'native')])
+    if client in {'all', 'claude'}:
+        from .claude import plan_entries as claude_entries
+
+        result.update(claude_entries(source, home, state_dir, projects, agents, entries, add,
+                                     include_codex_docs=client == 'all'))
+        discovery_directories.extend(root / '.claude/skills' for root in
+                                     [home, *(Path(row['root']) for row in projects if row['management'] == 'native')])
+    if client == 'all':
+        result.update(_git_entries(source, native_projects, operations))
+    if client == 'visual-studio':
+        from .visual_studio import plan_entries as visual_studio_entries
+
+        result.update(visual_studio_entries(source, home, agents, entries, add,
+                                            agents_directory=visual_studio_agent_dir, project_root=project_root))
+        result['hook_trust'] = 'no_visual_studio_hooks'
+    if discovery_directories and os.name != 'nt':
+        protected = {row['path'] for row in result['claude_conflicts'] + result['copilot_conflicts']}
+        project_directories = {
+            Path(row['root']) / folder: Path(row['root'])
+            for row in native_projects for folder in ('.agents/skills', '.claude/skills')
+        }
+        result.update(_retire_stale_skill_links(
+            source, discovery_directories, desired_links, protected, operations, add, project_directories))
+    result['operations'] = list(operations.values())
+    result['native_project_roots'] = list(dict.fromkeys([
+        *(row['root'] for row in native_projects),
+        *([str(project_root.expanduser().resolve())] if project_root is not None else []),
+    ]))
+    return result
 
 
 def _copy(source: Path, destination: Path) -> None:
@@ -396,17 +826,24 @@ def _remove(path: Path) -> None:
 
 
 def _save_receipt(path: Path, receipt: dict[str, Any]) -> None:
-    temporary = path.with_suffix('.tmp')
-    temporary.write_text(_json(receipt))
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
+    stream = tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='',
+                                         prefix='.receipt-', dir=path.parent, delete=False)
+    temporary = Path(stream.name)
+    try:
+        with stream:
+            stream.write(_json(receipt))
+            stream.flush()
+            os.fsync(stream.fileno())
+        replace_ledger_record(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _git_hooks(root: Path) -> list[str]:
-    result = subprocess.run(['git', '-C', str(root), 'config', '--local', '--get-all', 'core.hooksPath'], capture_output=True, text=True)
+    result = _git_config(root, '--null', '--local', '--get-all', 'core.hooksPath')
     if result.returncode not in (0, 1):
         raise ValueError(f'Cannot inspect Git hook configuration: {root}')
-    return result.stdout.splitlines()
+    return [os.fsdecode(value) for value in result.stdout.split(b'\0')[:-1]]
 
 
 def _values_fingerprint(values: list[str]) -> str:
@@ -415,12 +852,46 @@ def _values_fingerprint(values: list[str]) -> str:
 
 def _current(operation: dict[str, Any]) -> str | None:
     _verify_skill_parent(operation)
+    path = Path(operation['path'])
     if operation['kind'] == 'git-hooks':
-        return _values_fingerprint(_git_hooks(Path(operation['path'])))
-    return fingerprint(Path(operation['path']))
+        return _values_fingerprint(_git_hooks(path))
+    if 'project_root' in operation:
+        verify_project_entry_owner(path, Path(operation['project_root']))
+    if operation.get('portable') or os.name == 'nt':
+        _portable_path(path)
+    return fingerprint(path)
 
 
-def _set_git_hooks(root: Path, values: list[str], expected: str, recovery_root: Path) -> None:
+def _matches_before(operation: Mapping[str, Any], path: Path, current: str | None) -> bool:
+    """Check the material input and its Windows access policy when recorded."""
+    return current == operation['before'] and _matches_acl(operation, path, 'before')
+
+
+def _matches_after(operation: Mapping[str, Any], path: Path, current: str | None) -> bool:
+    """Check a recovery or promoted entry against the installer output."""
+    return current == operation['after'] and _matches_acl(operation, path, 'after')
+
+
+def _matches_acl(operation: Mapping[str, Any], path: Path, phase: str) -> bool:
+    """Match the appropriate Windows snapshot, including a partially applied merge."""
+    if os.name != 'nt' or operation[phase] is None:
+        return True
+    tree = operation['kind'] == 'managed-tree'
+    if tree and operation.get('acl_scope') != 'tree':
+        return False
+    expected = {operation.get(f'{phase}_acl')}
+    if phase == 'after' and operation.get('retained_acl') is not None:
+        # A merge retains the existing access policy after the staged file
+        # reaches its native location. A stopped install can leave either ACL.
+        expected.add(operation['retained_acl'])
+    try:
+        return _windows_acl_snapshot(path, tree=tree, private=True) in expected
+    except (OSError, ValueError):
+        return False
+
+
+def _set_git_hooks(root: Path, values: list[str], expected: str, recovery_root: Path, *,
+                   effective_before: Mapping[str, Any] | None = None) -> None:
     """Compare and change one local key under Git's native config lock.
 
     The lock is acquired before reading the key, so another ``git config``
@@ -434,6 +905,7 @@ def _set_git_hooks(root: Path, values: list[str], expected: str, recovery_root: 
         values: Zero or one replacement values for ``core.hooksPath``.
         expected: Fingerprint of the values authorized by the receipt.
         recovery_root: Private receipt directory for retained inodes and journals.
+        effective_before: Active hook configuration to preserve during installation.
 
     Raises:
         ValueError: The expected key or configuration bytes changed.
@@ -441,10 +913,11 @@ def _set_git_hooks(root: Path, values: list[str], expected: str, recovery_root: 
     """
     if len(values) > 1:
         raise ValueError('A hook transaction accepts at most one value')
-    result = subprocess.run(['git', '-C', str(root), 'rev-parse',
-                             '--path-format=absolute', '--git-path', 'config'],
-                            capture_output=True, text=True, check=True)
-    config = Path(result.stdout.strip())
+    from .git import _run
+
+    _verify_git_root(root)
+    output = _run(root, 'rev-parse', '--path-format=absolute', '--git-path', 'config')
+    config = Path(os.fsdecode(output.rstrip(b'\r\n')))
     if config.is_symlink() or not config.is_file():
         raise ValueError(f'Expected a regular local Git config: {config}')
     lock = config.with_name(config.name + '.lock')
@@ -472,14 +945,15 @@ def _set_git_hooks(root: Path, values: list[str], expected: str, recovery_root: 
         original_mode = stat.S_IMODE(config.stat().st_mode)
         if _values_fingerprint(_git_hooks(root)) != expected:
             raise ValueError(f'Git hook configuration changed before locked update: {root}')
+        if effective_before is not None and _effective_hooks(root) != effective_before:
+            raise ValueError(f'Active Git hooks changed before locked update: {root}')
         candidate.write_bytes(original)
         if values:
-            subprocess.run(['git', 'config', '--file', str(candidate),
-                            '--replace-all', 'core.hooksPath', values[0]],
-                           check=True, capture_output=True)
+            result = _git_config(root, '--file', str(candidate), '--replace-all', 'core.hooksPath', values[0])
+            if result.returncode:
+                raise ValueError(f'Cannot prepare Git hook configuration: {root}')
         else:
-            result = subprocess.run(['git', 'config', '--file', str(candidate),
-                                     '--unset-all', 'core.hooksPath'], capture_output=True)
+            result = _git_config(root, '--file', str(candidate), '--unset-all', 'core.hooksPath')
             if result.returncode not in (0, 5):
                 raise ValueError(f'Cannot prepare Git hook configuration: {root}')
         prepared = candidate.read_bytes()
@@ -526,19 +1000,37 @@ def apply_plan(plan: dict[str, Any]) -> Path:
     the private backup before their discovery link is installed. A pending entry
     can be recovered after either rename without overwriting subsequent edits.
     """
+    source = Path(plan['source'])
+    state_dir = Path(plan['state_dir'])
+    for root in plan.get('native_project_roots', ()):
+        _verify_git_root(Path(root))
     for operation in plan['operations']:
-        if _current(operation) != operation['before']:
+        path = Path(operation['path'])
+        if os.name == 'nt':
+            if operation['kind'] in {'git-hooks', 'symlink'}:
+                raise ValueError(f'Unsupported Windows installation operation for {path}')
+            if path.drive.casefold() != state_dir.drive.casefold():
+                raise ValueError(f'Destination and receipts must be on the same volume: {path}')
+        if not _matches_before(operation, path, _current(operation)):
             raise ValueError(f'Installation input changed: {operation["path"]}')
-    directory = Path(plan['state_dir']) / 'installations' / f'{time.strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}'
-    directory.mkdir(parents=True, mode=0o700)
-    os.chmod(directory, 0o700)
+        if 'effective_hooks_before' in operation and _effective_hooks(path) != operation['effective_hooks_before']:
+            raise ValueError(f'Active Git hooks changed after planning: {path}')
+    installations = state_dir / 'installations'
+    directory = installations / f'{time.strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}'
+    if os.name == 'nt':
+        for private in (state_dir, installations, directory):
+            secure_mkdir(private)
+    else:
+        directory.mkdir(parents=True, mode=0o700)
+        os.chmod(directory, 0o700)
     receipt_path = directory / 'receipt.json'
-    receipt = {'schema': 1, 'source': plan['source'], 'status': 'applying', 'operations': [], 'hook_trust': 'pending_native_review'}
+    receipt = {'schema': 1, 'source': plan['source'], 'created_ns': time.time_ns(), 'status': 'applying',
+               'operations': [], 'hook_trust': plan.get('hook_trust', 'pending_native_review')}
     _save_receipt(receipt_path, receipt)
     try:
         for index, operation in enumerate(plan['operations']):
             path = Path(operation['path'])
-            if _current(operation) != operation['before']:
+            if not _matches_before(operation, path, _current(operation)):
                 raise ValueError(f'Installation input changed: {path}')
             backup = directory / 'before' / str(index)
             staged = directory / 'staged' / str(index)
@@ -546,28 +1038,51 @@ def apply_plan(plan: dict[str, Any]) -> Path:
             if operation['kind'] == 'symlink':
                 staged.symlink_to(operation['value'])
             elif operation['kind'] == 'write':
-                staged.write_text(operation['value'])
+                staged.write_bytes(operation['value'].encode('utf-8'))
                 os.chmod(staged, operation.get('mode', 0o600 if path.name == 'config.toml' else 0o644))
+            elif operation['kind'] == 'managed-tree':
+                files = _projected_files(source, Path(operation['value']))
+                if _projection_digest(files) != operation['projection']:
+                    raise ValueError(f'Canonical skill changed after planning: {operation["value"]}')
+                for relative, data in files.items():
+                    output = staged / relative
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(data)
             after = _values_fingerprint([operation['value']]) if operation['kind'] == 'git-hooks' else fingerprint(staged)
             entry = {**operation, 'backup': str(backup) if operation['before'] is not None else None, 'after': after, 'status': 'pending'}
+            if os.name == 'nt' and after is not None:
+                entry['after_acl'] = _windows_acl_snapshot(
+                    staged, tree=operation['kind'] == 'managed-tree', private=True)
+                if not operation.get('managed') and operation.get('before_acl') is not None:
+                    entry['retained_acl'] = operation['before_acl']
             receipt['operations'].append(entry)
             _save_receipt(receipt_path, receipt)
             if operation['kind'] == 'git-hooks':
                 _set_git_hooks(path, [operation['value']], operation['before'],
-                               directory / 'git-config' / str(index))
+                               directory / 'git-config' / str(index),
+                               effective_before=operation.get('effective_hooks_before'))
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if operation['before'] is not None:
                     backup.parent.mkdir(parents=True, exist_ok=True)
                     _move_install_entry(operation, path, backup)
-                    if fingerprint(backup) != operation['before']:
+                    if not _matches_before(operation, backup, fingerprint(backup)):
                         if not path.exists() and not path.is_symlink():
                             _move_install_entry(operation, backup, path, restoring=True)
                         raise ValueError(f'Concurrent installation edit preserved: {path}')
                 if operation['kind'] != 'remove':
-                    _rename_exclusive(staged, path)
-            if _current(operation) != after:
+                    _move_install_entry(operation, staged, path, restoring=True)
+                    if os.name == 'nt' and operation['before'] is not None and not operation.get('managed'):
+                        windows_copy_dacl(backup, path)
+            if not _matches_after(entry, path, _current(operation)):
                 raise ValueError(f'Installation verification failed: {path}')
+            if 'effective_hooks_before' in operation:
+                active_directory = Path(_effective_hooks(path)['directory'])
+                if active_directory != Path(operation['value']).resolve():
+                    raise ValueError(f'Another Git configuration overrides the installed hooks: {path}')
+            if os.name == 'nt' and after is not None and not operation.get('managed'):
+                entry['after_acl'] = _windows_acl_snapshot(path, tree=False, private=True)
+                entry.pop('retained_acl', None)
             entry['status'] = 'applied'
             _save_receipt(receipt_path, receipt)
         receipt['status'] = 'installed'
@@ -594,6 +1109,11 @@ def _move_install_entry(operation: Mapping[str, Any], source: Path, destination:
         OSError: The exclusive move cannot safely complete.
     """
     identities = operation.get('skill_parent_identity')
+    if 'project_root' in operation:
+        verify_project_entry_owner(Path(operation['path']), Path(operation['project_root']))
+    if operation.get('portable') or os.name == 'nt':
+        _portable_path(source)
+        _portable_path(destination)
     if identities is None:
         _rename_exclusive(source, destination)
         return
@@ -620,10 +1140,15 @@ def _rename_exclusive(source: Path, destination: Path, *, source_dir_fd: int | N
                       destination_dir_fd: int | None = None) -> None:
     """Atomically move an entry while refusing to replace any destination.
 
-    Darwin RENAME_EXCL and Linux RENAME_NOREPLACE apply to files, symbolic links,
-    and directories. Optional descriptors anchor skill retirement and restoration
-    to the verified discovery parent. Unsupported platforms fail without writes.
+    Darwin RENAME_EXCL, Linux RENAME_NOREPLACE, and Windows same-volume rename
+    all reject an occupied destination. Unix descriptors anchor link retirement
+    and restoration to the verified discovery parent.
     """
+    if os.name == 'nt':
+        if source_dir_fd is not None or destination_dir_fd is not None:
+            raise ValueError('Directory-descriptor moves are unavailable on Windows')
+        os.rename(source, destination)
+        return
     libc = ctypes.CDLL(None, use_errno=True)
     if sys.platform == 'darwin':
         if source_dir_fd is None and destination_dir_fd is None:
@@ -643,7 +1168,7 @@ def _rename_exclusive(source: Path, destination: Path, *, source_dir_fd: int | N
                           -100 if destination_dir_fd is None else destination_dir_fd,
                           os.fsencode(destination), 1)
     else:
-        raise RuntimeError('Atomic exclusive restore requires Darwin or Linux rename support')
+        raise RuntimeError('Atomic exclusive restore requires macOS, Linux, or Windows rename support')
     if result:
         code = ctypes.get_errno()
         raise OSError(code, os.strerror(code), str(destination))
@@ -668,14 +1193,16 @@ def _rename_exchange(source: Path, destination: Path) -> None:
 
 
 def _validate_restore(operation: dict[str, Any]) -> None:
+    path = Path(operation['path'])
     current = _current(operation)
-    if current == operation['before']:
+    if _matches_before(operation, path, current):
         return
     pending_gap = operation['status'] in ('pending', 'reverting') and current is None and operation.get('backup') and (Path(operation['backup']).exists() or Path(operation['backup']).is_symlink())
-    if current != operation['after'] and not pending_gap:
+    if not pending_gap and not _matches_after(operation, path, current):
         raise ValueError(f'Refusing to overwrite changes after installation: {operation["path"]}')
     if operation['kind'] != 'git-hooks' and operation['before'] is not None:
-        if fingerprint(Path(operation['backup'])) != operation['before']:
+        backup = Path(operation['backup'])
+        if not _matches_before(operation, backup, fingerprint(backup)):
             raise ValueError(f'Backup changed: {operation["path"]}')
 
 
@@ -686,9 +1213,18 @@ def rollback(receipt_path: Path) -> dict[str, Any]:
     is renamed into the receipt rather than deleted; unexpected concurrent bytes
     remain recoverable even if a writer races the final fingerprint check.
     """
-    receipt = json.loads(receipt_path.read_text())
+    receipt_path = receipt_path.expanduser().absolute()
+    if os.name == 'nt':
+        _portable_path(receipt_path)
+        if receipt_path.name != 'receipt.json' or not receipt_path.is_file():
+            raise ValueError('Select an existing installation receipt.json')
+        secure_mkdir(receipt_path.parent)
+    receipt = json.loads(read_ledger_record(receipt_path))
     if receipt['status'] == 'reverted':
         return receipt
+    for owner in {operation['project_root'] for operation in receipt['operations']
+                  if operation.get('status') != 'reverted' and 'project_root' in operation}:
+        _verify_git_root(Path(owner))
     for operation in receipt['operations']:
         if operation['status'] != 'reverted':
             _validate_restore(operation)
@@ -697,8 +1233,8 @@ def rollback(receipt_path: Path) -> dict[str, Any]:
         if operation['status'] == 'reverted':
             continue
         _validate_restore(operation)
-        if _current(operation) != operation['before']:
-            path = Path(operation['path'])
+        path = Path(operation['path'])
+        if not _matches_before(operation, path, _current(operation)):
             if operation['kind'] == 'git-hooks':
                 original = operation['before_values']
                 if len(original) > 1:
@@ -711,8 +1247,13 @@ def rollback(receipt_path: Path) -> dict[str, Any]:
             else:
                 restored = receipt_path.parent / 'restore' / str(index)
                 retired = receipt_path.parent / 'retired' / str(index)
-                if operation['before'] is not None and not restored.exists() and not restored.is_symlink():
-                    _copy(Path(operation['backup']), restored)
+                if operation['before'] is not None:
+                    if os.name == 'nt':
+                        # Restore the original object rather than copying bytes
+                        # into a file whose inherited access would differ.
+                        restored = Path(operation['backup'])
+                    elif not restored.exists() and not restored.is_symlink():
+                        _copy(Path(operation['backup']), restored)
                 operation['status'] = 'reverting'
                 _save_receipt(receipt_path, receipt)
                 _validate_restore(operation)
@@ -721,7 +1262,7 @@ def rollback(receipt_path: Path) -> dict[str, Any]:
                     if retired.exists() or retired.is_symlink():
                         raise ValueError(f'Unexpected occupied rollback quarantine: {retired}')
                     _move_install_entry(operation, path, retired)
-                    if fingerprint(retired) != operation['after']:
+                    if not _matches_after(operation, retired, fingerprint(retired)):
                         if not path.exists() and not path.is_symlink():
                             _move_install_entry(operation, retired, path, restoring=True)
                         raise ValueError(f'Concurrent edit preserved during rollback: {path}')
@@ -740,32 +1281,42 @@ def main(argv: list[str] | None = None) -> int:
     """Run installation preview, explicit apply, or guarded rollback."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument('--home', type=Path, default=Path.home())
-    parser.add_argument('--state-dir', type=Path)
-    parser.add_argument('--client', choices=('all', 'copilot'), default='all',
-                        help='Limit installation to Copilot personal entries, or install all clients')
+    parser.add_argument('--home', type=Path)
+    parser.add_argument('--state-dir', type=Path, default=os.environ.get('CONSTELLATION_STATE_DIR'))
+    parser.add_argument('--client', choices=CLIENTS, default='all',
+                        help='Choose a native client, or all three CLI integrations (default)')
     parser.add_argument('--copilot-home', type=Path,
                         default=Path(os.environ['COPILOT_HOME']) if os.environ.get('COPILOT_HOME') else None,
                         help='Copilot configuration directory (defaults to COPILOT_HOME or HOME/.copilot)')
+    visual_studio = parser.add_mutually_exclusive_group()
+    visual_studio.add_argument('--visual-studio-agent-dir', type=Path,
+                               help='Personal agents directory configured in Visual Studio')
+    visual_studio.add_argument('--project-root', type=Path,
+                               help='Exact Git repository for a Visual Studio workspace installation')
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--apply', action='store_true')
     action.add_argument('--rollback', type=Path)
     options = parser.parse_args(argv)
     if options.rollback:
+        if options.visual_studio_agent_dir or options.project_root:
+            parser.error('Rollback selects its scope from the receipt')
         result = rollback(options.rollback)
         print(_json({'status': result['status'], 'receipt': str(options.rollback)}), end='')
     else:
         plan = build_plan(options.source, options.home, options.state_dir,
-                          client=options.client, copilot_home=options.copilot_home)
+                          client=options.client, copilot_home=options.copilot_home,
+                          visual_studio_agent_dir=options.visual_studio_agent_dir,
+                          project_root=options.project_root)
         if options.apply:
             receipt = apply_plan(plan)
-            print(_json({'status': 'installed', 'receipt': str(receipt), 'hook_trust': 'pending_native_review',
-                         'claude_conflicts': plan.get('claude_conflicts', []),
-                         'claude_domain_documents': plan.get('claude_domain_documents', []),
-                         'copilot_conflicts': plan['copilot_conflicts'],
-                         'copilot_native_status': plan['copilot_native_status'],
-                         'retired_skill_links': plan['retired_skill_links'],
-                         'skill_link_conflicts': plan['skill_link_conflicts']}), end='')
+            report = {key: value for key, value in plan.items() if key.endswith(
+                ('_conflicts', '_status', '_projects_skipped', '_domain_documents', '_skill_links')
+            )}
+            status = 'installed_with_conflicts' if any(
+                value for key, value in report.items() if key.endswith('_conflicts')
+            ) else 'installed'
+            print(_json({'status': status, 'receipt': str(receipt), 'hook_trust': plan['hook_trust'],
+                         **report}), end='')
         else:
             print(_json({**plan, 'operations': [{k: v for k, v in op.items() if k != 'value'} for op in plan['operations']]}), end='')
     return 0

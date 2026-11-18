@@ -4,7 +4,7 @@ description: Create or revise Scilux governed notes, essays and TikZ figures usi
 ---
 # Scilux documents
 
-Read the [Scilux profile](../../../profiles/scilux.md), `config/document-schema-registry.yaml`, `config/style-canon.yaml` and the chosen template in `/Users/omarkhalil/GitHub/Scilux`. Use common writing, mathematics and teaching methods as appropriate. Formalization and structural analysis are responsibilities within the task, not separate dispatch systems.
+Read the [Scilux profile](../../../profiles/scilux.md), `config/document-schema-registry.yaml`, `config/style-canon.yaml` and the chosen template in the local Scilux checkout. Use common writing, mathematics and teaching methods as appropriate. Formalization and structural analysis are responsibilities within the task, not separate dispatch systems.
 
 ## Establish the artifact
 

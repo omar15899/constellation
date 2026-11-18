@@ -4,7 +4,7 @@ description: Interpret existing Sweeplab run evidence, compare numerical methods
 ---
 # Sweeplab run analysis
 
-Use the [Sweeplab profile](../../../profiles/sweeplab.md) and the current run-store/report contracts in `/Users/omarkhalil/GitHub/Sweeplab`. Analyze the run named by the user or established by the task. A recent timestamp alone does not identify the intended run.
+Use the [Sweeplab profile](../../../profiles/sweeplab.md) and the current run-store/report contracts in the local Sweeplab checkout. Analyze the run named by the user or established by the task. A recent timestamp alone does not identify the intended run.
 
 ## Establish the evidence
 

@@ -2,8 +2,7 @@
 
 Claude runs the tools and native subagents. Constellation supplies the shared
 instructions, eight agent definitions, skills, edit guards and reviewed Git
-workflow. There is one source checkout:
-`/Users/omarkhalil/GitHub/Constellation`.
+workflow. Each machine uses its local Constellation checkout as the source.
 
 ## What belongs where
 
@@ -24,6 +23,11 @@ workflow. There is one source checkout:
 The generated Markdown files are adapters, not another set of agent definitions.
 Edit the TOML source, then run the installer. Claude inherits the selected model
 and effort; Constellation does not change those settings or approve native trust.
+
+Select `install --client claude` for the Claude Code target. Use
+`py -3 .\constellation.py` in Windows PowerShell. Windows installs ordinary files
+and directories and keeps private state under `%LOCALAPPDATA%\Constellation` by default.
+The separate documentation snapshot tool requires macOS or Linux.
 
 ## Work through the common entry
 

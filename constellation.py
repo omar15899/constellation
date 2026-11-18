@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from io import TextIOWrapper
 import json
 import os
 from pathlib import Path
@@ -15,13 +16,40 @@ SOURCE = Path(__file__).resolve().parent
 sys.path.insert(0, str(SOURCE))
 
 
+def _skill_interpreter(group: str) -> str:
+    """Select a local explicit Python, installed group runtime, or this Python."""
+    override = os.environ.get('CONSTELLATION_SKILL_PYTHON')
+    if override:
+        path = Path(override)
+        if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
+            raise ValueError('CONSTELLATION_SKILL_PYTHON must name an existing absolute executable: ' + override)
+        return str(path)
+
+    config = SOURCE / 'profiles/runtimes.json'
+    if config.is_file():
+        configured = json.loads(config.read_text(encoding='utf-8')).get(group)
+        if configured:
+            path = Path(configured)
+            if path.is_absolute() and path.is_file() and os.access(path, os.X_OK):
+                return str(path)
+    return sys.executable
+
+
 def main() -> int:
     """Dispatch explicit commands without a second agent runtime."""
+    python_options = ('-X', 'utf8') if os.name == 'nt' else ()
+    if os.name == 'nt':
+        # Windows' redirected streams default to the ANSI code page. Native
+        # hook envelopes and Git paths cross the process boundary as UTF-8.
+        for stream in (sys.stdin, sys.stdout, sys.stderr):
+            if isinstance(stream, TextIOWrapper) and not stream.isatty():
+                stream.reconfigure(encoding='utf-8-sig' if stream is sys.stdin else 'utf-8',
+                                   errors=stream.errors)
     if sys.argv[1:2] == ['install']:
         from constellation.install import main as install_main
         return install_main(sys.argv[2:])
     if sys.argv[1:2] == ['docs']:
-        return subprocess.run([sys.executable, '-B',
+        return subprocess.run([sys.executable, *python_options, '-B',
             str(SOURCE / 'resources/automations/official_docs.py'), *sys.argv[2:]]).returncode
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir')
@@ -54,19 +82,46 @@ def main() -> int:
     docs.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.state_dir:
-        os.environ['CONSTELLATION_STATE_DIR'] = str(Path(args.state_dir).expanduser().resolve())
+        from constellation.platform_support import IS_WINDOWS, validate_windows_lookup
+
+        state_dir = Path(args.state_dir).expanduser()
+        state_dir = validate_windows_lookup(state_dir) if IS_WINDOWS else state_dir.resolve()
+        os.environ['CONSTELLATION_STATE_DIR'] = str(state_dir)
     if args.command == 'guard-status':
-        root = args.root.resolve()
-        projects = json.loads((SOURCE / 'profiles/projects.json').read_text())['projects']
-        registered = any(Path(p['root']).resolve() == root and p['management'] == 'native' for p in projects)
-        hook_path = subprocess.run(['git', '-C', str(root), 'config', '--get', 'core.hooksPath'],
-                                   capture_output=True, text=True, check=False).stdout.strip()
-        hooks = Path(hook_path) if Path(hook_path).is_absolute() else root / hook_path
-        verified = registered and hooks.resolve() == SOURCE / 'git-hooks' and all(
-            (hooks / name).is_file() and not (hooks / name).is_symlink()
-            and os.access(hooks / name, os.X_OK)
-            for name in ('pre-commit', 'pre-push'))
-        print(json.dumps({'verified': verified, 'root': str(root), 'hooks': str(hooks.resolve())}))
+        from constellation.platform_support import IS_WINDOWS, git_executable, is_reparse, validate_windows_lookup
+        from constellation.projects import load_projects
+
+        root = validate_windows_lookup(args.root) if IS_WINDOWS else args.root.resolve()
+        projects = load_projects(SOURCE)
+        registered = any(Path(p['root']) == root and p['management'] == 'native' for p in projects)
+        launcher = git_executable(project=root)
+        git_environment = {key: value for key, value in os.environ.items()
+                           if not (key.upper() if IS_WINDOWS else key).startswith('GIT_')}
+        config = subprocess.run([launcher, '-C', str(root), 'config', '--null', '--get-all', 'core.hooksPath'],
+                                capture_output=True, encoding='utf-8', errors='surrogateescape',
+                                env=git_environment, timeout=30, check=False)
+        paths = config.stdout.removesuffix('\0').split('\0')
+        hook_path = paths[0] if config.returncode == 0 and len(paths) == 1 else ''
+        configured_hooks = Path(hook_path)
+        hooks = configured_hooks if configured_hooks.is_absolute() else root / configured_hooks
+        if not IS_WINDOWS:
+            hooks = hooks.resolve()
+        anchored_relative = configured_hooks.anchor and not configured_hooks.is_absolute()
+        verified = False
+        if registered and hook_path and not anchored_relative and hooks == SOURCE / 'git-hooks':
+            if IS_WINDOWS:
+                validate_windows_lookup(hooks)
+            owner = subprocess.run([launcher, '-C', str(root), 'rev-parse', '--show-toplevel'],
+                                   capture_output=True, encoding='utf-8', errors='surrogateescape',
+                                   env=git_environment, timeout=30, check=False)
+            owner_root = Path(owner.stdout.rstrip('\r\n'))
+            if not IS_WINDOWS:
+                owner_root = owner_root.resolve()
+            verified = owner.returncode == 0 and owner_root == root and all(
+                (hooks / name).is_file() and not is_reparse(hooks / name)
+                and os.access(hooks / name, os.R_OK if os.name == 'nt' else os.X_OK)
+                for name in ('pre-commit', 'pre-push'))
+        print(json.dumps({'verified': verified, 'root': str(root), 'hooks': str(hooks)}))
         return 0 if verified else 2
     if args.command == 'hook':
         if args.client == 'copilot':
@@ -78,7 +133,7 @@ def main() -> int:
         from constellation.install import main as install_main
         return install_main(args.arguments)
     if args.command == 'docs':
-        return subprocess.run([sys.executable, '-B',
+        return subprocess.run([sys.executable, *python_options, '-B',
             str(SOURCE / 'resources/automations/official_docs.py'), *args.arguments]).returncode
     if args.command == 'skill-run':
         base = (SOURCE / 'skills' / args.group / args.skill).resolve()
@@ -87,11 +142,8 @@ def main() -> int:
             parser.error('Skill script leaves its source directory')
         if not script.is_file() or script.suffix != '.py':
             parser.error('Select an existing Python skill resource')
-        runners = json.loads((SOURCE / 'profiles/runtimes.json').read_text())
-        interpreter = runners.get(args.group, sys.executable)
-        if not Path(interpreter).is_file():
-            parser.error('The configured skill interpreter is unavailable: ' + interpreter)
-        return subprocess.run([interpreter, str(script), *args.arguments]).returncode
+        return subprocess.run([_skill_interpreter(args.group), *python_options,
+                               str(script), *args.arguments]).returncode
     from constellation.state import Store
     from constellation import git
     store = Store(args.state_dir)

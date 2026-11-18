@@ -14,12 +14,14 @@ from pathlib import Path
 import re
 import shlex
 import sys
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
+
+from .install import AddOperation, verify_project_entry_owner
+from .platform_support import is_reparse
 
 
 BEGIN = '<!-- BEGIN Constellation native imports -->'
 END = '<!-- END Constellation native imports -->'
-AddOperation = Callable[[Path, str, str | None], None]
 
 
 def agent_document(agent: Mapping[str, Any]) -> str:
@@ -56,13 +58,16 @@ def _owned_hook(handler: Mapping[str, Any], source: Path) -> bool:
         argv = [handler['command'], *arguments]
     else:
         return False
+    if len(argv) == 6 and argv[2] == '--state-dir' and Path(argv[3]).is_absolute():
+        argv = [*argv[:2], *argv[4:]]
     # Shell pipelines, wrappers and similar filenames are not ours to remove.
-    return (len(argv) == 4 and Path(argv[0]).name.startswith('python')
-            and argv[1] == str(source / 'constellation.py')
+    return (len(argv) == 4 and Path(argv[0]).name.casefold().startswith('python')
+            and Path(argv[1]) == source / 'constellation.py'
             and argv[2] == 'hook' and argv[3] in {'pre-tool', 'stop'})
 
 
-def settings_document(text: str, source: Path, *, global_hooks: bool) -> str:
+def settings_document(text: str, source: Path, *, global_hooks: bool,
+                      state_dir: Path | None = None) -> str:
     """Merge shared hooks while preserving unrelated native settings.
 
     Args:
@@ -70,6 +75,7 @@ def settings_document(text: str, source: Path, *, global_hooks: bool) -> str:
         source: Canonical Constellation checkout.
         global_hooks: Install handlers in user scope when true; otherwise remove
             only exact inherited duplicates from project scope.
+        state_dir: Explicit private state selected for generated hooks.
 
     Returns:
         Original text for a semantic no-op, otherwise complete JSON settings.
@@ -77,7 +83,8 @@ def settings_document(text: str, source: Path, *, global_hooks: bool) -> str:
     Raises:
         ValueError: The native settings or hook structures are malformed.
     """
-    original = json.loads(text) if text else {}
+    decoded = text.removeprefix('\ufeff')
+    original = json.loads(decoded) if decoded else {}
     if not isinstance(original, dict):
         raise ValueError('Claude settings must contain a JSON object')
     updated = deepcopy(original)
@@ -102,10 +109,13 @@ def settings_document(text: str, source: Path, *, global_hooks: bool) -> str:
         else:
             groups.pop(event, None)
     if global_hooks:
+        command = [str(source / 'constellation.py')]
+        if state_dir is not None:
+            command.extend(['--state-dir', str(state_dir)])
         for event, action in [('PreToolUse', 'pre-tool'), ('Stop', 'stop')]:
             handler: dict[str, Any] = {
                 'type': 'command', 'command': sys.executable,
-                'args': [str(source / 'constellation.py'), 'hook', action],
+                'args': [*command, 'hook', action],
                 'timeout': 10,
             }
             if event == 'PreToolUse':
@@ -115,24 +125,37 @@ def settings_document(text: str, source: Path, *, global_hooks: bool) -> str:
         updated['hooks'] = groups
     elif 'hooks' in updated and original.get('hooks'):
         updated.pop('hooks')
-    return text if updated == original else json.dumps(updated, ensure_ascii=False, indent=2) + '\n'
+    if updated == original:
+        return text
+    newline = '\r\n' if '\r\n' in text else '\n'
+    bom = '\ufeff' if text.startswith('\ufeff') else ''
+    return bom + json.dumps(updated, ensure_ascii=False, indent=2).replace('\n', newline) + newline
 
 
 def _imports(text: str, paths: Sequence[Path]) -> str:
     """Replace only our delimited imports, retaining all domain-owned prose."""
     if text.count(BEGIN) != text.count(END) or text.count(BEGIN) > 1:
         raise ValueError('Ambiguous Constellation native import markers')
+    bom = '\ufeff' if text.startswith('\ufeff') else ''
+    text = text.removeprefix('\ufeff')
+    newline = '\r\n' if '\r\n' in text else '\n'
     if BEGIN in text:
         start = text.index(BEGIN)
         finish = text.index(END, start) + len(END)
-        content = text[:start] + text[finish:].lstrip('\n')
+        following = text[finish:].removeprefix(newline)
+        if start == 0:
+            following = following.removeprefix(newline)
+        content = text[:start] + following
     else:
         content = text
-    required = [f'@{path}' for path in paths if f'@{path}' not in content.splitlines()]
+    # Claude imports accept absolute paths and require escaping every space.
+    rendered = ['@' + path.as_posix().replace(' ', '\\ ') for path in paths]
+    existing = set(content.splitlines())
+    required = [line for line in rendered if line not in existing]
     if not required:
-        return content
-    block = BEGIN + '\n' + '\n'.join(required) + '\n' + END + '\n'
-    return block + ('\n' + content if content else '')
+        return bom + content
+    block = newline.join([BEGIN, *required, END, ''])
+    return bom + block + (newline + content if content else '')
 
 
 def _central_link(path: Path, roots: Sequence[Path]) -> bool:
@@ -145,7 +168,8 @@ def _central_link(path: Path, roots: Sequence[Path]) -> bool:
 
 def plan_entries(source: Path, home: Path, state_dir: Path,
                  projects: Sequence[Mapping[str, Any]], agents: Sequence[Mapping[str, Any]],
-                 entries: Sequence[Mapping[str, Any]], add: AddOperation) -> dict[str, Any]:
+                 entries: Sequence[Mapping[str, Any]], add: AddOperation, *,
+                 include_codex_docs: bool = True) -> dict[str, Any]:
     """Prepare Claude references without claiming unrelated client files.
 
     Args:
@@ -156,6 +180,8 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
         agents: Eight already validated canonical agent definitions.
         entries: Skill inventory with ownership and source paths.
         add: Installer collector recording expected input fingerprints.
+        include_codex_docs: Maintain the Codex shared reference when it is part
+            of the selected installation.
 
     Returns:
         Discovery paths, preserved conflicts and domain documents for review.
@@ -167,7 +193,9 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
     native_projects = [project for project in projects
                        if project.get('management') == 'native' and Path(project['root']).exists()]
     native_roots = {Path(project['root']).resolve(): Path(project['root']) for project in native_projects}
-    generated = state_dir / 'native/claude/agents'
+    copies = os.name == 'nt'
+    native_agents = home / '.claude/agents'
+    generated = native_agents if copies else state_dir / 'native/claude/agents'
     owned_agents = [source / 'resources/native-claude-agents', generated]
 
     def preserve(path: Path, reason: str) -> None:
@@ -175,109 +203,142 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
         if conflict not in conflicts:
             conflicts.append(conflict)
 
-    def safe_parent(path: Path) -> bool:
-        if any(parent.is_symlink() for parent in path.parents):
-            preserve(path, 'Native entry traverses a user-managed directory link')
-            return False
+    def safe_parent(path: Path, *, project_root: Path | None = None) -> bool:
+        for parent in reversed(path.parents):
+            if is_reparse(parent):
+                preserve(path, 'Native entry traverses a user-managed directory link')
+                return False
+            if parent.exists() and not parent.is_dir():
+                preserve(path, f'Native parent is not a directory: {parent}')
+                return False
+        if project_root is not None:
+            try:
+                verify_project_entry_owner(path, project_root)
+            except (OSError, ValueError) as error:
+                preserve(path, str(error))
+                return False
         return True
 
-    def native_link(path: Path, target: Path, owned: Sequence[Path]) -> bool:
-        if not safe_parent(path):
+    def native_resource(path: Path, target: Path, owned: Sequence[Path], *,
+                        project_root: Path | None = None) -> bool:
+        if not safe_parent(path, project_root=project_root):
             return False
+        if copies:
+            if target.is_dir():
+                accepted = add(path, 'managed-tree', str(target), project_root=project_root)
+            else:
+                accepted = add(path, 'managed-write', target.read_bytes().decode('utf-8'), project_root=project_root)
+            if not accepted:
+                return False
+            links.append(str(path))
+            return True
         if path.exists() or path.is_symlink():
             if not _central_link(path, owned):
                 preserve(path, 'Existing native entry is not a shared-source link')
                 return False
-        add(path, 'symlink', str(target))
+        if not add(path, 'symlink', str(target), project_root=project_root):
+            return False
         links.append(str(path))
         return True
 
     for agent in agents:
         filename = agent['name'] + '.md'
         target = generated / filename
-        add(target, 'write', agent_document(agent))
-        inherited = native_link(home / '.claude/agents' / filename, target, owned_agents)
+        if copies:
+            inherited = safe_parent(target) and add(target, 'managed-write', agent_document(agent))
+            if inherited:
+                links.append(str(target))
+        else:
+            add(target, 'write', agent_document(agent))
+            inherited = native_resource(native_agents / filename, target, owned_agents)
         # User agents are inherited; keep only one native entry per shared role.
         for project in native_projects:
-            local = Path(project['root']) / '.claude/agents' / filename
-            if not safe_parent(local):
+            root = Path(project['root'])
+            local = root / '.claude/agents' / filename
+            if not safe_parent(local, project_root=root):
                 continue
-            if _central_link(local, owned_agents):
+            if not copies and _central_link(local, owned_agents):
                 if inherited:
-                    add(local, 'remove', None)
+                    add(local, 'remove', None, project_root=root)
                 else:
                     preserve(local, 'Shared project role retained because its global entry conflicts')
-            elif local.exists() or local.is_symlink():
+            elif local.exists() or is_reparse(local):
                 preserve(local, 'Project agent shadows the inherited shared role')
 
     settings = home / '.claude/settings.json'
     inherited_hooks = False
     if not safe_parent(settings):
         pass
-    elif settings.is_symlink():
+    elif is_reparse(settings):
         preserve(settings, 'Native settings is a user-managed symbolic link')
     else:
-        rendered = settings_document(settings.read_text() if settings.exists() else '',
-                                     source, global_hooks=True)
-        add(settings, 'write', rendered)
-        inherited_hooks = json.loads(rendered).get('disableAllHooks') is not True
-        if not inherited_hooks:
+        content = settings.read_bytes() if settings.exists() else None
+        rendered = settings_document(content.decode('utf-8') if content is not None else '',
+                                     source, global_hooks=True, state_dir=state_dir)
+        enabled = json.loads(rendered.removeprefix('\ufeff')).get('disableAllHooks') is not True
+        inherited_hooks = add(settings, 'write', rendered, expected_content=content) and enabled
+        if not enabled:
             preserve(settings, 'Native disableAllHooks prevents shared hook execution')
     instruction_paths = [source / 'instructions/AGENTS.md']
     if (source / 'profiles/claude.md').is_file():
         instruction_paths.append(source / 'profiles/claude.md')
-        native_link(home / '.claude/README.md', source / 'profiles/claude.md',
-                    [source / 'profiles'])
+        native_resource(home / '.claude/README.md', source / 'profiles/claude.md',
+                        [source / 'profiles'])
     instructions = home / '.claude/CLAUDE.md'
     if not safe_parent(instructions):
         pass
-    elif instructions.is_symlink():
+    elif is_reparse(instructions):
         preserve(instructions, 'Native instructions is a user-managed symbolic link')
     else:
-        add(instructions, 'write', _imports(instructions.read_text() if instructions.exists() else '',
-                                            instruction_paths))
+        content = instructions.read_bytes() if instructions.exists() else None
+        current = content.decode('utf-8') if content is not None else ''
+        add(instructions, 'write', _imports(current, instruction_paths), expected_content=content)
     for project in native_projects:
         root = Path(project['root'])
         for name in ('settings.json', 'settings.local.json'):
             path = root / '.claude' / name
-            if not safe_parent(path):
+            if not safe_parent(path, project_root=root):
                 continue
-            if path.is_symlink():
+            if is_reparse(path):
                 preserve(path, 'Project settings is a user-managed symbolic link')
             elif path.is_file() and inherited_hooks:
-                add(path, 'write', settings_document(path.read_text(), source, global_hooks=False))
+                content = path.read_bytes()
+                replacement = settings_document(content.decode('utf-8'), source, global_hooks=False)
+                add(path, 'write', replacement, expected_content=content, project_root=root)
         profile = project.get('profile')
         # Source instructions are authored/reviewed source, not install outputs.
         if profile and root != source:
             path = root / 'CLAUDE.md'
-            if not safe_parent(path):
+            if not safe_parent(path, project_root=root):
                 continue
-            if path.is_symlink():
+            if is_reparse(path):
                 preserve(path, 'Project instructions is a user-managed symbolic link')
             else:
-                current = path.read_text() if path.exists() else ''
+                content = path.read_bytes() if path.exists() else None
+                current = content.decode('utf-8') if content is not None else ''
                 replacement = _imports(current, [source / profile])
-                if replacement != current and current.strip():
+                accepted = add(path, 'write', replacement, expected_content=content, project_root=root)
+                if accepted and replacement != current and current.strip():
                     documents.append(str(path))
-                add(path, 'write', replacement)
 
     core = {row['name']: source / row['destination'] for row in entries if row['group'] == 'core'}
-    inherited_core = {name: native_link(home / '.claude/skills' / name, target, [source / 'skills'])
+    inherited_core = {name: native_resource(home / '.claude/skills' / name, target, [source / 'skills'])
                       for name, target in core.items()}
-    desired: dict[Path, Path] = {}
+    desired: dict[Path, tuple[Path, Path]] = {}
     # A core shadow need not be in the preserved inventory: historical wrapper
     # directories also mask the inherited shared method and must be reported.
     for project in native_projects:
+        root = Path(project['root'])
         for name in core:
-            local = Path(project['root']) / '.claude/skills' / name
-            if not safe_parent(local):
+            local = root / '.claude/skills' / name
+            if not safe_parent(local, project_root=root):
                 continue
-            if _central_link(local, [source / 'skills']):
+            if not copies and _central_link(local, [source / 'skills']):
                 if inherited_core[name]:
-                    add(local, 'remove', None)
+                    add(local, 'remove', None, project_root=root)
                 else:
                     preserve(local, 'Shared project skill retained because its global entry conflicts')
-            elif local.exists() or local.is_symlink():
+            elif local.exists() or is_reparse(local):
                 preserve(local, 'Project skill shadows the inherited core skill')
     for row in entries:
         name, group = row['name'], row['group']
@@ -299,13 +360,14 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
                 continue
             # Inventory order prefers project-owned versions to later workspace
             # fallbacks, consistently with the existing Codex discovery policy.
-            desired.setdefault(local, source / row['destination'])
-    for path, target in desired.items():
-        native_link(path, target, [source / 'skills'])
+            desired.setdefault(local, (source / row['destination'], root))
+    for path, (target, root) in desired.items():
+        native_resource(path, target, [source / 'skills'], project_root=root)
 
     documentation_tool = source / 'resources/automations/official_docs.py'
-    if documentation_tool.is_file():
-        for client in ('.claude', '.codex'):
+    if not copies and documentation_tool.is_file():
+        clients = ('.claude', '.codex') if include_codex_docs else ('.claude',)
+        for client in clients:
             path = home / client / 'tools/official_docs.py'
             if not safe_parent(path):
                 continue

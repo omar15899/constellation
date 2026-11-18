@@ -8,23 +8,24 @@ description: "Implement, debug, and refactor software with explicit contracts, r
 1. **Understand the contract.** Read project instructions, normal entry points,
    callers, and invariants. State the observable result. For a defect, establish
    its cause from the available evidence before editing.
-2. **Write for the next maintainer.** Reuse existing owners and structures. Use
-   domain names, focused functions, useful types, and straightforward control
-   flow. Make data ownership, mutation, errors, and cleanup clear. Add an
-   abstraction only for a concrete need. Cover the supported domain and preserve
-   interfaces and data unless the requested change requires otherwise.
-3. **Document decisions and inspect the result.** Use Google Style for Python
-   public APIs and nontrivial code; use the project's idiom in other languages.
-   Explain contracts and reasons rather than narrating statements. Read the
-   actual diff and use relevant non-test static checks.
+2. **Make the smallest correct change.** Reuse the component that owns the
+   behavior. Cover the supported domain and preserve behavior callers rely on.
+   Use descriptive domain names, useful types and direct control flow. Make
+   ownership, mutation, errors and cleanup visible. Choose a simple algorithm
+   suited to the expected inputs and add an abstraction only for a present need.
+3. **Document contracts and inspect the result.** Use Google Style docstrings
+   for Python public APIs and nontrivial functions. Explain inputs, results,
+   assumptions and effects that matter to callers. Follow the project's idiom
+   in other languages. Inspect the diff and run relevant static checks.
 4. **Deliver grounded evidence.** Follow the project's task and review contract.
    Report meaningful milestones, blockers, and decisions. State the resulting
    behavior, evidence actually obtained, and remaining limitations.
 
-Do not add, modify, or run tests unless the user explicitly requests them.
-Preserve existing test files. Do not relabel suites, regressions, or behavioral
-experiments as static checks. Do not claim runtime correctness from reading,
-syntax checks, or an independent review.
+Keep existing coverage and default to no new tests. Use the smallest focused
+set when explicitly requested, required by project policy, or necessary for a
+specific material regression that existing evidence leaves open. Respect
+stricter task and project limits. Report static checks and runtime evidence
+separately, along with any required gate that remains unmet.
 
 Read the [engineering workflow](references/workflow.md) for substantive design,
 documentation, validation, and review decisions. The

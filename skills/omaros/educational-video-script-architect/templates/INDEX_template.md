@@ -87,7 +87,7 @@ Mark each box ☑ as the corresponding file is completed and validated. The file
 
 ## Cross-references out
 
-- Source vault root: [`05_Projects/OmarOS/`](/Users/omarkhalil/OmarOS/05_Projects/OmarOS)
+- Source vault reference at `05_Projects/OmarOS/` in the local vault
 - Knowledge base entry (if applicable): `<path>`
 - Reflexiones LaTeX chapter (if applicable): `<path>`
 - Related research notes (if applicable): `<paths>`

@@ -27,25 +27,26 @@
 
 ## Engineering
 
-- Prefer Python where the project permits. Write typed code that handles the
-  supported domain, existing callers and relevant failures. Make data flow and
-  invariants easy to follow. Use descriptive names, reuse existing logic and
-  add abstractions or compatibility code only for concrete needs.
-- Write for the next human maintainer. Use names from the problem domain,
-  focused functions, explicit data ownership and control flow that can be read
-  from top to bottom. Prefer a direct implementation over speculative frameworks,
-  clever compression, pass-through helpers or layers without a current caller.
-  Keep error messages actionable and make resource cleanup and partial failure
-  behavior clear. Comments explain decisions and invariants, not obvious syntax.
-- Use Google Style for Python docstrings on public APIs and nontrivial code.
-  Document contracts, effects and assumptions that affect callers. Explain
-  decisions and invariants in comments alongside the code. In other languages,
-  follow the project's idiomatic documentation format.
-- Do not create, change or run tests unless Omar explicitly requests them.
-  Preserve existing tests. Static inspection, syntax and configuration validation,
-  and independent code review remain appropriate; report their actual scope and
-  do not disguise tests as checks, smoke validation or probes. If a required gate
-  needs tests, report the unmet gate without running it or bypassing it.
+- Make the smallest change that fully satisfies the requirement. Reuse the
+  existing component that owns the behavior and preserve the interfaces, data
+  and failure handling callers rely on. Prefer typed Python where the project
+  permits it.
+- Write code a human can read from top to bottom. Use domain names, focused
+  functions, visible data ownership and ordinary control flow. Prefer a
+  straightforward algorithm that fits the expected inputs. Introduce an
+  abstraction or dependency only for a concrete need. Keep errors actionable
+  and handle relevant partial failures and cleanup explicitly.
+- Use Google Style docstrings for Python public APIs and nontrivial functions.
+  Document the inputs, results, errors, assumptions and effects callers need
+  to know. Use comments to explain decisions and invariants. Follow the
+  project's documentation conventions in other languages.
+- Start verification with source inspection, relevant static checks and
+  independent review. Keep existing coverage and default to no new tests.
+  Add, change or run only the smallest focused set needed for an explicit
+  request, an applicable project requirement, or a concrete material
+  regression that existing evidence leaves open. Honor stricter task or
+  project limits. Reserve broad suites for explicit requests or mandatory
+  gates. Report unmet gates and distinguish static evidence from execution.
 - Parallelize independent implementation and review work within the native
   client's effective limits. Review the integrated candidate after its permitted
   checks; earlier reviews of evolving fragments do not approve a later version.
@@ -114,9 +115,11 @@ Project-level `AGENTS.md` files supplement and may tighten these instructions.
 
 ## Constellation: common working contract
 
-The single source is `/Users/omarkhalil/GitHub/Constellation`. Read its README
-and the applicable `profiles/` entry before changing a registered project.
-Run `/opt/homebrew/bin/python3 /Users/omarkhalil/GitHub/Constellation/constellation.py`.
+Use the established local Constellation checkout as the canonical source. Read
+its README and the applicable `profiles/` entry before changing a registered
+project. Run its `constellation.py` with Python 3.11 or later. Use
+`python3 constellation.py` from the checkout on macOS or Linux and
+`py -3 .\constellation.py` from PowerShell on Windows.
 Consultations require no task record. Changes require a `begin` contract with
 exact paths, real native author IDs, an observable requirement and checks.
 Use the active client's native subagents for independent work; assign exclusive

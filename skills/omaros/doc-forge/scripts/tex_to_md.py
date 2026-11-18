@@ -12,14 +12,17 @@ Stages:
 """
 import dataclasses
 import json
+import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 from datetime import date
 from pathlib import Path
 
-VAULT_ROOT = Path("/Users/omarkhalil/OmarOS")
+VAULT_MARKER = Path("05_Projects/OmarOS/Architecture/OmarOS_Architecture.md")
 
 # Minimal standalone preamble for compiling isolated tikzpicture blocks.
 # Loads the most common tikz libraries to maximise compatibility.
@@ -206,7 +209,8 @@ class TexToMdPipeline:
         route_only: bool = False,
     ):
         self.src = src.resolve()
-        self.out = out
+        self.output_lookup = out.absolute()
+        self.out = out.resolve()
         self.resolve_inputs = resolve_inputs
         self.frontmatter = frontmatter
         self.keep_intermediate = keep_intermediate
@@ -307,83 +311,220 @@ class TexToMdPipeline:
             lines.append(m.group(0))
         return "\n".join(lines)
 
-    def _compile_tikz(self, block: str, index: int, user_macros: str) -> Path | None:
-        """Compile one tikzpicture block → PNG. Returns path or None on failure."""
-        stem = self.src.stem
-        att_dir = VAULT_ROOT / "90_Attachments" / "tikz" / stem
-        att_dir.mkdir(parents=True, exist_ok=True)
+    @staticmethod
+    def _plain_attachment_path(path: Path, *, directory: bool, allow_missing: bool = False) -> bool:
+        """Check a local path without accepting links or Windows reparse points.
+
+        Args:
+            path: Absolute path retaining the spelling supplied by the caller.
+            directory: Whether the leaf must be a directory or a regular file.
+            allow_missing: Permit a path below an existing plain directory.
+
+        Returns:
+            Whether the existing components satisfy the attachment policy.
+        """
+        if not path.is_absolute() or ".." in path.parts:
+            return False
+        if os.name == "nt":
+            if not re.fullmatch(r"[A-Za-z]:", path.drive):
+                return False
+            if any(":" in part or part.endswith((" ", ".")) for part in path.parts[1:]):
+                return False
+        for component in (*reversed(path.parents), path):
+            try:
+                metadata = component.lstat()
+            except FileNotFoundError:
+                return allow_missing
+            except OSError:
+                return False
+            attributes = getattr(metadata, "st_file_attributes", 0)
+            if attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                return False
+            if component != path or directory:
+                if not stat.S_ISDIR(metadata.st_mode):
+                    return False
+            elif not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                return False
+        return True
+
+    def _tikz_vault(self) -> Path | None:
+        """Select the explicit vault or the nearest marked output ancestor."""
+        configured = os.environ.get("OMAROS_VAULT_ROOT")
+        if configured is not None:
+            vault = Path(configured)
+            if not self._plain_attachment_path(vault / VAULT_MARKER, directory=False):
+                print(
+                    "[doc-forge] Invalid OMAROS_VAULT_ROOT. Keeping TikZ as LaTeX.",
+                    file=sys.stderr,
+                )
+                return None
+            candidates = (vault,)
+        else:
+            candidates = self.output_lookup.parents
+
+        if not self._plain_attachment_path(self.output_lookup, directory=False, allow_missing=True):
+            return None
+        for vault in candidates:
+            if (self.output_lookup.is_relative_to(vault)
+                    and self._plain_attachment_path(vault / VAULT_MARKER, directory=False)):
+                return vault
+        return None
+
+    def _program(self, name: str) -> str:
+        """Select an explicit executable on Windows, where bare names search cwd."""
+        if os.name != "nt":
+            return name
+
+        work_directories = (Path.cwd().resolve(), self.src.parent, self.out.parent)
+        worktrees = {
+            parent
+            for directory in work_directories
+            for parent in (directory, *directory.parents)
+            if (parent / ".git").exists()
+        }
+        for entry in os.get_exec_path():
+            directory = Path(entry.strip('"'))
+            if not directory.is_absolute():
+                continue
+            try:
+                directory = directory.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if directory in work_directories or any(
+                    directory.is_relative_to(root) for root in worktrees):
+                continue
+            candidate = directory / (name + ".exe")
+            if self._plain_attachment_path(candidate, directory=False):
+                return str(candidate)
+        raise FileNotFoundError(f"{name}.exe was not found in an absolute tools directory on PATH")
+
+    def _matches_tikz(self, existing: Path, rendered: Path) -> bool:
+        """Reuse an unchanged regular image only if its bytes match this render."""
+        if not self._plain_attachment_path(existing, directory=False):
+            return False
+        before = existing.lstat()
+        if before.st_size != rendered.stat().st_size:
+            return False
+        flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+        with os.fdopen(os.open(existing, flags), "rb") as previous, rendered.open("rb") as current:
+            opened = os.fstat(previous.fileno())
+            if (not os.path.samestat(before, opened) or not stat.S_ISREG(opened.st_mode)
+                    or opened.st_nlink != 1):
+                return False
+            while chunk := current.read(64 * 1024):
+                if previous.read(len(chunk)) != chunk:
+                    return False
+            if previous.read(1):
+                return False
+        after = existing.lstat()
+        return (
+            os.path.samestat(before, after)
+            and (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+            == (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+            and self._plain_attachment_path(existing, directory=False)
+        )
+
+    def _publish_tikz(self, candidate: Path, out_png: Path, vault: Path) -> None:
+        """Stage a rendered image beside its destination and publish without replacement."""
+        directory = out_png.parent
+        if not self._plain_attachment_path(directory, directory=True, allow_missing=True):
+            raise ValueError("TikZ attachment directory has a linked or invalid component")
+        directory.mkdir(parents=True, exist_ok=True)
+        if not self._plain_attachment_path(directory, directory=True):
+            raise ValueError("TikZ attachment directory changed before staging")
+        if self._tikz_vault() != vault:
+            raise ValueError("TikZ output no longer identifies the selected vault")
+
+        with tempfile.TemporaryDirectory(prefix=".doc-forge-", dir=directory) as stage:
+            staged = Path(stage) / out_png.name
+            shutil.copyfile(candidate, staged)
+            if not self._plain_attachment_path(staged, directory=False):
+                raise ValueError("TikZ staging path changed before publication")
+            # A hard link publishes the complete file or fails if any destination
+            # entry already exists, including a broken symlink or existing figure.
+            try:
+                os.link(staged, out_png)
+            except FileExistsError:
+                if not self._matches_tikz(out_png, staged):
+                    raise
+
+    def _compile_tikz(self, block: str, index: int, user_macros: str, vault: Path) -> Path | None:
+        """Compile one TikZ block into a vault attachment, or keep its source on failure."""
+        att_dir = vault / "90_Attachments" / "tikz" / self.src.stem
         out_png = att_dir / f"fig_{index:02d}.png"
+        if not self._plain_attachment_path(att_dir, directory=True, allow_missing=True):
+            return None
+        if not self._plain_attachment_path(out_png, directory=False, allow_missing=True):
+            return None
 
         doc = _TIKZ_STANDALONE_PREAMBLE
         if user_macros.strip():
             doc += user_macros + "\n"
         doc += "\\begin{document}\n" + block + "\n\\end{document}\n"
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tex = Path(tmpdir) / "fig.tex"
-            tex.write_text(doc, encoding="utf-8")
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                scratch = Path(tmpdir).resolve()
+                tex = scratch / "fig.tex"
+                tex.write_text(doc, encoding="utf-8")
+                latex = subprocess.run(
+                    [self._program("lualatex"), "--no-shell-escape", "--interaction=nonstopmode",
+                     "--output-directory", tmpdir, str(tex)],
+                    capture_output=True, cwd=tmpdir, timeout=60,
+                )
+                pdf = scratch / "fig.pdf"
+                if latex.returncode or not pdf.is_file():
+                    return None
 
-            r = subprocess.run(
-                ["lualatex", "--interaction=nonstopmode", "--output-directory", tmpdir, str(tex)],
-                capture_output=True, text=True, cwd=tmpdir,
-            )
-            pdf = Path(tmpdir) / "fig.pdf"
-            if not pdf.exists():
-                return None
+                poppler = subprocess.run(
+                    [self._program("pdftoppm"), "-r", "200", "-png", "-singlefile",
+                     str(pdf), str(scratch / "fig")],
+                    capture_output=True, cwd=tmpdir, timeout=30,
+                )
+                if poppler.returncode:
+                    return None
+                candidate = scratch / "fig.png"
+                if not self._plain_attachment_path(candidate, directory=False):
+                    candidate = scratch / "fig-1.png"
+                if not self._plain_attachment_path(candidate, directory=False):
+                    return None
 
-            # PDF → PNG via pdftoppm (comes with MacTeX / poppler)
-            r = subprocess.run(
-                ["pdftoppm", "-r", "200", "-png", "-singlefile", str(pdf),
-                 str(att_dir / f"fig_{index:02d}")],
-                capture_output=True, text=True,
-            )
-            if out_png.exists():
+                self._publish_tikz(candidate, out_png, vault)
                 return out_png
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return None
 
-            # pdftoppm sometimes appends -1 suffix
-            candidate = att_dir / f"fig_{index:02d}-1.png"
-            if candidate.exists():
-                candidate.rename(out_png)
-                return out_png
-
-        return None
-
-    def _process_tikz(self, content: str, raw: str) -> tuple[str, dict[str, str]]:
-        """
-        Extract tikzpicture blocks, compile each to PNG, and return:
-          - content with TIKZBLOCK_N_END markers
-          - mapping from marker → Obsidian wikilink string
-        Falls back to a fenced latex code block on compile failure.
-        """
-        modified, blocks = self._extract_tikz_blocks(content)
+    def _render_tikz(self, blocks: list[str], raw: str) -> dict[str, str]:
+        """Render attachments for converted Markdown, retaining unrendered LaTeX."""
         if not blocks:
-            return content, {}
+            return {}
 
-        user_macros = self._user_macros_from_raw(raw)
+        vault = self._tikz_vault()
+        user_macros = self._user_macros_from_raw(raw) if vault is not None else ""
         self.log.add("tikz_found", count=len(blocks))
         replacements: dict[str, str] = {}
 
         for i, block in enumerate(blocks):
             marker = f"TIKZBLOCK{i}END"
-            png = self._compile_tikz(block, i, user_macros)
-            if png:
-                # Vault-root-relative path for Obsidian wikilink embed
-                rel = png.relative_to(VAULT_ROOT)
-                replacements[marker] = f"![[{rel.as_posix()}]]"
-                self.log.add(f"tikz_{i}", status="compiled", path=str(rel))
-            else:
-                # Fallback: preserve raw LaTeX as a fenced block
-                replacements[marker] = "```latex\n" + block + "\n```"
-                self.log.add(f"tikz_{i}", status="fallback_code_block")
+            if vault is not None:
+                png = self._compile_tikz(block, i, user_macros, vault)
+                if png is not None:
+                    rel = png.relative_to(vault)
+                    replacements[marker] = f"![[{rel.as_posix()}]]"
+                    self.log.add(f"tikz_{i}", status="compiled", path=str(rel))
+                    continue
+            replacements[marker] = "```latex\n" + block + "\n```"
+            self.log.add(f"tikz_{i}", status="fallback_code_block")
 
-        return modified, replacements
+        return replacements
 
     # ------------------------------------------------------------------
     # Stage 3: pandoc
     # ------------------------------------------------------------------
     def _pandoc(self, content: str) -> str:
         cmd = [
-            "pandoc",
+            self._program("pandoc"),
             "-f", "latex",
             "-t", "gfm+tex_math_dollars-tex_math_gfm",
             "--wrap=none",
@@ -478,8 +619,14 @@ class TexToMdPipeline:
             elif isinstance(v, list):
                 lines.append(f"{k}: []")
             else:
-                val = str(v).replace('"', "'")
-                lines.append(f'{k}: "{val}"')
+                quoted = json.dumps(str(v), ensure_ascii=False)
+                # YAML treats these characters as controls or line separators.
+                quoted = re.sub(
+                    r"[\x7f-\x9f\u2028\u2029]",
+                    lambda char: f"\\u{ord(char[0]):04x}",
+                    quoted,
+                )
+                lines.append(f"{k}: {quoted}")
         lines.append("---")
         return "\n".join(lines) + "\n\n"
 
@@ -517,13 +664,13 @@ class TexToMdPipeline:
             print(f"[dry-run] vault route: {route['domain']}/{route['subdomain']}/{self.out.name}")
             return
 
-        # Stage 2b: extract tikzpicture blocks, compile to PNG, replace with markers
-        preprocessed, tikz_map = self._process_tikz(preprocessed, raw)
+        # Keep the source blocks until Pandoc has successfully converted the document.
+        preprocessed, tikz_blocks = self._extract_tikz_blocks(preprocessed)
 
         # Stage 3
         try:
             converted = self._pandoc(preprocessed)
-        except RuntimeError as e:
+        except (RuntimeError, OSError) as e:
             print(f"[doc-forge] ✗ {self.src.name}: {e}", file=sys.stderr)
             self.log.compile = {"success": False, "error": str(e)}
             if self.log_path:
@@ -535,8 +682,8 @@ class TexToMdPipeline:
         # Stage 4
         final_md = self._postprocess(converted)
 
-        # Replace TikZ markers with compiled image links (or fallback code blocks)
-        for marker, replacement in tikz_map.items():
+        # Publish figures only after Pandoc and postprocessing have succeeded.
+        for marker, replacement in self._render_tikz(tikz_blocks, raw).items():
             final_md = final_md.replace(marker, "\n\n" + replacement + "\n\n")
 
         self.log.add("postprocess", ok=True)

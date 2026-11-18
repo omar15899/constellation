@@ -7,11 +7,12 @@ For local Copilot CLI setup, read [the native guide](../profiles/copilot.md).
 Keep the eight role definitions in `agents/*.toml` as the single source. Generate
 client adapters through `constellation.py install`; do not maintain a second role
 catalog or scheduler. Reuse native delegation, the common task ledger and the
-existing reversible installer. Write readable, direct code with explicit contracts.
+existing reversible installer. Make the smallest complete change and keep contracts
+and control flow easy to read.
 
-Do not create, change or run tests unless Omar explicitly requests them. Preserve
-existing tests. Use static inspection and independent review, recording their limits.
-Do not turn missing runtime evidence into a claim that hooks ran successfully.
+Follow the shared engineering rules for focused testing. Preserve existing tests,
+start with static inspection and independent review, and record the limits of the
+evidence.
 
 Private runtime state, conversations, client credentials and personal settings
 stay outside Git. Preserve unrelated edits and indexes. A local installation

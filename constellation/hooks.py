@@ -11,10 +11,11 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 from typing import Any, Mapping, TextIO
 
+from .git import GitError, _text
+from .platform_support import IS_WINDOWS, is_reparse, validate_windows_lookup
 from .state import Store
 
 
@@ -103,7 +104,16 @@ def destructive_command_reason(command: str) -> str | None:
               r"(?:[^\s]*?/)?(?:rm|rmdir|curl|wget)(?:\s|$)")
     if re.search(direct, command, re.IGNORECASE):
         return "Direct rm/rmdir/curl/wget is forbidden; use a recoverable operation or reviewed network tool."
-    git_prefix = r"\bgit(?:\s+-C\s+(?:'[^']*'|\"[^\"]*\"|\S+))?\s+"
+    if IS_WINDOWS:
+        windows_direct = (
+            r"(?:^|[;&|\n])\s*(?:&\s+)?"
+            r"(?:Microsoft\.PowerShell\.(?:Management|Utility)\\)?"
+            r"(?:Remove-Item|del|erase|rd|ri|rmdir|Invoke-WebRequest|Invoke-RestMethod|"
+            r"iwr|irm|curl(?:\.exe)?|wget(?:\.exe)?)(?:\s|$)"
+        )
+        if re.search(windows_direct, command, re.IGNORECASE):
+            return "Use a recoverable operation or reviewed network tool for this Windows command."
+    git_prefix = r"\bgit(?:\.exe)?(?:\s+-C\s+(?:'[^']*'|\"[^\"]*\"|\S+))?\s+"
     rules = (
         (r"reset\s+[^\n;&|]*--hard\b", "Hard reset discards local work."),
         (r"push\b[^\n;&|]*(?:--force(?:-with-lease)?|-f)(?:\s|$)", "Force push rewrites remote history."),
@@ -135,22 +145,30 @@ def _routing_diagnostic(session: str, actor: str) -> str:
 def _target(cwd: Path, name: str) -> tuple[Path, str]:
     """Resolve one path without following links or crossing a nested Git owner."""
     given = Path(name)
-    if not name or ".." in given.parts or "\\" in name or ".git" in given.parts:
+    if (not name or any(part.casefold() in {"..", ".git"} for part in given.parts)
+            or any(ord(character) < 32 for character in name)):
+        raise HookError("Edit path contains an unsafe component")
+    if IS_WINDOWS:
+        if given.anchor and not given.is_absolute():
+            raise HookError("Edit path uses an ambiguous Windows drive or root")
+    elif "\\" in name:
         raise HookError("Edit path contains an unsafe component")
     path = Path(os.path.abspath(cwd / given))
-    for ancestor in (path, *path.parents):
-        if ancestor.is_symlink():
-            raise HookError("Edit traverses a symbolic link")
+    if IS_WINDOWS:
+        validate_windows_lookup(path)
+        if path.exists() and path.lstat().st_nlink != 1 and path.is_file():
+            raise HookError("Edit target has multiple Windows file names")
+    elif any(is_reparse(ancestor) for ancestor in (path, *path.parents)):
+        raise HookError("Edit traverses a symbolic link")
     existing = path.parent
     while not existing.exists():
         if existing == existing.parent:
             raise HookError("Edit has no existing parent")
         existing = existing.parent
-    result = subprocess.run(["git", "-C", str(existing), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True, timeout=10, check=False)
-    if result.returncode:
-        raise HookError("Edit has no declared Git owner")
-    root = Path(result.stdout.strip()).resolve()
+    try:
+        root = Path(_text(existing, "rev-parse", "--show-toplevel", timeout=10)).resolve()
+    except GitError as error:
+        raise HookError("Edit has no declared Git owner") from error
     try:
         relative = path.relative_to(root).as_posix()
     except ValueError as exc:
@@ -217,7 +235,7 @@ def pre_tool(payload: Mapping[str, Any], store: Store | None = None) -> dict[str
     """
     try:
         tool = _tool(payload)
-        if tool in {"bash", "exec_command", "shell", "shell_command"}:
+        if tool in {"bash", "exec_command", "powershell", "shell", "shell_command"}:
             inputs = payload.get("tool_input")
             command = inputs.get("command", inputs.get("cmd", "")) if isinstance(inputs, dict) else ""
             reason = destructive_command_reason(command) if isinstance(command, str) else None
@@ -238,7 +256,7 @@ def pre_tool(payload: Mapping[str, Any], store: Store | None = None) -> dict[str
         return {}
     except HookError as error:
         return _deny(str(error))
-    except (ValueError, OSError, subprocess.SubprocessError, KeyError, TypeError):
+    except (ValueError, OSError, KeyError, TypeError):
         # Detailed file names and command bodies are unnecessary in a denial.
         return _deny("Structured edit scope cannot be verified; check the task, actor and exact paths.")
 

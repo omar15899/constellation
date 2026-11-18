@@ -4,7 +4,7 @@ description: Create, revise, render and prepare Scilux educational lessons while
 ---
 # Scilux lessons
 
-Read the [Scilux profile](../../../profiles/scilux.md), `config/context-registry.yaml` and `config/style-canon.yaml` in `/Users/omarkhalil/GitHub/Scilux`. They own the phase and quality contracts. Use native roles with inherited client settings; phase labels describe work and artifacts, not another agent runtime.
+Read the [Scilux profile](../../../profiles/scilux.md), `config/context-registry.yaml` and `config/style-canon.yaml` in the local Scilux checkout. They own the phase and quality contracts. Use native roles with inherited client settings; phase labels describe work and artifacts, not another agent runtime.
 
 ## Select and scope the lesson
 

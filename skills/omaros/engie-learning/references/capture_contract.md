@@ -84,7 +84,8 @@ conflicto. No se elimina la versión estable sin resolución respaldada.
 ## Ejecución
 
 El motor requiere macOS o Linux, Git y el intérprete registrado del dispositivo
-con PyYAML. Ejecuta los ejemplos desde OmarOS o desde uno de sus subdirectorios.
+con PyYAML. Define `CONSTELLATION_CHECKOUT` con la ruta a tu copia de
+Constellation y ejecuta los ejemplos desde OmarOS o uno de sus subdirectorios.
 Desde otra carpeta, añade `--root RUTA` antes de la operación para seleccionar
 el vault inscrito. El CLI central selecciona el recurso y el intérprete
 registrado. La captura comprueba que la raíz y su directorio Git conservan
@@ -92,11 +93,13 @@ las identidades registradas antes de leer o crear archivos privados. Usa entrada
 estándar o archivos temporales privados para los datos de la captura.
 Si se reemplaza el checkout o se prepara otro equipo, actualiza mediante el
 contrato común su registro y la identidad del sistema de archivos en
-`profiles/projects.json`, después de verificar el nuevo dueño Git. Una copia del mapa del vault,
-de sus exclusiones Git o de este script no identifica al receptor autorizado.
+`profiles/projects.json` de la fuente central, después de verificar el nuevo
+propietario Git. El mapa local de rutas del instalador solo localiza proyectos.
+La captura privada valida su propia inscripción y las identidades de la raíz
+y del directorio Git.
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py prepare < captura.json
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py prepare < captura.json
 ```
 
 `prepare` devuelve `status: prepared` y un objeto `plan` que fija los cambios y
@@ -109,7 +112,7 @@ declara las rutas relativas exactas de `paths` como asignaciones del encargo
 local de OmarOS; no introduzcas el contenido de la captura en el registro común:
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py apply < preparado.json
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py apply < preparado.json
 ```
 
 No sustituyas este recorrido por escrituras ad hoc. El agente puede leer el plan
@@ -126,11 +129,11 @@ una confirmación parcial de éxito.
 Las consultas son acotadas al área privada:
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py query --date 2026-10-26
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py query --date unknown
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py query --topic onboarding_pricer_ficticio
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py query "criterios de aceptación"
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py query --related 06_Knowledge_Base/Mathematics/Finance/ENGIE/README.md
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py query --date 2026-10-26
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py query --date unknown
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py query --topic onboarding_pricer_ficticio
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py query "criterios de aceptación"
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py query --related 06_Knowledge_Base/Mathematics/Finance/ENGIE/README.md
 ```
 
 El último ejemplo solo produce coincidencias si ese antecedente fue enlazado.
@@ -157,8 +160,8 @@ preparar la captura. No borres la edición ajena ni repitas ciegamente un plan
 obsoleto.
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py status
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros engie-learning scripts/learning.py recover
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py status
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py recover
 ```
 
 El estado operativo y los datos de recuperación viven en `.git/omaros-learning`,

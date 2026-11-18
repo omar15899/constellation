@@ -172,10 +172,14 @@ Run `checklists/production_readiness_checklist.md` and report PASS / NOTE / FAIL
 
 ## §11.7 — Validator script output
 
-Paste the output of `scripts/validate_pipeline.py <pipeline-folder>` here verbatim. The script checks: file presence, frontmatter validity, cross-references, ID stability, and the doctrine-pillar invariants from §11.3 mechanically.
+Set `CONSTELLATION_CHECKOUT` to your local Constellation checkout and
+`PIPELINE_FOLDER` to the pipeline directory. In PowerShell, use `py -3` in
+place of `python3`. Paste the output here verbatim. The validator checks file
+presence, frontmatter validity, cross-references, ID stability and the
+invariants from §11.3.
 
 ```
-$ python /Users/omarkhalil/GitHub/Constellation/skills/omaros/educational-video-script-architect/scripts/validate_pipeline.py 15_Reading_and_Learning/Video_Scripts/<folder>
+$ python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros educational-video-script-architect scripts/validate_pipeline.py "$PIPELINE_FOLDER"
 <paste output>
 ```
 

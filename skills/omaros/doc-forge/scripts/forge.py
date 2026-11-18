@@ -199,6 +199,7 @@ def run_single(args, src: Path, out: Path | None,
     src_ext, dst_ext = detect(src, out)
     if out is None:
         out = src.with_suffix(dst_ext)
+    output_lookup = out.absolute()
     out = out.resolve()
     src = src.resolve()
 
@@ -224,7 +225,8 @@ def run_single(args, src: Path, out: Path | None,
         ('.tex', '.pdf'):  run_tex_to_pdf,
         ('.pdf', '.md'):   run_pdf_to_md,
     }
-    dispatch[(src_ext, dst_ext)](args, src, out)
+    # TikZ attachment selection needs to inspect the original output ancestry.
+    dispatch[(src_ext, dst_ext)](args, src, output_lookup if pipeline == "tex_to_md" else out)
 
     if (use_manifest and src_sha and out.exists()
             and not args.dry_run and not args.route_only):

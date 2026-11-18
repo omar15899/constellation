@@ -6,20 +6,24 @@ Start from inputs, outputs, errors, and observable effects. Follow existing
 callers and normal entry points. Identify compatibility promises, stored formats,
 units, ordering, and resource ownership where they affect the result.
 
-Choose a design a colleague can follow without reconstructing a framework.
-Name concepts in the language of the domain. Keep related operations together,
-use focused functions, and make branches and data transformations explicit.
-Prefer an ordinary loop or named intermediate value when a compact expression
-would hide intent. Reuse the component that already owns the behavior. Introduce
-abstractions, dependencies, and compatibility layers only for a demonstrated
-requirement; avoid speculative extension points.
+Make the smallest change that meets the complete contract. Reuse the
+component that owns the behavior, and make each touched file serve the
+requirement. Keep related operations together, use domain names and show
+branches and data transformations explicitly. An ordinary loop or a named
+intermediate value earns its lines when it makes the intent easier to read.
+Add an abstraction when it captures a current invariant or removes meaningful
+duplication. Add dependencies or compatibility layers only for a demonstrated
+requirement.
+
+Choose the simplest algorithm and representation that fit the expected input
+sizes. Remove repeated work, allocation or I/O when the improvement follows
+directly from the design. Support performance claims with measurements within
+the user's authorized scope.
 
 Make invalid inputs and failure behavior clear at the boundary that owns them.
 Use useful types and specific errors. Explain relevant state transitions,
 mutation, resource lifetimes, cancellation, retries, and concurrency. Handle
-partial failure and cleanup without silently replacing errors with success.
-Measure a claimed performance improvement only when the user has authorized
-the required measurement; otherwise leave the claim unmade.
+partial failure and make cleanup and error propagation explicit.
 
 ## Document contracts and decisions
 
@@ -36,24 +40,23 @@ invariants or tradeoffs; they should not narrate ordinary statements. Use a
 small, clearly labeled example when a data structure is difficult to interpret.
 In other languages, follow the project's idiomatic documentation format.
 
-## Inspect without assuming permission to test
+## Verify in proportion to the change
 
-Do not add, modify, or run tests unless the user explicitly requests them.
-Preserve existing test files. A project's usual test command, a desire for
-confidence, or a reviewer's request does not override this user preference.
-Do not disguise a test suite, behavioral reproduction, or regression experiment
-as a static check.
+Read the diff and trace affected callers, invariants and failure paths. Start
+with inspection, independent review and relevant static checks such as syntax
+parsing, schema validation, type checking or linting.
 
-Read the diff and trace affected callers, invariants, and error paths. Use
-relevant non-test static checks when available: syntax parsing, schema
-validation, type checking, or linting. Record which checks actually ran and what
-they establish. Static evidence and review do not establish runtime correctness;
-state untested behavior and any unresolved consequence plainly.
+Keep existing coverage and default to no new tests. Add, change or run only
+the smallest focused set needed for an explicit request, an applicable project
+requirement, or a specific material regression that existing evidence leaves
+open. Prefer a relevant existing case. Add a small deterministic regression
+case through the normal entry point only when the gap warrants it. Reserve
+broad suites for explicit requests or mandatory gates. Stricter task and
+project limits still apply.
 
-If the user explicitly requests tests, keep them proportionate to that request.
-Prefer a few deterministic scenarios through normal entry points with readable
-inputs and observable outcomes. Reuse existing meaningful coverage before
-adding new cases. Do not widen the campaign without a concrete reason.
+Record what each check establishes. Label tests and behavioral experiments as
+execution evidence. State the remaining runtime uncertainty and any required
+gate you could not meet under the task's limits.
 
 For numerical code, reason about the declared domain, precision, overflow,
 cancellation, and approximation assumptions. Use an appropriate reference or

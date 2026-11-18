@@ -53,6 +53,7 @@ rechazar su nombre: registra ese resultado, no alteres su salida para aprobar.
 ## Inicio automático
 
 El CLI central selecciona el recurso Python y el intérprete registrado.
+Define `CONSTELLATION_CHECKOUT` con la ruta a tu copia de Constellation.
 El recurso de producción valida el motor docente y sus insumos. `CURSO` es la carpeta
 del proyecto Brainteasers_Quant y `SISTEMA_CURSO` la carpeta conocida
 `brainteasers-asincronas/_sistema` en su repositorio de software. Esta última
@@ -62,8 +63,9 @@ compilador y el motor de curso. Elige sus ejecutables y fuentes conforme al
 contrato del curso. Una salida enlazada a otra ruta o a otro archivo impide la
 publicación de los resultados.
 
-La producción usa un entorno POSIX con Bash, PyYAML, PyMuPDF, Pillow, `latexmk`,
-`lualatex` y `pdftoppm` en PATH. Para consultar opciones, añade `--help` a la invocación de `scripts/production.py`.
+La producción y el inventario del motor requieren macOS o Linux. Para la
+producción instala Bash, PyYAML, PyMuPDF y Pillow y asegúrate de que `latexmk`,
+`lualatex` y `pdftoppm` estén en PATH. Para consultar opciones, añade `--help` a la invocación de `scripts/production.py`.
 
 `--system` señala la copia local del motor docente que quieres ejecutar.
 La versión de Constellation distribuye el [inventario aprobado](course-engine.json):
@@ -77,7 +79,7 @@ que deseas aprobar. La siguiente consulta genera un inventario candidato a
 partir del identificador completo de **ese árbol Git**:
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros brainteasers-quant scripts/course_engine.py inventory --repository "$REPO_MOTOR" --tree "$ARBOL_REVISADO"
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros brainteasers-quant scripts/course_engine.py inventory --repository "$REPO_MOTOR" --tree "$ARBOL_REVISADO"
 ```
 
 Si decides aprobar este candidato, consérvalo como
@@ -92,7 +94,7 @@ temporal y comprueba antes las carpetas de destino. Desde la raíz del vault:
 
 ```sh
 mkdir -p "$CURSO/asincronas"
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros brainteasers-quant scripts/production.py init /tmp/plan_sesion.json --output "$CURSO/asincronas" --system "$SISTEMA_CURSO"
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros brainteasers-quant scripts/production.py init /tmp/plan_sesion.json --output "$CURSO/asincronas" --system "$SISTEMA_CURSO"
 ```
 
 El destino de producción es la raíz `asincronas/` del curso; `init` añade
@@ -172,7 +174,7 @@ estática válida solo contiene el valor 1.
 ## Auditoría y reparación
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros brainteasers-quant scripts/production.py audit RUTA_SESION --system "$SISTEMA_CURSO"
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros brainteasers-quant scripts/production.py audit RUTA_SESION --system "$SISTEMA_CURSO"
 ```
 
 También admite un solo vídeo para reparar rápido; el cierre requiere auditoría
@@ -225,7 +227,7 @@ Copia `review-template.json` fuera del árbol de fuentes, completa su contenido
 después de leer los artefactos y pásalo a:
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros brainteasers-quant scripts/production.py accept RUTA_SESION/build/production/qa.json /tmp/revision_sesion.json
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros brainteasers-quant scripts/production.py accept RUTA_SESION/build/production/qa.json /tmp/revision_sesion.json
 ```
 
 El formato exige `audit_fingerprint`, `pages` (identificador de cada página →

@@ -12,18 +12,21 @@ from pathlib import Path
 import re
 import stat
 import sys
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 import unicodedata
+
+from .install import AddOperation
+from .platform_support import is_reparse
 
 
 BEGIN = '<!-- BEGIN Constellation Copilot instructions -->'
 END = '<!-- END Constellation Copilot instructions -->'
+VISUAL_STUDIO_ROLE = '<!-- Constellation Visual Studio agent -->'
 HOOK_EVENTS = ('sessionStart', 'subagentStart', 'preToolUse', 'agentStop', 'subagentStop')
 READ_ONLY_ROLES = {
     'ecosystem_counterexample', 'ecosystem_reviewer',
     'ecosystem_security_reviewer', 'ecosystem_verifier',
 }
-AddOperation = Callable[[Path, str, str | None], None]
 
 
 def directory_trees_overlap(first: Path, second: Path) -> bool:
@@ -107,20 +110,24 @@ def agent_document(agent: Mapping[str, Any]) -> str:
             + '---\n\n' + agent['developer_instructions'].strip() + '\n')
 
 
-def hooks_document(source: Path) -> str:
+def hooks_document(source: Path, *, state_dir: Path | None = None) -> str:
     """Render local CLI hooks as executable arguments, without shell expansion.
 
     Args:
         source: Canonical checkout containing the shared command entry point.
+        state_dir: Explicit private state selected for the installation.
 
     Returns:
         Version 1 hook configuration for the five integration events.
         This local configuration is not a cloud-agent deployment.
     """
+    command = [str(source / 'constellation.py')]
+    if state_dir is not None:
+        command.extend(['--state-dir', str(state_dir)])
     hooks = {
         event: [{
             'type': 'command', 'exec': sys.executable,
-            'args': [str(source / 'constellation.py'), 'hook', '--client', 'copilot', event],
+            'args': [*command, 'hook', '--client', 'copilot', event],
             'timeoutSec': 10,
         }]
         for event in HOOK_EVENTS
@@ -141,9 +148,7 @@ def instructions_document(text: str, source: Path) -> str:
     Raises:
         ValueError: Existing markers cannot identify one unambiguous owned block.
     """
-    if text.count(BEGIN) != text.count(END) or text.count(BEGIN) > 1:
-        raise ValueError('Ambiguous Constellation Copilot instruction markers')
-    common = (source / 'instructions/AGENTS.md').read_text().strip()
+    common = (source / 'instructions/AGENTS.md').read_text(encoding='utf-8').strip()
     bootstrap = (
         '\n\n## GitHub Copilot CLI\n\n'
         'Use the native task tool for independent parallel work. Assign exclusive '
@@ -152,27 +157,45 @@ def instructions_document(text: str, source: Path) -> str:
         'settings; respect the effective client and account concurrency limits. '
         'Hooks guard supported operations and remind the coordinator of pending '
         'work; they do not launch agents or certify correctness.\n\n'
-        'Do not write, change or run tests unless Omar explicitly requests them. '
-        'Use source inspection and applicable static checks, report their limits, '
-        'and never describe them as executed behavioral tests.\n\n'
         f'Read `{source / "profiles/copilot.md"}` for native discovery, hook '
         'limitations and the review workflow. User-level skills already shared '
         'through `~/.agents/skills` remain the canonical skills.\n'
     )
-    block = BEGIN + '\n' + common + bootstrap + END
-    if BEGIN not in text:
-        if not text or text.endswith('\n\n'):
+    return merge_instructions(text, common + bootstrap, BEGIN, END)
+
+
+def merge_instructions(text: str, body: str, begin: str, end: str) -> str:
+    """Refresh one owned Markdown block while preserving adjacent text and BOM.
+
+    Args:
+        text: Existing UTF-8 instruction text decoded with original newlines.
+        body: Generated Markdown with LF line endings and a final newline.
+        begin: Opening ownership marker.
+        end: Closing ownership marker.
+
+    Returns:
+        Updated text using the existing file's line ending for the owned block.
+
+    Raises:
+        ValueError: The markers do not identify one unambiguous owned block.
+    """
+    if text.count(begin) != text.count(end) or text.count(begin) > 1:
+        raise ValueError('Ambiguous Constellation Copilot instruction markers')
+    newline = '\r\n' if '\r\n' in text else '\n'
+    block = begin + newline + body.replace('\n', newline) + end
+    if begin not in text:
+        if not text.removeprefix('\ufeff') or text.endswith(newline * 2):
             separator = ''
-        elif text.endswith('\n'):
-            separator = '\n'
+        elif text.endswith(newline):
+            separator = newline
         else:
-            separator = '\n\n'
-        return text + separator + block + '\n'
-    start = text.index(BEGIN)
-    finish = text.index(END)
+            separator = newline * 2
+        return text + separator + block + newline
+    start = text.index(begin)
+    finish = text.index(end)
     if finish < start:
         raise ValueError('Constellation Copilot instruction markers are reversed')
-    return text[:start] + block + text[finish + len(END):]
+    return text[:start] + block + text[finish + len(end):]
 
 
 def plan_entries(source: Path, home: Path, state_dir: Path,
@@ -206,7 +229,8 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
     for protected in (source, state_dir):
         if directory_trees_overlap(native, protected):
             raise ValueError('Copilot home must be separate from source and private state')
-    generated = state_dir / 'native/copilot'
+    copies = os.name == 'nt'
+    generated = native if copies else state_dir / 'native/copilot'
     conflicts: list[dict[str, str]] = []
     links: list[str] = []
     skills: list[str] = []
@@ -214,11 +238,18 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
     def preserve(path: Path, reason: str) -> None:
         conflicts.append({'path': str(path), 'reason': reason})
 
-    def safe_path(path: Path) -> bool:
-        if any(parent.is_symlink() for parent in path.parents):
-            preserve(path, 'Native entry traverses a user-managed directory link')
+    def safe_path(path: Path, *, directory: bool = False) -> bool:
+        for parent in reversed(path.parents):
+            if is_reparse(parent):
+                preserve(path, 'Native entry traverses a user-managed directory link')
+                return False
+            if parent.exists() and not parent.is_dir():
+                preserve(path, f'Native parent is not a directory: {parent}')
+                return False
+        if copies and is_reparse(path):
+            preserve(path, 'Native entry is a user-managed link or reparse point')
             return False
-        if path.exists() and not path.is_file() and not path.is_symlink():
+        if path.exists() and not (path.is_dir() if directory else path.is_file()) and not path.is_symlink():
             preserve(path, 'Native entry is not a regular file or managed link')
             return False
         return True
@@ -236,6 +267,16 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
 
     for agent in agents:
         filename = agent['name'] + '.agent.md'
+        if copies:
+            path = native / 'agents' / filename
+            if not safe_path(path):
+                continue
+            if path.is_file() and VISUAL_STUDIO_ROLE.encode('utf-8') in path.read_bytes():
+                preserve(path, 'Visual Studio owns this role; use a separate native agent directory')
+                continue
+            if add(path, 'managed-write', agent_document(agent)):
+                links.append(str(path))
+            continue
         target = generated / 'agents' / filename
         if not safe_path(target):
             continue
@@ -245,12 +286,15 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
         add(target, 'write', agent_document(agent))
         managed_link(native / 'agents' / filename, target)
 
-    hook_target = generated / 'hooks.json'
+    hook_target = native / 'hooks/constellation.json' if copies else generated / 'hooks.json'
     if safe_path(hook_target):
         if hook_target.is_symlink():
             preserve(hook_target, 'Generated hooks cannot replace a user-managed link')
+        elif copies:
+            if add(hook_target, 'managed-write', hooks_document(source, state_dir=state_dir)):
+                links.append(str(hook_target))
         else:
-            add(hook_target, 'write', hooks_document(source))
+            add(hook_target, 'write', hooks_document(source, state_dir=state_dir))
             managed_link(native / 'hooks/constellation.json', hook_target)
 
     instruction_path = native / 'copilot-instructions.md'
@@ -258,8 +302,10 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
         if instruction_path.is_symlink():
             preserve(instruction_path, 'Native instructions is a user-managed symbolic link')
         else:
-            current = instruction_path.read_text() if instruction_path.exists() else ''
-            add(instruction_path, 'write', instructions_document(current, source))
+            content = instruction_path.read_bytes() if instruction_path.exists() else None
+            current = content.decode('utf-8') if content is not None else ''
+            add(instruction_path, 'write', instructions_document(current, source),
+                expected_content=content)
 
     for row in entries:
         if row['group'] != 'core':
@@ -270,7 +316,10 @@ def plan_entries(source: Path, home: Path, state_dir: Path,
         path = home / '.agents/skills' / row['name']
         # Copilot discovers the same personal directory as Codex. Only a missing
         # reference needs installation; conflicting personal skills keep ownership.
-        if managed_link(path, target):
+        if copies:
+            if safe_path(path, directory=True) and add(path, 'managed-tree', str(target)):
+                skills.append(str(path))
+        elif managed_link(path, target):
             skills.append(str(path))
 
     return {

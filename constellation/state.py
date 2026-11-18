@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import os
@@ -21,6 +20,11 @@ import subprocess
 import tempfile
 from typing import Any, Iterator, Mapping, Sequence
 import uuid
+
+from .platform_support import (IS_WINDOWS, default_state_dir, git_executable, is_reparse,
+                               ledger_lock, read_ledger_record, replace_ledger_record,
+                               secure_mkdir, validate_windows_lookup, validate_windows_relative,
+                               windows_executable)
 
 
 class StateError(ValueError):
@@ -43,11 +47,11 @@ def digest(value: Any) -> str:
 
 def git(root: Path, *args: str) -> str:
     """Run bounded, read-only Git plumbing without persisting process output."""
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
-                            text=True, timeout=30, check=False)
-    if result.returncode:
-        raise StateError("Git metadata could not be read")
-    return result.stdout.strip()
+    from .git import GitError, _text
+    try:
+        return _text(root, *args, timeout=30)
+    except GitError as error:
+        raise StateError("Git metadata could not be read") from error
 
 
 def validate_paths(root: Path, assignments: Mapping[str, str],
@@ -81,9 +85,14 @@ def validate_paths(root: Path, assignments: Mapping[str, str],
         path = PurePosixPath(value)
         if (not isinstance(author, str) or not author.strip() or not value
                 or path.is_absolute() or str(path) != value or "\\" in value
-                or any(part in {"..", ".", ".git"} for part in path.parts)
+                or any(part.casefold() in {"..", ".", ".git"} for part in path.parts)
                 or any(ord(character) < 32 for character in value)):
             raise StateError("Assignments require literal relative file paths and author IDs")
+        if IS_WINDOWS:
+            try:
+                validate_windows_relative(value)
+            except ValueError as error:
+                raise StateError(str(error)) from error
         if value.casefold() in folded:
             raise StateError("Case aliases cannot have separate owners")
         folded[value.casefold()] = value
@@ -115,17 +124,21 @@ def validate_paths(root: Path, assignments: Mapping[str, str],
         # later snapshots must also work after those entries have been removed.
         if value in removals:
             continue
+        if IS_WINDOWS:
+            validate_windows_lookup(root / value, allow_leaf_symlink=value in symlinks)
         current = root
         for part in path.parts:
             current /= part
-            if current.is_symlink():
-                if current != root / value or value not in symlinks:
-                    raise StateError("Scope cannot traverse symbolic links")
+            if is_reparse(current) and (current != root / value or value not in symlinks
+                                        or not current.is_symlink()):
+                raise StateError("Scope cannot traverse symbolic links or reparse points")
         if not current.is_symlink():
             if current.is_dir():
                 raise StateError("Scope contains a directory; enumerate exact files")
-            if current.exists() and not stat.S_ISREG(current.stat().st_mode):
-                raise StateError("Scope supports regular files, declared links and deletions only")
+            if current.exists():
+                metadata = current.stat()
+                if not stat.S_ISREG(metadata.st_mode) or (IS_WINDOWS and metadata.st_nlink != 1):
+                    raise StateError("Scope requires unaliased regular files, declared links or deletions")
         parent = current.parent
         while not parent.exists():
             parent = parent.parent
@@ -148,13 +161,9 @@ def effective_policy(root: str | Path, supplied: Mapping[str, Any] | None = None
     root = Path(root).resolve()
     policy = dict(supplied or {})
     source = Path(__file__).resolve().parents[1]
-    registry = source / "profiles/projects.json"
-    selected = None
-    if registry.exists():
-        for project in json.loads(registry.read_text())["projects"]:
-            if Path(project["root"]).expanduser().resolve() == root:
-                selected = project
-                break
+    from .projects import load_projects
+    selected = next((project for project in load_projects(source)
+                     if Path(project["root"]).resolve() == root), None)
     policy["private_patterns"] = sorted(set(policy.get("private_patterns", []))
         | set((selected or {}).get("private_patterns", [])))
     chain = policy.get("preserve_git_hook_chain") or []
@@ -343,7 +352,7 @@ def _require_mutable_evidence(task: Mapping[str, Any]) -> None:
     if not publication and not journal_path.exists():
         return
     if publication.get("status") == "verified_local_changes" and journal_path.is_file():
-        journal = json.loads(journal_path.read_text())
+        journal = json.loads(read_ledger_record(journal_path))
         if (publication.get("commit") and journal.get("phase") == "verified"
                 and journal.get("commit") == publication["commit"]):
             return
@@ -355,35 +364,32 @@ class Store:
 
     Args:
         state_dir: Private state root, defaulting to CONSTELLATION_STATE_DIR or
-            ~/.local/state/constellation. Different sessions must share it.
+            the local platform state location. Different sessions must share it.
     """
 
     def __init__(self, state_dir: str | Path | None = None):
-        self.root = Path(state_dir or os.environ.get("CONSTELLATION_STATE_DIR")
-                         or Path.home() / ".local/state/constellation").expanduser().resolve()
+        root = Path(state_dir or os.environ.get("CONSTELLATION_STATE_DIR")
+                    or default_state_dir()).expanduser()
+        self.root = validate_windows_lookup(root) if IS_WINDOWS else root.resolve()
         self.tasks = self.root / "tasks"
-        self.tasks.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.root.chmod(0o700)
-        self.tasks.chmod(0o700)
+        secure_mkdir(self.root)
+        secure_mkdir(self.tasks)
 
     def _path(self, task_id: str) -> Path:
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", task_id):
             raise StateError("Task ID must be a simple local identifier")
+        if IS_WINDOWS:
+            validate_windows_relative(task_id + ".json")
         return self.tasks / (task_id + ".json")
 
     @contextmanager
     def _lock(self) -> Iterator[None]:
-        with (self.root / ".lock").open("a", encoding="utf-8") as handle:
-            os.chmod(handle.name, 0o600)
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        with ledger_lock(self.root / ".lock"):
+            yield
 
     def _read(self, task_id: str) -> dict[str, Any]:
         try:
-            task = json.loads(self._path(task_id).read_text())
+            task = json.loads(read_ledger_record(self._path(task_id)))
         except (FileNotFoundError, json.JSONDecodeError) as error:
             raise StateError("Task is absent or unreadable: " + task_id) from error
         if task.get("schema") != 1 or task.get("id") != task_id:
@@ -400,12 +406,7 @@ class Store:
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, destination)
-            directory = os.open(self.tasks, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            replace_ledger_record(Path(temporary), destination)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
@@ -452,7 +453,10 @@ class Store:
         Existing task IDs and overlapping unfinished scopes fail closed. A query
         needs no task; every change records at least one required behavior check.
         """
-        root = Path(root).expanduser().resolve()
+        root = Path(root).expanduser()
+        if IS_WINDOWS:
+            validate_windows_lookup(root.absolute())
+        root = root.resolve()
         if mode not in {"publish", "local"}:
             raise StateError("Task mode must be publish or local")
         if not requirement.strip() or not coordinator.strip():
@@ -592,13 +596,26 @@ class Store:
             task["checks"][check_id] = {"attempt": attempt, "status": "running",
                 "fingerprint": version, "argv_sha256": digest(list(argv)), "started": now()}
             root = task["root"]
-        try:
-            result = subprocess.run(list(argv), cwd=root, capture_output=True,
-                                    timeout=timeout, check=False)
-            code, output = result.returncode, result.stdout + result.stderr
-            status = "passed" if code == 0 else "failed"
-        except (OSError, subprocess.TimeoutExpired):
-            code, output, status = None, b"", "failed"
+        command = list(argv)
+        resolution_error = None
+        if IS_WINDOWS:
+            project = Path(root)
+            try:
+                if command[0].casefold() in {"git", "git.exe"}:
+                    command[0] = git_executable(project=project)
+                else:
+                    command[0] = windows_executable(command[0], project=project)
+            except (OSError, ValueError) as error:
+                resolution_error = error
+        code, output, status = None, b"", "failed"
+        if resolution_error is None:
+            try:
+                result = subprocess.run(command, cwd=root, capture_output=True,
+                                        timeout=timeout, check=False)
+                code, output = result.returncode, result.stdout + result.stderr
+                status = "passed" if code == 0 else "failed"
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         with self.locked(task_id) as task:
             record = task["checks"][check_id]
             if record["attempt"] != attempt:
@@ -609,6 +626,8 @@ class Store:
                 changed = True
             record.update(returncode=code, status="stale" if changed else status,
                           output_sha256=hashlib.sha256(output).hexdigest(), finished=now())
+        if resolution_error is not None:
+            raise StateError(f"Cannot resolve Windows check command: {resolution_error}") from resolution_error
         return record
 
     def review(self, task_id: str, reviewer: str, evidence: str,

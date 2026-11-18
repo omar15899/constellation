@@ -24,8 +24,11 @@ extensions. It does not convert arbitrary formats or accept Word as an input.
 
 ## Invocation
 
+Set `CONSTELLATION_CHECKOUT` to your local source directory. In PowerShell,
+use `py -3` in place of `python3`.
+
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros doc-forge scripts/forge.py chapter.tex -o chapter.md
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros doc-forge scripts/forge.py chapter.tex -o chapter.md
 ```
 
 Set `-o notes.pdf` or `-o notes.docx` to choose the output explicitly. Without
@@ -80,6 +83,15 @@ Markdown, check reading order, OCR errors and mathematical fidelity. Report
 unrecoverable loss or missing dependencies rather than claiming equivalence.
 
 Dependencies are route-specific: Pandoc, an available TeX engine for PDF, and
-the extractor/OCR dependencies selected by `pdf_extract.py`. Inspect the
-existing environment before proposing installation. Conversion and artifact
-inspection do not require creating or running software tests.
+the extractor/OCR dependencies selected by `pdf_extract.py`. LaTeX-to-Markdown
+TikZ figures use `lualatex` and `pdftoppm`. The converter stores them under
+`90_Attachments/tikz/` when the Markdown output is inside a local OmarOS
+vault. It identifies the vault from the output path, or from an absolute
+`OMAROS_VAULT_ROOT` when you set it explicitly. A fresh render can reuse
+an existing regular figure with identical bytes. If the vault path is unsafe,
+the existing figure differs, or compilation fails, the Markdown preserves
+that TikZ block as LaTeX code. On Windows, put the tool executables in an
+absolute tools directory on PATH outside your project checkouts.
+
+Inspect the existing environment before proposing installation. Conversion and
+artifact inspection do not require creating or running software tests.

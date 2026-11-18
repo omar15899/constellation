@@ -12,13 +12,14 @@ que necesitas para responder. La consulta no crea notas.
 ## Entrada principal
 
 El CLI central selecciona el recurso Python y el intérprete registrado, que
-necesita PyYAML. El buscador comprueba la raíz de OmarOS y sus exclusiones;
-Git y ripgrep deben estar disponibles. El alcance se expresa respecto a esa
-raíz. Desde otro proyecto, añade `--root "$VAULT"` después de `scripts/search.py`
-para seleccionar el vault sin cambiar de directorio.
+necesita PyYAML. Usa macOS o Linux con Git, ripgrep y `/dev/fd`. El buscador
+comprueba la raíz de OmarOS y sus exclusiones. Define `CONSTELLATION_CHECKOUT`
+con la ruta a tu copia de Constellation. El alcance de la búsqueda se expresa
+respecto a la raíz del vault. Desde otro proyecto, añade `--root "$VAULT"`
+después de `scripts/search.py` para seleccionar el vault sin cambiar de directorio.
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/search.py 'esperanza condicionada' --limit 5
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/search.py 'esperanza condicionada' --limit 5
 ```
 
 El script detecta la raíz real, busca con ripgrep y ordena por cobertura de los
@@ -30,9 +31,9 @@ No mantiene un índice que pueda quedar obsoleto.
 Escoge el alcance más concreto que sugiera la petición:
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/search.py 'martingalas' --path 06_Knowledge_Base --limit 5
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/search.py --field status=active --field priority=P0 --path 02_Tasks_and_Execution
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/search.py 'hooks' --config --path .claude
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/search.py 'martingalas' --path 06_Knowledge_Base --limit 5
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/search.py --field status=active --field priority=P0 --path 02_Tasks_and_Execution
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/search.py 'hooks' --config --path .claude
 ```
 
 Los filtros repetidos tienen semántica AND; una lista de etiquetas admite

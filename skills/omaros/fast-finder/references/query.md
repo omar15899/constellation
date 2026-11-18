@@ -6,16 +6,17 @@ cuántas veces aparece una expresión, qué notas comparten una etiqueta o qué
 archivos cambiaron durante un periodo. Los cuatro comandos consultan el mismo
 inventario de rutas permitidas que el buscador principal. Todos devuelven JSON.
 
-El CLI central selecciona el recurso y el intérprete; el buscador comprueba la
-raíz y sus exclusiones. Desde otro directorio añade `--root "$VAULT"` después de
+El CLI central selecciona el recurso y el intérprete. Usa macOS o Linux con
+los [requisitos del buscador](../SKILL.md). Define `CONSTELLATION_CHECKOUT`
+con la ruta a tu copia de Constellation. Desde otro directorio añade `--root "$VAULT"` después de
 `scripts/query.py` para seleccionar OmarOS. Coloca
 el alcance `--path` antes del comando; se puede repetir para unir ámbitos. Las
 opciones `--config`, `--include-raw` y `--include-archive` amplían el alcance
 solo cuando el encargo incluye esos datos.
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/query.py --path 06_Knowledge_Base content 'dual algebraico' --show count
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/query.py --path 06_Knowledge_Base content 'teorema[s]?' --regex --ignore-case --show hits --limit 5
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/query.py --path 06_Knowledge_Base content 'dual algebraico' --show count
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/query.py --path 06_Knowledge_Base content 'teorema[s]?' --regex --ignore-case --show hits --limit 5
 ```
 
 `content` busca una cadena literal por defecto. Con `--regex` utiliza las
@@ -32,8 +33,8 @@ barra, se interpreta desde la raíz y `**` abarca cero o más carpetas. El lími
 muestra; no convierte las primeras líneas en un total de todo el vault.
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/query.py --path 04_Research metadata --exists status --not-field status=archived --contains title=riesgo --group-by note_type
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/query.py --path 06_Knowledge_Base metadata --field tags=mathematics --missing source --limit 8
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/query.py --path 04_Research metadata --exists status --not-field status=archived --contains title=riesgo --group-by note_type
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/query.py --path 06_Knowledge_Base metadata --field tags=mathematics --missing source --limit 8
 ```
 
 Combina predicados con AND. Para un campo de lista, la igualdad compara sus
@@ -46,9 +47,9 @@ que el frontmatter se pueda analizar en los primeros 16 KiB. Un error de
 lectura, de sintaxis YAML o un encabezado demasiado largo se comunica como tal.
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/query.py --path 05_Projects paths --glob '*.md' --min-size 1024 --sort mtime --descending --limit 5
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/query.py --path 06_Knowledge_Base paths --since 2026-01-01 --until 2026-01-31 --sort size
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros fast-finder scripts/query.py --config summary AGENTS.md --limit 1
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/query.py --path 05_Projects paths --glob '*.md' --min-size 1024 --sort mtime --descending --limit 5
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/query.py --path 06_Knowledge_Base paths --since 2026-01-01 --until 2026-01-31 --sort size
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros fast-finder scripts/query.py --config summary AGENTS.md --limit 1
 ```
 
 `paths` filtra por nombre, tamaño en bytes y fecha de modificación. Incluso para un PDF, este modo solo necesita

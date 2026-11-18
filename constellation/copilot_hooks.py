@@ -122,8 +122,8 @@ def start_context(payload: Mapping[str, Any], *, subagent: bool = False,
     source = Path(__file__).resolve().parents[1]
     context = (f'Constellation source: {source}. Read its README and the applicable project profile. '
                'Use native agents for independent work; assign exact paths and register returned native IDs '
-               'before editing. Inherit the session model and effort. Write readable domain-oriented code. '
-               'Do not create, change or run tests unless the user explicitly requests them. '
+               'before editing. Inherit the session model and effort. Make the smallest complete change. '
+               'Follow the shared engineering rules for readable code and focused testing. '
                'Use independent read-only review and state the limits of static evidence. '
                'Do not read or archive transcripts for this workflow.')
     if subagent:

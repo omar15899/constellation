@@ -2,8 +2,9 @@
 
 Constellation owns the role definitions, engineering guidance, skills and review
 ledger. Copilot CLI supplies the model, permissions, tools and native subagents.
-This integration targets the local CLI on macOS/Linux. The definitions are in
-English; responses still follow Omar's language.
+This integration targets the local CLI on Windows, macOS and Linux. For the
+Copilot extension bundled with Microsoft Visual Studio, see the
+[Visual Studio guide](visual-studio.md). The definitions are in English.
 
 ## Source and native layout
 
@@ -49,6 +50,12 @@ python3 constellation.py docs --provider copilot verify
 python3 constellation.py docs --provider copilot search 'include-custom-instructions'
 ```
 
+On Windows use `py -3 .\constellation.py` as the entry point in PowerShell.
+Generated roles, the hook configuration and skills are installed as regular
+files or directories on Windows. The private state default is
+`%LOCALAPPDATA%\Constellation`. The separate `docs` commands in this
+example require macOS or Linux.
+
 The first command shows exact planned paths. Applying it preserves unrelated
 files, reports conflicts and records a rollback receipt. A conflict is not a
 successful installation of that entry. No authentication, model, telemetry,
@@ -87,10 +94,10 @@ a present need. Types clarify boundaries; errors explain what failed; comments
 explain decisions. Handle the supported domain and partial failures without
 inventing frameworks or compatibility layers for imaginary callers.
 
-Omar must explicitly request tests before an agent creates, changes or runs them.
-Existing tests remain intact. Read code, inspect diffs and validate syntax or
-configuration as appropriate; report that this evidence does not establish
-runtime behavior. If a required gate needs tests, leave it unmet and report it.
+Follow the [shared engineering rules](../instructions/AGENTS.md#engineering).
+Preserve existing tests and start with static inspection and independent review.
+Keep any test work focused on the requested behavior, a required project gate or
+a concrete regression. Report which evidence establishes runtime behavior.
 
 ## Parallel work and independent review
 
@@ -123,7 +130,7 @@ guarantee that the result is perfect.
 | Event | Constellation action |
 | --- | --- |
 | `sessionStart` | Supply the common workflow reminder and associated pending task IDs. |
-| `subagentStart` | Remind the worker to wait for registered ownership and respect the no-tests rule. |
+| `subagentStart` | Remind the worker to wait for registered ownership and follow the shared engineering rules. |
 | `preToolUse` | Translate recognized edits into the existing exact-path/actor guard and retain shell guard rules. |
 | `agentStop` | Remind the coordinator about pending work once; keep the ledger open until properly closed. |
 | `subagentStop` | Preserve the worker's response and prepend pending-review status for the coordinator. |

@@ -4,7 +4,7 @@ description: Build or revise Helix panes, charts, tables and workspace layouts w
 ---
 # Helix components
 
-Read the [Helix profile](../../../profiles/tradinginterface.md), the owner's `CLAUDE.md` and relevant architecture instructions. Resolve project paths against `/Users/omarkhalil/GitHub/tradinginterface`. Use the common coding method and native independent review; this skill supplies the Helix-specific decisions.
+Read the [Helix profile](../../../profiles/tradinginterface.md), the owner's `CLAUDE.md` and relevant architecture instructions. Resolve project paths against the local tradinginterface Git root. Use the common coding method and native independent review; this skill supplies the Helix-specific decisions.
 
 ## Extend the current interface
 

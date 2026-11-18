@@ -1,6 +1,32 @@
 #!/bin/sh
 set -eu
-source_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source_root=$(CDPATH= cd -- "$(PATH=/bin:/usr/bin dirname -- "$0")/.." && pwd)
+case "$(PATH=/bin:/usr/bin uname -s)" in
+  MINGW*|MSYS*)
+    script=$(/usr/bin/cygpath -aw "$source_root/constellation.py")
+    working_directory=$(pwd -P | LC_ALL=C /usr/bin/tr '[:upper:]' '[:lower:]')
+    find_windows_python() {
+      candidate=$(command -v "$1") || return 1
+      case "$candidate" in /*) ;; *) return 1 ;; esac
+      directory=$(CDPATH= cd -P -- "${candidate%/*}" && pwd -P) || return 1
+      folded_directory=$(printf '%s' "$directory" | LC_ALL=C /usr/bin/tr '[:upper:]' '[:lower:]')
+      case "$folded_directory" in
+        "$working_directory"|"$working_directory"/*) return 1 ;;
+      esac
+      [ ! -L "$candidate" ] || return 1
+      printf '%s/%s\n' "$directory" "${candidate##*/}"
+    }
+    if launcher=$(find_windows_python py.exe) &&
+        "$launcher" -3 -I -B -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+      exec "$launcher" -3 -I -B "$script" git-hook pre-push "$@"
+    fi
+    if python=$(find_windows_python python.exe) &&
+        "$python" -I -B -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+      exec "$python" -I -B "$script" git-hook pre-push "$@"
+    fi
+    printf '%s\n' 'Constellation requires a trusted Python 3.11+ executable on the Windows PATH.' >&2
+    exit 1 ;;
+esac
 for python in /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
   if "$python" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
     exec "$python" "$source_root/constellation.py" git-hook pre-push "$@"

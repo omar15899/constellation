@@ -18,11 +18,12 @@ El proyecto está en `05_Projects/Brainteasers_Quant/`, dentro de OmarOS.
 Resuelve la versión **en cada petición**, también tras una continuación que
 cambie el destino. No fijes V12 como versión perpetua ni uses la fecha de un PDF.
 
-Usa el CLI central y fija `CURSO` a la raíz real del
-curso. Por ejemplo, para ubicar el manual desde cualquier directorio:
+Usa el CLI central. Define `CONSTELLATION_CHECKOUT` con la ruta a tu copia de
+Constellation y `CURSO` con la raíz del curso. En PowerShell, usa `py -3` en
+lugar de `python3`. Puedes ubicar el manual desde cualquier directorio.
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros brainteasers-quant-notes scripts/context.py --root "$CURSO"
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros brainteasers-quant-notes scripts/context.py --root "$CURSO"
 ```
 
 El helper de solo lectura compara números de versión, distingue el manual de
@@ -61,7 +62,7 @@ por sistema; las antiguas son antecedentes y calibración, no cobertura vigente.
 Busca vocabulario, sinónimos, formulaciones equivalentes, ejemplos y resultados:
 
 ```sh
-python3 /Users/omarkhalil/GitHub/Constellation/constellation.py skill-run omaros brainteasers-quant-notes scripts/context.py --root "$CURSO" --query 'equivalencia' --query 'mismo objeto' --query 'fibra'
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros brainteasers-quant-notes scripts/context.py --root "$CURSO" --query 'equivalencia' --query 'mismo objeto' --query 'fibra'
 ```
 
 Las coincidencias traen archivo, línea y contexto. El helper busca texto literal

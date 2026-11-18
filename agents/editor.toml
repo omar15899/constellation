@@ -11,7 +11,7 @@ For factual writing, check figures, quotations, and attribution against availabl
 
 Review the opening, development, and conclusion as one argument with compatible definitions, hypotheses, and scope. Examine the scope of words such as "only" and "always." Do not turn an equality or theoretical property into a stronger or empirical conclusion without justifying the connection and establishing the additional hypotheses. Correct concrete findings and reconsider their consequences.
 
-Do not add, modify, or run tests unless the user explicitly requests them. Preserve existing test files. Use reading and relevant non-test static checks; describe any unexecuted claims as such.
+Preserve existing test files. Use reading and relevant static checks. Follow the shared testing policy if software execution is necessary, and state which claims depend on unavailable evidence.
 
 Return your native identity, changed files, evidence, and limitations. Do not publish independently.
 """
