@@ -6,6 +6,8 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -53,11 +55,11 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(result.returncode, code, result.stderr + result.stdout)
         return json.loads(result.stdout) if code == 0 else result
 
-    def begin(self, mode="publish"):
-        return self.command("begin", "change", payload={
+    def begin(self, mode="publish", code=0, **options):
+        return self.command("begin", "change", code=code, payload={
             "root": str(self.root), "requirement": "Edit note only", "mode": mode,
             "assignments": {"note.txt": "author-native-id"},
-            "coordinator": "coordinator-native-id", "session_id": "fresh-session"})
+            "coordinator": "coordinator-native-id", "session_id": "fresh-session", **options})
 
     def check_and_review(self):
         record = self.command("check", "change", "default", "--", sys.executable,
@@ -91,22 +93,282 @@ class CommandTests(unittest.TestCase):
         self.assertIn("constellation commit", rejected.stderr)
         self.command("git-hook", "pre-push", "origin", code=2)
 
+    def test_final_opted_review_publishes_exact_sha_through_native_hooks(self):
+        if os.name == "posix":
+            source_alias = self.base / "source-alias"
+            source_alias.symlink_to(SOURCE, target_is_directory=True)
+            self.git("config", "core.hooksPath", str(source_alias / "git-hooks"))
+        message = "Update the reviewed note"
+        self.begin(publication_message=message)
+        initial = self.git("rev-parse", "HEAD")
+        (self.root / "note.txt").write_text("changed\n")
+        (self.root / "foreign.txt").write_text("foreign staged\n")
+        self.git("add", "foreign.txt")
+        foreign = self.git("ls-files", "--stage", "foreign.txt")
+
+        def review(reviewer="reviewer-native-id", verdict="approve"):
+            status = self.command("status", "change")
+            return self.command("review", "change", payload={
+                "reviewer": reviewer, "verdict": verdict, "evidence": "Read the exact patch and evidence",
+                "expected_fingerprint": status["gate"]["fingerprint"]})
+
+        self.assertNotIn("publication", review())
+        self.command("check", "change", "default", "--", sys.executable, "-c",
+                     "from pathlib import Path; assert Path('note.txt').read_text() == 'changed\\n'")
+        self.assertNotIn("publication", review(verdict="reject"))
+        self.assertNotIn("publication", review(reviewer="second-independent-reviewer"))
+        self.assertEqual(initial, self.git("rev-parse", "HEAD"))
+        self.assertEqual(initial, self.git("ls-remote", "origin", "refs/heads/main").split()[0])
+
+        publication = review()["publication"]
+        sha = self.git("rev-parse", "HEAD")
+        self.assertEqual(publication, {"commit": sha, "status": "verified"})
+        self.assertEqual(sha, self.git("ls-remote", "origin", "refs/heads/main").split()[0])
+        self.assertEqual(message, self.git("log", "-1", "--format=%s"))
+        self.assertEqual("note.txt", self.git("diff-tree", "--no-commit-id", "--name-only", "-r", sha))
+        self.assertEqual(foreign, self.git("ls-files", "--stage", "foreign.txt"))
+        self.assertEqual(sha, self.command("publish", "change"))
+        self.assertEqual("closed", self.command("status", "change")["status"])
+
     def test_local_finish_and_skill_resource_optional_arguments(self):
+        rejected = self.begin(mode="local", publication_message="Publish a private task", code=2)
+        self.assertIn("requires publish mode", rejected.stderr)
         self.begin(mode="local")
+        self.assertIn("A local task cannot publish",
+                      self.command("publish", "change", "Publish a private task", code=2).stderr)
         (self.root / "note.txt").write_text("changed\n")
         self.check_and_review()
         done = self.command("finish", "change")
         self.assertEqual(done["closed"]["kind"], "local")
         self.assertEqual(done["publication"], {})
         result = subprocess.run([sys.executable, str(SOURCE / "constellation.py"),
-                                 "skill-run", "core", "fast-finder", "scripts/query.py", "--help"],
+                                 "skill-run", "omaros", "fast-finder", "scripts/query.py", "--help"],
                                 cwd=self.root, env=self.env, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("usage:", result.stdout)
         rejected = subprocess.run([sys.executable, str(SOURCE / "constellation.py"),
-                                   "skill-run", "core", "fast-finder", "../../../constellation.py"],
+                                   "skill-run", "omaros", "fast-finder", "../../../constellation.py"],
                                   cwd=self.root, env=self.env, capture_output=True, text=True, timeout=30)
         self.assertEqual(rejected.returncode, 2)
+
+    def engie_fixture(self):
+        source = self.base / "source"
+        shutil.copytree(SOURCE / "constellation", source / "constellation",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copyfile(SOURCE / "constellation.py", source / "constellation.py")
+        (source / "resources").mkdir()
+        shutil.copyfile(SOURCE / "resources/vault.py", source / "resources/vault.py")
+        root = self.root.resolve()
+        owner, gitdir = root.stat(), (root / ".git").stat()
+        (source / "profiles").mkdir()
+        (source / "profiles/projects.json").write_text(json.dumps({"projects": [{
+            "id": "omaros", "root": str(root), "management": "native",
+            "filesystem_identity": {"owner": [owner.st_dev, owner.st_ino],
+                                    "git_dir": [gitdir.st_dev, gitdir.st_ino]}}]}))
+        private = "06_Knowledge_Base/Mathematics/Finance/ENGIE/Private"
+        (root / ".git/info/exclude").write_text(f"/{private}/\n")
+        general = self.base / "default-ledger"
+        environment = dict(self.env)
+        for name in ("CONSTELLATION_STATE_DIR", "CONSTELLATION_PROJECTS_FILE"):
+            environment.pop(name, None)
+        launcher = """
+import runpy
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+sys.path.insert(0, str(source.parent))
+from constellation import platform_support
+
+fixture_ledger = Path(sys.argv[2])
+platform_support.default_state_dir = lambda home=None: fixture_ledger
+sys.argv = [str(source), *sys.argv[3:]]
+runpy.run_path(str(source), run_name='__main__')
+"""
+
+        def run(*args, payload=None, code=0):
+            result = subprocess.run([sys.executable, "-B", "-c", launcher,
+                                     str(source / "constellation.py"), str(general), *args],
+                                    cwd=root, env=environment, capture_output=True, text=True,
+                                    input=json.dumps(payload), timeout=30)
+            self.assertEqual(result.returncode, code, result.stderr + result.stdout)
+            return json.loads(result.stdout) if code == 0 else result.stderr
+
+        return run, root, private, general
+
+    @unittest.skipUnless(os.name == "posix", "Private capture is POSIX-only")
+    def test_engie_learning_local_lifecycle_and_read_only_native_hooks(self):
+        run, root, private, general = self.engie_fixture()
+        topic, daily = f"{private}/Topics/onboarding.md", f"{private}/Daily/2026/2026-11-21.md"
+        task = "engie-learning-fixture"
+        owner, author = "fixture-owner-session", "fixture-native-author"
+        contract = {"root": str(root), "requirement": "Record a synthetic learning event", "mode": "local",
+                    "assignments": {topic: author, daily: author}, "coordinator": owner, "session_id": owner}
+        self.assertEqual(run("hook", "stop", payload={"session_id": owner, "cwd": str(root)}), {})
+        run("--engie-learning", "begin", task, payload=contract)
+        ledger = root / private / ".learning/task-ledger"
+        record = ledger / "tasks" / (task + ".json")
+        for path in (ledger.parent, ledger, ledger / "tasks", ledger / ".lock", record):
+            self.assertEqual(path.stat().st_mode & 0o077, 0)
+        self.assertFalse(general.exists())
+        self.assertFalse((root / ".git/constellation").exists())
+
+        event = {"session_id": owner, "agent_id": author, "cwd": str(root),
+                 "tool_name": "Write", "tool_input": {"file_path": topic}}
+        self.assertEqual(run("hook", "pre-tool", payload=event), {})
+        denied = run("hook", "pre-tool", payload={**event, "agent_id": "someone-else"})
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
+        copilot = {"sessionId": owner, "agentId": author, "cwd": str(root),
+                   "toolName": "create", "toolArgs": {"path": daily}}
+        self.assertEqual(run("hook", "--client", "copilot", "preToolUse", payload=copilot), {})
+        self.assertIn(task, run("hook", "--client", "copilot", "sessionStart",
+                                payload=copilot)["additionalContext"])
+        self.assertIn(task, run("hook", "stop", payload=event)["reason"])
+
+        for name in (topic, daily):
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("Synthetic note\n")
+        check = run("--engie-learning", "check", task, "default", "--", sys.executable, "-c",
+                    f"from pathlib import Path; assert Path({topic!r}).read_text() == 'Synthetic note\\n'")
+        self.assertEqual(check["status"], "passed")
+        status = run("--engie-learning", "status", task)
+        run("--engie-learning", "review", task, payload={"reviewer": "fixture-reviewer",
+            "evidence": "Compared synthetic scope and current check", "expected_fingerprint": status["gate"]["fingerprint"]})
+        closed = run("--engie-learning", "finish", task)
+        self.assertEqual(closed["closed"]["kind"], "local")
+        self.assertEqual(run("hook", "stop", payload=event), {})
+        self.assertFalse(general.exists())
+        self.assertFalse((root / ".git/constellation").exists())
+
+    @unittest.skipUnless(os.name == "posix", "Private capture is POSIX-only")
+    def test_engie_learning_checks_legacy_reservations_and_private_boundaries(self):
+        run, root, private, general = self.engie_fixture()
+        topic, other = f"{private}/Topics/onboarding.md", f"{private}/Daily/unknown.md"
+        ledger = root / private / ".learning/task-ledger"
+        contract = {"root": str(root), "requirement": "Reserve a synthetic note", "mode": "local",
+                    "assignments": {topic: "fixture-author"}, "coordinator": "fixture-coordinator"}
+        for changes in ({"root": str(root.parent)}, {"mode": "publish"},
+                        {"publication_message": "Publish a private capture"},
+                        {"assignments": {f"{private}/Daily/2025/2026-11-21.md": "fixture-author"}},
+                        {"assignments": {f"{private}/.learning/record.json": "fixture-author"}}):
+            run("--engie-learning", "begin", "invalid", payload={**contract, **changes}, code=2)
+        run("--state-dir", str(self.state), "--engie-learning", "begin", "invalid", payload=contract, code=2)
+        run("--engie-learning", "commit", "invalid", "Invalid publication", code=2)
+        run("--engie-learning", "publish", "invalid", code=2)
+        self.assertFalse(ledger.exists())
+        legacy_id = "legacy-fixture"
+        run("begin", legacy_id, payload=contract)
+        general.chmod(0o500)
+        (general / "tasks").chmod(0o500)
+        (general / ".lock").chmod(0o400)
+        self.addCleanup(general.chmod, 0o700)
+        self.addCleanup((general / "tasks").chmod, 0o700)
+        records_before = {path: (path.stat().st_mtime_ns, stat.S_IMODE(path.stat().st_mode))
+                          for path in (general, general / ".lock", general / "tasks",
+                                       general / "tasks" / (legacy_id + ".json"))}
+        alternative = {**contract, "assignments": {other: "fixture-author"}}
+        error = run("--engie-learning", "begin", legacy_id, payload=alternative, code=2)
+        self.assertIn("ID already exists", error)
+        error = run("--engie-learning", "begin", "overlap", payload=contract, code=2)
+        self.assertIn("unfinished task owns", error)
+        private_id = "private-fixture"
+        run("--engie-learning", "begin", private_id, payload=alternative)
+        run("hook", "stop", payload={"session_id": "fixture-coordinator", "cwd": str(root)})
+        self.assertEqual(records_before, {path: (path.stat().st_mtime_ns, stat.S_IMODE(path.stat().st_mode))
+                                         for path in records_before})
+        (general / ".lock").chmod(0o600)
+        error = run("begin", "overlap", payload=alternative, code=2)
+        self.assertIn("unfinished task owns", error)
+        error = run("begin", private_id, payload=contract, code=2)
+        self.assertIn("ID already exists", error)
+        run("--state-dir", str(ledger), "status", private_id, code=2)
+
+        # A redirected runtime directory is neither read nor replaced.
+        moved = ledger.with_name("moved-ledger")
+        ledger.rename(moved)
+        ledger.symlink_to(moved, target_is_directory=True)
+        run("--engie-learning", "status", private_id, code=2)
+        self.assertTrue(ledger.is_symlink())
+        self.assertTrue((moved / "tasks" / (private_id + ".json")).is_file())
+
+    @unittest.skipUnless(os.name == "posix", "Private capture is POSIX-only")
+    def test_engie_learning_rejects_nested_task_directory_owner(self):
+        run, root, private, _ = self.engie_fixture()
+        ledger = root / private / ".learning/task-ledger"
+        ledger.parent.mkdir(mode=0o700, parents=True)
+        ledger.mkdir(mode=0o700)
+        tasks = ledger / "tasks"
+        tasks.mkdir(mode=0o700)
+        self.git("-C", str(tasks), "init", "-q")
+        contract = {"root": str(root), "requirement": "Reserve a synthetic note", "mode": "local",
+                    "assignments": {f"{private}/Topics/onboarding.md": "fixture-author"},
+                    "coordinator": "fixture-coordinator"}
+        error = run("--engie-learning", "begin", "nested-owner", payload=contract, code=2)
+        self.assertIn("registered Git owner", error)
+        self.assertFalse((ledger / ".lock").exists())
+        self.assertEqual(set(tasks.iterdir()), {tasks / ".git"})
+
+    @unittest.skipUnless(os.name == "posix", "Private capture is POSIX-only")
+    def test_engie_learning_rejects_case_aliases_in_index_and_head(self):
+        run, root, private, _ = self.engie_fixture()
+        topic = f"{private}/Topics/onboarding.md"
+        contract = {"root": str(root), "requirement": "Reserve a synthetic note", "mode": "local",
+                    "assignments": {topic: "fixture-author"}, "coordinator": "fixture-coordinator"}
+        learning = root / private / ".learning"
+        learning.mkdir(mode=0o700, parents=True)
+        ledger_alias = learning / "Task-Ledger/fixture.txt"
+        ledger_alias.parent.mkdir(mode=0o700)
+        ledger_alias.write_text("Synthetic alias\n")
+        alias = ledger_alias.relative_to(root).as_posix()
+        self.git("add", "-f", "--", alias)
+        ledger_alias.unlink()
+        ledger_alias.parent.rmdir()
+        error = run("--engie-learning", "begin", "ledger-alias", payload=contract, code=2)
+        self.assertIn("must be untracked", error)
+        self.git("restore", "--staged", "--", alias)
+
+        note_alias = root / private / "Topics/Onboarding.md"
+        note_alias.parent.mkdir()
+        note_alias.write_text("Synthetic alias\n")
+        alias = note_alias.relative_to(root).as_posix()
+        self.git("add", "-f", "--", alias)
+        tree = self.git("write-tree")
+        commit = self.git("commit-tree", tree, "-p", "HEAD", "-m", "Add a synthetic note alias")
+        self.git("update-ref", "HEAD", commit)
+        self.git("update-index", "--force-remove", "--", alias)
+        note_alias.unlink()
+        self.assertEqual(self.git("ls-files", "--", alias), "")
+        error = run("--engie-learning", "begin", "note-alias", payload=contract, code=2)
+        self.assertIn("must be untracked", error)
+        self.assertFalse((learning / "task-ledger").exists())
+
+    @unittest.skipUnless(os.name == "posix", "Private capture is POSIX-only")
+    def test_engie_learning_native_edits_recheck_note_protection(self):
+        run, root, private, _ = self.engie_fixture()
+        topic = f"{private}/Topics/onboarding.md"
+        owner, author = "fixture-owner-session", "fixture-native-author"
+        contract = {"root": str(root), "requirement": "Reserve a synthetic note", "mode": "local",
+                    "assignments": {topic: author}, "coordinator": owner, "session_id": owner}
+        run("--engie-learning", "begin", "protected-note", payload=contract)
+        event = {"session_id": owner, "agent_id": author, "cwd": str(root),
+                 "tool_name": "Write", "tool_input": {"file_path": topic}}
+        self.assertEqual(run("hook", "pre-tool", payload=event), {})
+        exclusions = root / ".git/info/exclude"
+        exclusions.write_text(f"/{private}/.learning/\n")
+        denied = run("hook", "pre-tool", payload=event)
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
+        copilot = {"sessionId": owner, "agentId": author, "cwd": str(root),
+                   "toolName": "create", "toolArgs": {"path": topic}}
+        denied = run("hook", "--client", "copilot", "preToolUse", payload=copilot)
+        self.assertEqual(denied["permissionDecision"], "deny")
+
+        exclusions.write_text(f"/{private}/\n")
+        path = root / topic
+        path.parent.mkdir()
+        os.link(root / "note.txt", path)
+        denied = run("hook", "pre-tool", payload=event)
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_guard_status_requires_executable_native_hooks(self):
         source = (self.base / "source").resolve()

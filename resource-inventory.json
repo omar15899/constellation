@@ -52,6 +52,13 @@
     },
     {
       "group": "omaros",
+      "name": "ng-diario",
+      "source": "/Users/omarkhalil/GitHub/Constellation/skills/omaros/ng-diario",
+      "destination": "skills/omaros/ng-diario",
+      "project_root": "/Users/omarkhalil/OmarOS"
+    },
+    {
+      "group": "omaros",
       "name": "brainteasers-quant",
       "source": "/Users/omarkhalil/.codex/.codex/skills/brainteasers-quant",
       "destination": "skills/omaros/brainteasers-quant",
@@ -2789,7 +2796,7 @@
   ],
   "curation": {
     "date": "2026-11-16",
-    "skills": 18,
+    "skills": 19,
     "global_methods": 5,
     "principle": "Distinct methods and owner workflows only; domain constraints in profiles, provider capabilities with providers, integration code in resources/automations.",
     "completed_date": "2026-11-17"

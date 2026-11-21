@@ -23,12 +23,16 @@ import tempfile
 from typing import Any, Iterator
 from urllib.parse import urlsplit
 
-from .platform_support import (IS_WINDOWS, git_executable, read_ledger_record, replace_ledger_record,
-                               secure_mkdir, validate_windows_lookup)
+from .platform_support import (IS_WINDOWS, git_executable, is_reparse, read_ledger_record,
+                               replace_ledger_record, secure_mkdir, validate_windows_lookup)
 
 
 class GitError(RuntimeError):
     """A publication invariant or Git operation failed."""
+
+
+class _RecordedPublication(GitError):
+    """The same task already has a durable commit or recovery intent."""
 
 
 def _run(root: str | Path, *args: str, data: bytes | None = None,
@@ -296,13 +300,18 @@ def _guard_paths(root: str | Path, policy: dict[str, Any], event: str) -> list[P
         hook = root / os.fsdecode(hook_path)
         alternatives = [hook, hook.with_name(hook.name + '.exe')] if IS_WINDOWS else [hook]
         for path in alternatives:
+            # macOS may report /tmp while the source is under /private/tmp.
+            # Match the shared directory without resolving the hook leaf.
+            shared = (path if IS_WINDOWS else path.parent.resolve() / path.name) == canonical
+            if shared and is_reparse(path):
+                raise GitError('Active Constellation pre-commit hook must be a regular file')
             try:
                 regular = stat.S_ISREG(path.stat().st_mode)
             except (FileNotFoundError, NotADirectoryError):
                 continue
             if not regular or not IS_WINDOWS and not os.access(path, os.X_OK):
                 continue
-            if path != canonical and path not in retained:
+            if not shared and path not in retained:
                 raise GitError(f'Active Git pre-commit validator must be retained and reviewed: {path}')
             break
     return retained
@@ -484,6 +493,16 @@ def _journal_path(root: str | Path, task_id: str) -> Path:
     return _git_dir(root) / 'constellation' / 'publication' / (_digest(task_id) + '.json')
 
 
+def _pending_intent(path: Path, publication: dict[str, Any]) -> bool:
+    """Distinguish interrupted work from the verified intent of a follow-up."""
+    if not path.exists():
+        return False
+    if publication.get('status') == 'verified_local_changes':
+        intent = json.loads(read_ledger_record(path))
+        return intent.get('phase') != 'verified' or intent.get('commit') != publication.get('commit')
+    return True
+
+
 def _preserve_index(root: str | Path, index: Path, task_id: str) -> dict[str, str]:
     """Retain the original index and its staged objects before adopting staging.
 
@@ -551,30 +570,58 @@ def _project_guards(root: str | Path, tree: str, policy: dict[str, Any]) -> None
                 raise GitError('Preserved project guard rejected or changed the candidate')
 
 
-def commit(store: Any, task_id: str, message: str) -> str:
+def _require_resolved_peer_publications(store: Any, task: dict[str, Any]) -> None:
+    """Keep each branch and destination available for its unfinished publication."""
+    root, frozen = task['root'], task['target']
+    for peer in store.list_tasks():
+        if (peer['id'] == task['id'] or peer['status'] != 'open'
+                or peer.get('mode', 'publish') != 'publish'):
+            continue
+        peer_root, target = peer['root'], peer['target']
+        same_branch = peer_root == root and target['branch'] == frozen['branch']
+        same_destination = (target['url'], target['ref']) == (frozen['url'], frozen['ref'])
+        if not (same_branch or same_destination):
+            continue
+        peer_id = peer['id']
+        if peer.get('publication', {}).get('commit') or _journal_path(peer_root, peer_id).exists():
+            raise GitError(f'Task {peer_id} has an unresolved publication. Resume it with publish {peer_id}')
+
+
+def commit(store: Any, task_id: str, message: str | None) -> str:
     """Commit reviewed bytes while preserving foreign staging, with crash intent.
 
-    The store lock serializes task updates; Git's index lock protects staging;
-    update-ref compares the old head. A durable intent and prepared new index
-    precede the ref change. ``recover`` completes a crash between ref and index.
+    Use the contract message when none is supplied. The store lock serializes
+    task updates, Git's index lock protects staging, and update-ref compares the
+    old head. A durable intent and prepared new index precede the ref change.
+    ``recover`` completes a crash between ref and index.
     """
     from .state import fingerprint, ready
-    if not message.strip() or '\0' in message:
-        raise GitError('A nonempty commit message is required')
+
     with store.locked(task_id) as task:
+        if task.get('mode', 'publish') != 'publish':
+            raise GitError('A local task cannot publish')
         previous = task.get('publication', {})
         continuation = previous.get('status') == 'verified_local_changes'
         if previous.get('commit') and not continuation:
-            raise GitError('Task already has a commit; use push or recover')
-        if task.get('mode', 'publish') != 'publish':
-            raise GitError('A local task cannot publish')
-        ready(task)
+            raise _RecordedPublication('Task already has a commit. Use push or recover')
+        if task['status'] != 'open':
+            raise GitError('Commit requires an open publication task')
         root = task['root']
+        journal_path = _journal_path(root, task_id)
+        if _pending_intent(journal_path, previous):
+            raise _RecordedPublication('Publication intent already exists. Recover it first')
+        contract_message = task.get('publication_message')
+        if message is None:
+            message = contract_message
+        elif contract_message is not None and message != contract_message:
+            raise GitError('Commit message differs from the publication contract')
+        if not isinstance(message, str) or not message.strip() or '\0' in message:
+            raise GitError('A nonempty commit message is required')
+        _require_resolved_peer_publications(store, task)
+        ready(task)
         if continuation and (_text(root, 'rev-parse', 'HEAD') != previous['commit']
                              or remote_sha(root, task['target']) != previous['commit']):
             raise GitError('Continuation requires the previously verified commit at HEAD and remote')
-        if _journal_path(root, task_id).exists() and not continuation:
-            raise GitError('Publication intent already exists; recover it first')
         with _index_lock(root) as (index, lock):
             current = candidate(root, task['paths'], task['target'], task.get('policy'))
             if current['tree'] == _text(root, 'rev-parse', 'HEAD^{tree}'):
@@ -588,7 +635,6 @@ def commit(store: Any, task_id: str, message: str) -> str:
                             if _staged(root) & set(task['paths']) else None)
             sha = _text(root, 'commit-tree', current['tree'], '-p', current['parent'],
                         data=(message.rstrip() + '\n').encode())
-            journal_path = _journal_path(root, task_id)
             prepared = journal_path.with_suffix('.index')
             secure_mkdir(prepared.parent)
             original_entries = _index_entries(root, index)
@@ -651,26 +697,77 @@ def _publication_evidence(task: dict[str, Any]) -> str:
 
 
 def _evidence_unchanged(task: dict[str, Any]) -> None:
-    if task['publication'].get('evidence') != _publication_evidence(task):
-        raise GitError('Evidence changed after commit; the frozen publication cannot be pushed')
+    publication = task['publication']
+    expected = publication.get('evidence')
+    snapshot = publication.get('evidence_snapshot')
+    if snapshot is not None and _digest(snapshot) != expected:
+        raise GitError('Evidence changed after commit. The frozen snapshot does not match')
+    if (snapshot is not None and task['status'] == 'closed'
+            and publication.get('status') == 'verified'):
+        return
+    if expected != _publication_evidence(task):
+        raise GitError('Evidence changed after commit. The frozen publication cannot be pushed')
+
+
+def _closed_publication(task: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the frozen receipt of a closed task without consulting Git."""
+    if task['status'] != 'closed':
+        return None
+    publication = task.get('publication', {})
+    if publication.get('status') != 'verified' or not publication.get('commit'):
+        raise GitError('A closed task has no verified publication')
+    _evidence_unchanged(task)
+    return publication
+
+
+def _owned_local_changes(task: dict[str, Any]) -> bool:
+    """Compare the task's literal worktree and staging with the published scope."""
+    try:
+        return (_worktree_snapshot(task['root'], task['paths'], task.get('policy'))
+                != task['publication']['worktree']
+                or bool(_staged(task['root']) & set(task['paths'])))
+    except (GitError, OSError):
+        return True
 
 
 def _close_verified(store: Any, task: dict[str, Any]) -> None:
-    """Close only when remote verification leaves no owned local work behind."""
+    """Close after the caller verifies delivery and evidence, if the scope is clean."""
     publication = task['publication']
-    try:
-        pending = (_worktree_snapshot(task['root'], task['paths'], task.get('policy')) != publication['worktree']
-                   or bool(_staged(task['root']) & set(task['paths'])))
-    except (GitError, OSError):
-        pending = True
-    if pending:
+    if _owned_local_changes(task):
         publication['status'] = 'verified_local_changes'
         task['status'] = 'open'
         store.save_locked(task)
-        raise GitError('Remote SHA verified; owned local changes remain. Run fresh checks, review and commit in this task')
-    _evidence_unchanged(task)
+        raise GitError('Remote SHA verified. Owned local changes remain. Run fresh checks, review and commit in this task')
     publication['status'] = 'verified'
     task['status'] = 'closed'
+
+
+def _close_restored(store: Any, task: dict[str, Any], journal: Path, intent: dict[str, Any]) -> None:
+    """Reconcile restored local files using a matching publication receipt."""
+    publication = task['publication']
+    candidate = intent.get('candidate', {})
+    phase = intent.get('phase')
+    if (phase not in ('committed', 'push_pending', 'verified') or intent.get('task') != task['id']
+            or intent.get('commit') != publication['commit']
+            or candidate.get('target') != task['target'] or candidate.get('root') != task['root']
+            or candidate.get('paths') != task['paths']
+            or any(candidate.get(key) != publication.get(key)
+                   for key in ('parent', 'tree', 'worktree', 'guard_hashes'))):
+        raise GitError('Verified publication intent does not match the task receipt')
+    snapshot = publication.get('evidence_snapshot')
+    evidence = publication.get('evidence')
+    if (intent.get('evidence') != evidence or intent.get('evidence_snapshot') != snapshot
+            or (phase == 'verified' and (not isinstance(snapshot, dict) or _digest(snapshot) != evidence))):
+        raise GitError('Evidence changed after commit. The publication journal does not match the frozen snapshot')
+    if phase != 'verified':
+        # Older versions could save the receipt before advancing the journal.
+        _evidence_unchanged(task)
+    if remote_sha(task['root'], task['target']) != publication['commit']:
+        raise GitError('The previously verified commit is no longer at the frozen destination')
+    if phase != 'verified':
+        intent['phase'] = 'verified'
+        _atomic_json(journal, intent)
+    _close_verified(store, task)
 
 
 def _outgoing(root: str | Path, local: str, remote: str) -> list[str]:
@@ -770,32 +867,37 @@ def remote_sha(root: str | Path, frozen: dict[str, str]) -> str | None:
 
 
 def push(store: Any, task_id: str) -> str:
-    """Persist intent, push one frozen ref, then confirm the exact remote SHA."""
+    """Push one frozen ref or return its existing verified SHA."""
     with store.locked(task_id) as task:
         if task.get('mode', 'publish') != 'publish':
             raise GitError('A local task cannot publish')
+        if (closed := _closed_publication(task)) is not None:
+            return closed['commit']
         root, frozen = task['root'], task['target']
         _target_current(root, frozen)
         pub = task.get('publication', {})
         sha = pub.get('commit')
         if not sha or _text(root, 'rev-parse', 'HEAD') != sha:
             raise GitError('Publish requires the task commit at HEAD')
-        old = remote_sha(root, frozen)
-        if old == sha:
-            _close_verified(store, task)
-            return sha
-        _evidence_unchanged(task)
-        pre_push(root, frozen['remote'], frozen['url'],
-                 f"refs/heads/{frozen['branch']} {sha} {frozen['ref']} {old or '0' * 40}", store)
-        pub.update(status='push_pending', remote_before=old)
-        store.save_locked(task)
         journal_path = _journal_path(root, task_id)
         intent = json.loads(read_ledger_record(journal_path))
-        intent.update(phase='push_pending', remote_before=old)
-        _atomic_json(journal_path, intent)
-        _run(root, 'push', '--no-follow-tags', frozen['remote'], f"{sha}:{frozen['ref']}", timeout=120)
-        if remote_sha(root, frozen) != sha:
-            raise GitError('Push returned without the expected remote SHA; recover')
+        if intent.get('commit') != sha:
+            raise GitError('Publication journal differs from the task commit. Recover it first')
+        if pub.get('status') == 'verified_local_changes':
+            _close_restored(store, task, journal_path, intent)
+            return sha
+        _evidence_unchanged(task)
+        old = remote_sha(root, frozen)
+        if old != sha:
+            pre_push(root, frozen['remote'], frozen['url'],
+                     f"refs/heads/{frozen['branch']} {sha} {frozen['ref']} {old or '0' * 40}", store)
+            pub.update(status='push_pending', remote_before=old)
+            store.save_locked(task)
+            intent.update(phase='push_pending', remote_before=old)
+            _atomic_json(journal_path, intent)
+            _run(root, 'push', '--no-follow-tags', frozen['remote'], f"{sha}:{frozen['ref']}", timeout=120)
+            if remote_sha(root, frozen) != sha:
+                raise GitError('Push returned without the expected remote SHA. Recover it first')
         intent['phase'] = 'verified'
         _atomic_json(journal_path, intent)
         _close_verified(store, task)
@@ -807,6 +909,8 @@ def recover(store: Any, task_id: str) -> dict[str, Any]:
     with store.locked(task_id) as task:
         if task.get('mode', 'publish') != 'publish':
             raise GitError('A local task has no publication to recover')
+        if (closed := _closed_publication(task)) is not None:
+            return closed
         root, frozen = task['root'], task['target']
         _target_current(root, frozen)
         path = _journal_path(root, task_id)
@@ -817,22 +921,33 @@ def recover(store: Any, task_id: str) -> dict[str, Any]:
         head = _text(root, 'rev-parse', 'HEAD')
         if head != sha and not (intent['phase'] == 'commit_pending' and head == candidate_value['parent']):
             raise GitError('HEAD differs from interrupted commit; no changes made')
+        previous = task.get('publication', {})
+        if previous.get('status') == 'verified_local_changes' and previous.get('commit') == sha:
+            _close_restored(store, task, path, intent)
+            return previous
         if intent['phase'] == 'commit_pending':
             with _index_lock(root) as (index, lock):
                 current = _file_hash(index)
-                if head == candidate_value['parent']:
+                update_ref = head == candidate_value['parent']
+                if update_ref:
                     from .state import fingerprint, ready
                     if current != intent['old_index'] or ready(task) != fingerprint(task, candidate_value):
                         raise GitError('Pre-commit interruption changed; inspect before recovery')
-                    _run(root, 'update-ref', f"refs/heads/{frozen['branch']}", sha, head)
-                if current == intent['old_index']:
+                replace_index = current == intent['old_index']
+                if replace_index:
                     prepared = path.with_suffix('.index')
                     if _file_hash(prepared) != intent['new_index']:
                         raise GitError('Prepared recovery index is unavailable')
                     shutil.copyfile(prepared, lock)
-                    os.replace(lock, index)
+                    if _file_hash(lock) != intent['new_index']:
+                        raise GitError('Prepared recovery index changed while copying')
                 elif current != intent['new_index']:
                     raise GitError('Index changed after interruption; preserve and inspect it')
+                # Prepare the replacement under Git's lock before moving HEAD.
+                if update_ref:
+                    _run(root, 'update-ref', f"refs/heads/{frozen['branch']}", sha, head)
+                if replace_index:
+                    os.replace(lock, index)
             intent['phase'] = 'committed'
             _atomic_json(path, intent)
         task['publication'] = {'commit': sha, 'parent': candidate_value['parent'],
@@ -845,9 +960,59 @@ def recover(store: Any, task_id: str) -> dict[str, Any]:
             task['publication']['index_backup'] = intent['index_backup']
         if intent['phase'] in ('push_pending', 'verified'):
             if remote_sha(root, frozen) == sha:
+                _evidence_unchanged(task)
                 intent['phase'] = 'verified'
                 _atomic_json(path, intent)
                 _close_verified(store, task)
             else:
                 task['publication']['status'] = 'push_pending'
         return task['publication']
+
+
+def _resume_publication(store: Any, task: dict[str, Any]) -> str | None:
+    """Complete a recorded publication or return None when a commit is needed."""
+    if (closed := _closed_publication(task)) is not None:
+        return closed['commit']
+    task_id = task['id']
+    publication = task.get('publication', {})
+    if publication.get('commit') and publication.get('status') != 'verified_local_changes':
+        return push(store, task_id)
+    if _pending_intent(_journal_path(task['root'], task_id), publication):
+        recovered = recover(store, task_id)
+        if recovered['status'] == 'verified':
+            return recovered['commit']
+        return push(store, task_id)
+    if publication.get('status') == 'verified_local_changes' and not _owned_local_changes(task):
+        return push(store, task_id)
+    return None
+
+
+def publish(store: Any, task_id: str, message: str | None = None) -> str:
+    """Publish a ready task or resume its recorded Git transaction.
+
+    Args:
+        store: Task ledger shared with the Git hooks.
+        task_id: Exact task selected for authorized publication.
+        message: Commit message for a new manual publication. A contract message
+            supplies it for automatic tasks. Retries retain the recorded SHA.
+
+    Returns:
+        The commit SHA verified at the task's frozen destination.
+
+    Raises:
+        GitError: The task cannot publish, or a Git publication step failed.
+        StateError: New publication needs current checks and independent approval.
+    """
+    task = store.get(task_id)
+    if task.get('mode', 'publish') != 'publish':
+        raise GitError('A local task cannot publish')
+    if (sha := _resume_publication(store, task)) is not None:
+        return sha
+    try:
+        commit(store, task_id, message)
+    except _RecordedPublication:
+        # Another caller recorded progress after this caller read the task.
+        if (sha := _resume_publication(store, store.get(task_id))) is not None:
+            return sha
+        raise
+    return push(store, task_id)

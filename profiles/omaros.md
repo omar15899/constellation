@@ -39,6 +39,12 @@ en conversación. Una modificación no trivial deja una traza breve declarada en
 `11_Documents_and_Reports/Execution_Traces/YYYY-MM-DD/`. Contiene objetivo,
 cambios, evidencia y límites; nunca el prompt ni la conversación.
 
+Una petición de guardar un diario a partir del relato aportado activa
+`ng-diario`. La síntesis por jornada vive en `01_Daily_Life/Journal/Daily/`,
+con enlaces a notas existentes aptas para esa ruta. Las consultas de progreso
+leen las entradas del tema o periodo solicitado. Una captura mixta conserva
+el aprendizaje profesional privado en el flujo que sigue.
+
 Una petición explícita de guardar aprendizaje profesional sobre ENGIE, pricing,
 hedging u operativa activa `engie-learning`.
 Busca antecedentes antes de escribir y conserva teoría general y fuentes en su
@@ -104,7 +110,7 @@ actualiza los índices afectados dentro del alcance y no inventes ejecución de 
 Una consulta no autoriza crear un capítulo, modificar la doctrina ni publicar.
 
 Los métodos propios del vault viven en `Constellation/skills/omaros/`:
-`fast-finder`, `engie-learning`, `brainteasers-quant` y
+`fast-finder`, `ng-diario`, `engie-learning`, `brainteasers-quant` y
 `brainteasers-quant-notes` conservan sus recursos y alcances específicos.
 Las automatizaciones conectadas se mantienen aparte de la selección de skills;
 su presencia no autoriza ejecutarlas ni demuestra que estén activas.

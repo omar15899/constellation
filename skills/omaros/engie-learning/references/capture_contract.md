@@ -108,8 +108,16 @@ otra captura hasta que se resuelva su estado. Si reconoce un evento ya persistid
 `already_applied`: comprueba las rutas devueltas sin añadir otra captura ni
 pasar ese resultado a `apply`. Conserva el JSON preparado fuera de rutas publicables y
 pásalo íntegro a `apply`, que acepta el envoltorio con `plan`. Antes de aplicar,
-declara las rutas relativas exactas de `paths` como asignaciones del encargo
-local de OmarOS; no introduzcas el contenido de la captura en el registro común:
+declara las rutas relativas exactas de `paths` como asignaciones de un encargo
+con `mode: "local"`. El contrato del encargo lleva rutas y objetivo operativo.
+Conserva la síntesis en el plan privado. Usa el mismo ID de encargo al comprobar,
+revisar y cerrar:
+
+```sh
+python3 "$CONSTELLATION_CHECKOUT/constellation.py" --engie-learning begin ID < encargo.json
+```
+
+Aplica el plan tras abrir el encargo:
 
 ```sh
 python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py apply < preparado.json
@@ -164,8 +172,15 @@ python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learni
 python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py recover
 ```
 
-El estado operativo y los datos de recuperación viven en `.git/omaros-learning`,
-fuera de la publicación. Una operación interrumpida puede dejar varios archivos
+El estado operativo nuevo vive en `Private/.learning/capture/`. El motor
+puede consultar los recibos que ya existen bajo `.git/omaros-learning` y respeta
+su bloqueo. Si detecta una recuperación pendiente del formato anterior, termínala
+con la versión anterior del motor en un entorno con acceso de escritura a esa
+ruta. Para actualizar, deja que terminen las capturas anteriores y usa la misma
+versión actual en todos los clientes del vault. Una versión anterior puede
+ignorar una recuperación pendiente en la ubicación nueva.
+
+Una operación interrumpida puede dejar varios archivos
 en versiones distintas. La recuperación compara cada destino con las versiones
 prevista y anterior. Una tercera versión exige conciliación, sin restauración
 automática sobre ella. El bloqueo coordina escritores que lo respetan; un editor
@@ -173,7 +188,7 @@ externo puede escribir sin él. No equivale a una transacción universal del sis
 de archivos.
 
 Cuando una tercera versión impida completar el plan y se decida abandonarlo,
-`recover --abandon` conserva el journal en `.git/omaros-learning/recovery` y deja
+`recover --abandon` conserva el journal en `Private/.learning/capture/recovery/` y deja
 los archivos actuales disponibles para conciliar. Si hay un original desplazado
 en un archivo `.swap` por una carrera de edición, rechaza el abandono hasta que
 se concilien expresamente ambas versiones, conservándolas.
@@ -202,15 +217,15 @@ Los originales laborales y las fuentes LaTeX conservan autoridad y ubicación.
 Una ampliación propia vive en la nota privada y enlaza la representación o fuente
 autorizada. Así sobrevive a la regeneración sin modificar el generador.
 
-La captura usa un encargo de Constellation con raíz OmarOS, `mode: "local"`
-y asignaciones para los destinos exactos que devuelve `prepare`. El CLI exige
-asignaciones no vacías; no existe un cierre especial con `paths: []`. El registro
-privado conserva solo objetivo operativo, rutas, huellas y evidencia de revisión,
-sin contenido corporativo. Tras la lectura de los destinos, las comprobaciones
-permitidas y la revisión independiente, cierra mediante `finish`; no hace falta
-commit ni push. Este encargo queda excluido del diario personal y de toda
-exportación. La transacción de `learning.py` conserva su propio recibo privado
-para recuperar escrituras; ese recibo no sustituye la revisión del contenido.
+El encargo `--engie-learning` usa exclusivamente la raíz OmarOS inscrita,
+`mode: "local"` y asignaciones para notas exactas de `Private/Topics/` y
+`Private/Daily/`. Su ubicación fija es `Private/.learning/task-ledger/`. Es
+parte del ciclo de revisión de Constellation y conserva solo objetivo
+operativo, rutas, huellas y evidencia. Para comprobar y cerrar, usa
+`--engie-learning check`, `--engie-learning review` y `--engie-learning finish`
+con el mismo ID, tras releer los destinos. El recibo de `learning.py` da
+evidencia de persistencia y la revisión independiente evalúa el contenido.
+El ámbito privado se conserva para el encargo y su recibo.
 Las consultas son de lectura y no completan una escritura pendiente de forma
 implícita.
 

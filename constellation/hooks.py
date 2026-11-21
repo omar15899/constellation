@@ -16,7 +16,7 @@ from typing import Any, Mapping, TextIO
 
 from .git import GitError, _text
 from .platform_support import IS_WINDOWS, is_reparse, validate_windows_lookup
-from .state import Store
+from .state import ENGIE_ROUTE, EngieLearningStore, Store, engie_learning_path, validate_engie_scope
 
 
 class HookError(ValueError):
@@ -219,11 +219,19 @@ def _allows(task: Mapping[str, Any], root: Path, relative: str,
             and (actor == task.get("coordinator") or actor == task["assignments"][relative]))
 
 
-def _active(store: Store) -> list[dict[str, Any]]:
+def _active(store: Store | None, *, engie_roots: set[Path] | None = None) -> list[dict[str, Any]]:
+    """Read both applicable ledgers through their atomic, nonmutating views."""
     # Publication holds the ledger lock while talking to Git. Native hooks must
     # use atomic record snapshots: waiting for that lock can exceed the native
     # hook timeout and turn a scope decision into a transport failure.
-    return [task for task in store.list_tasks() if task.get("status") != "closed"]
+    if store is not None:
+        tasks = store.list_tasks()
+    else:
+        tasks = Store(read_only=True).list_tasks()
+        private = EngieLearningStore.existing(engie_roots)
+        if private is not None:
+            tasks += private.list_tasks()
+    return [task for task in tasks if task.get("status") != "closed"]
 
 
 def pre_tool(payload: Mapping[str, Any], store: Store | None = None) -> dict[str, Any]:
@@ -246,13 +254,19 @@ def pre_tool(payload: Mapping[str, Any], store: Store | None = None) -> dict[str
         cwd_value = payload.get("cwd")
         if not isinstance(cwd_value, str) or not Path(cwd_value).is_absolute():
             raise HookError("A structured edit requires an absolute working directory")
-        tasks = _active(store or Store())
-        for name in _edit_paths(payload, tool):
-            root, relative = _target(Path(cwd_value), name)
-            allowed = any(_allows(task, root, relative, session, actor) for task in tasks)
-            if not allowed:
+        targets = [_target(Path(cwd_value), name) for name in _edit_paths(payload, tool)]
+        tasks = _active(store, engie_roots={root for root, relative in targets
+                                           if engie_learning_path(relative)})
+        private_edits: dict[Path, list[str]] = {}
+        for root, relative in targets:
+            matching = [task for task in tasks if _allows(task, root, relative, session, actor)]
+            if not matching:
                 raise HookError("Edit is outside this actor's declared exact paths; open or extend the task first "
                                 f"({_routing_diagnostic(session, actor)})")
+            if any(task.get("ledger") == ENGIE_ROUTE for task in matching):
+                private_edits.setdefault(root, []).append(relative)
+        for root, paths in private_edits.items():
+            validate_engie_scope(root, paths)
         return {}
     except HookError as error:
         return _deny(str(error))
@@ -269,7 +283,7 @@ def stop(payload: Mapping[str, Any], store: Store | None = None) -> dict[str, An
     """
     try:
         session, actor = _identity(payload)
-        tasks = [task for task in _active(store or Store())
+        tasks = [task for task in _active(store)
                  if _participates(task, session, _actor(task, session, actor))]
         if not tasks:
             return {}

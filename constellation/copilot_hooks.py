@@ -104,7 +104,7 @@ def pre_tool(payload: Mapping[str, Any], store: Store | None = None) -> dict[str
         return _deny('Cannot interpret this known write or shell operation; inspect its native schema and declared scope.')
 
 
-def _pending(payload: Mapping[str, Any], store: Store) -> list[dict[str, Any]]:
+def _pending(payload: Mapping[str, Any], store: Store | None) -> list[dict[str, Any]]:
     """Select only tasks associated with the supplied native session and actor."""
     native = _identity(payload)
     session, actor = native['session_id'], native['agent_id']
@@ -131,7 +131,7 @@ def start_context(payload: Mapping[str, Any], *, subagent: bool = False,
         # ID. Only the coordinator can register the returned execution identity.
         return {'additionalContext': context + ' Wait for the coordinator to register your identity and ownership. '
                 'Return files, findings, evidence and limits; the coordinator integrates and records review.'}
-    tasks = _pending(payload, store or Store())
+    tasks = _pending(payload, store)
     if tasks:
         context += ' Resume associated local tasks: ' + _task_names(tasks) + '.'
     return {'additionalContext': context}
@@ -155,7 +155,7 @@ def subagent_stop(payload: Mapping[str, Any], store: Store | None = None) -> dic
     """
     if not isinstance(payload.get('agentId'), str) or not payload['agentId']:
         return {}
-    tasks = _pending(payload, store or Store())
+    tasks = _pending(payload, store)
     response = payload.get('response')
     if not tasks or not isinstance(response, str):
         return {}

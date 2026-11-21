@@ -138,10 +138,14 @@ The coordinator integrates and commissions independent review after checks.
 Reviewers read the actual candidate and quote its current fingerprint; authors
 and the coordinator cannot approve their own work. A later edit invalidates
 checks and approval. Register failed reviews and resolve their evidence.
-Use `commit`, `push`, and `recover` through the common entry point. The gate
-checks the exact Git objects and frozen destination; foreign staged paths are
-preserved. Never bypass a gate with a different Git command or alternate state
-store. Local hooks are guardrails, not a sandbox or an authentication boundary.
+For an authorized publication, declare `mode: "publish"` and a natural
+`publication_message` in the task contract. Recording the final independent
+approval starts publication once the required checks are current. Use `publish`
+to resume the same task, or `commit`, `push`, and `recover` for separate steps
+through the common entry point. The gate binds the exact Git objects and frozen
+destination and preserves foreign staged paths. Never bypass a gate with a
+different Git command or alternate state store. Local hooks are guardrails,
+not a sandbox or an authentication boundary.
 Store curated milestones in the task ledger; never store transcripts there.
 A push is complete only after the exact SHA is verified at the declared remote
 and branch. Preserve other work and personal Codex settings.

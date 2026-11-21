@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -189,6 +190,7 @@ class LearningCaptureTests(unittest.TestCase):
         target = self.root / ".git" if replace_gitdir else self.root
         saved = self.base / "original-owner"
         target.rename(saved)
+        self.assert_code("wrong_project", self.store.legacy_pending)
         shutil.copytree(saved, target)
         for operation in (self.store.status, lambda: self.store.prepare(capture),
                           lambda: self.store.apply(plan), self.store.query, self.store.recover,
@@ -451,7 +453,7 @@ class LearningCaptureTests(unittest.TestCase):
         with patch.object(learning.os, "link", side_effect=interrupt_after_link):
             with self.assertRaises((OSError, learning.CaptureError)):
                 self.store.apply(plan)
-        pending = self.store.json_read("omaros-learning/pending.json")
+        pending = self.store.json_read("pending.json")
         change = pending["changes"][0]
         destination = self.root / change["path"]
         candidate = destination.with_name(change["candidate"])
@@ -477,6 +479,130 @@ class LearningCaptureTests(unittest.TestCase):
             self.assert_code("busy", other.apply, plan)
         self.assertEqual("ready", self.store.status()["status"])
         self.assertEqual("applied", other.apply(plan)["status"])
+
+    def test_recover_with_read_only_git_and_previous_receipt_and_lock(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("The current process can write through owner-only restrictions.")
+        first = self.capture()
+        self.assertEqual("applied", self.save(first)["status"])
+        legacy = self.root / ".git" / learning.LEGACY_STATE
+        legacy.mkdir(mode=0o700)
+        old_lock = legacy / "lock"
+        old_lock.touch(mode=0o600)
+        old_receipts = legacy / "receipts"
+        old_receipts.mkdir(mode=0o700)
+        filename = first["event_id"] + ".json"
+        old_receipt = old_receipts / filename
+        (self.store.state / "receipts" / filename).rename(old_receipt)
+        saved_receipt = old_receipt.read_bytes()
+        for path in (legacy.parent, legacy, old_lock, old_receipts, old_receipt):
+            mode = stat.S_IMODE(path.stat().st_mode)
+            self.addCleanup(path.chmod, mode)
+            path.chmod(mode & ~0o222)
+            self.assertFalse(os.access(path, os.W_OK))
+
+        with patch.object(self.store, "event_blocks", side_effect=AssertionError("Legacy receipt was not used")):
+            self.assertEqual("already_applied", self.store.prepare(first)["status"])
+        next_capture = self.capture(hour=15)
+        plan = self.store.prepare(next_capture)
+        with old_lock.open("rb") as held:
+            learning.fcntl.flock(held, learning.fcntl.LOCK_EX | learning.fcntl.LOCK_NB)
+            self.assert_code("busy", self.store.apply, plan)
+        with patch.object(self.store, "_replace", side_effect=OSError("Synthetic interruption")):
+            with self.assertRaises((OSError, learning.CaptureError)):
+                self.store.apply(plan)
+        pending = self.store.state / "pending.json"
+        self.assertTrue(pending.is_file())
+        self.assertEqual("pending", self.store.status()["status"])
+        self.assertEqual("applied", self.store.recover()["status"])
+        self.assertFalse(pending.exists())
+        self.assertEqual("already_applied", self.store.prepare(next_capture)["status"])
+        self.assertEqual(set(legacy.iterdir()), {old_lock, old_receipts})
+        self.assertEqual(list(old_receipts.iterdir()), [old_receipt])
+        self.assertEqual(old_receipt.read_bytes(), saved_receipt)
+        self.assertEqual(stat.S_IMODE(self.store.state.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE((self.store.state / "lock").stat().st_mode), 0o600)
+
+    def test_legacy_pending_blocks_new_writes_without_opening_the_journal(self) -> None:
+        capture = self.capture()
+        plan = self.store.prepare(capture)
+        legacy = self.root / ".git" / learning.LEGACY_STATE
+        legacy.mkdir(mode=0o700)
+        (legacy / "lock").touch(mode=0o600)
+        pending = legacy / "pending.json"
+        untouched = b"Legacy journal intentionally kept opaque to current capture."
+        pending.write_bytes(untouched)
+        status = self.store.status()
+        self.assertEqual("pending", status["status"])
+        self.assertEqual("legacy", status["pending_source"])
+        self.assertIsNone(status["event_id"])
+        query = self.store.query()
+        self.assertTrue(query["partial"])
+        self.assertEqual("legacy", query["pending_source"])
+        self.assert_code("legacy_pending", self.store.prepare, capture)
+        self.assert_code("legacy_pending", self.store.apply, plan)
+        self.assert_code("legacy_pending", self.store.recover)
+        self.assert_code("legacy_pending", self.store.recover, abandon=True)
+        self.assertEqual(untouched, pending.read_bytes())
+        self.assertFalse(self.store.state.exists())
+        self.assertFalse(self.topic_path().exists())
+
+    def test_runtime_rejects_insecure_ancestors_tracked_children_and_links(self) -> None:
+        plan = self.store.prepare(self.capture())
+        runtime = self.store.state
+        runtime.parent.mkdir(parents=True, mode=0o755)
+        runtime.parent.chmod(0o755)
+        self.assert_code("unsafe_path", self.store.apply, plan)
+        self.assertFalse(runtime.exists())
+
+        runtime.parent.chmod(0o700)
+        case_alias = runtime.with_name("Capture")
+        case_alias.mkdir(mode=0o700)
+        tracked = case_alias / "synthetic-state"
+        tracked.write_text("Fictitious runtime data")
+        relative = tracked.relative_to(self.root).as_posix()
+        self.git("add", "-f", "--", relative)
+        self.assert_code("tracked_private", self.store.apply, plan)
+        self.assertFalse((runtime / "lock").exists())
+        self.git("rm", "--cached", "--", relative)
+        tracked.unlink()
+        case_alias.rmdir()
+
+        outside = self.base / "outside-runtime"
+        outside.mkdir(mode=0o700)
+        runtime.symlink_to(outside, target_is_directory=True)
+        self.assert_code("unsafe_path", self.store.apply, plan)
+        self.assertFalse(list(outside.iterdir()))
+
+    def test_committed_private_paths_remain_protected_after_staged_deletion(self) -> None:
+        plan = self.store.prepare(self.capture())
+        runtime = self.store.state
+        runtime.parent.mkdir(parents=True, mode=0o700)
+        case_alias = runtime.with_name("Capture")
+        case_alias.mkdir(mode=0o700)
+        pending = case_alias / "pending.json"
+        topic = self.topic_path()
+        topic.parent.mkdir(mode=0o700)
+        for path in (pending, topic):
+            path.write_text("Synthetic tracked material")
+        pending_name = pending.relative_to(self.root).as_posix()
+        topic_name = topic.relative_to(self.root).as_posix()
+        self.git("add", "-f", "--", pending_name, topic_name)
+        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "commit", "--no-gpg-sign", "-qm", "Commit deliberately tracked fixture")
+        self.git("rm", "--cached", "--", pending_name, topic_name)
+        pending.unlink()
+        topic.unlink()
+
+        self.assert_code("tracked_private", self.store.apply, plan)
+        self.assert_code("tracked_private", self.store.check_private_target, topic_name)
+        self.assertFalse((runtime / "lock").exists())
+        self.assertFalse(pending.exists())
+        self.assertFalse(topic.exists())
+
+        branch = self.git("symbolic-ref", "--quiet", "HEAD").stdout.strip()
+        (self.root / ".git" / branch).write_text("Malformed synthetic branch ref\n")
+        self.assert_code("git_error", self.store.check_git_exclusion, learning.CAPTURE_STATE)
 
     def test_markdown_event_identity_survives_missing_receipts(self) -> None:
         first = self.capture()

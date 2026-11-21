@@ -33,6 +33,12 @@ import yaml
 
 VAULT_MARKER = Path("05_Projects/OmarOS/Architecture/OmarOS_Architecture.md")
 BASE = "06_Knowledge_Base/Mathematics/Finance/ENGIE/Private"
+CAPTURE_STATE = BASE + "/.learning/capture"
+LEGACY_STATE = "omaros-learning"
+LEGACY_PENDING = (
+    "Hay una escritura pendiente en el estado anterior. Usa recover con la versión anterior "
+    "en un entorno autorizado para escribir en el directorio Git original."
+)
 LIMIT = 1024 * 1024
 PLAN_LIMIT = 2 * LIMIT
 STATE_LIMIT = 32 * LIMIT
@@ -185,7 +191,7 @@ class Store:
         self.gitdir = Path(self.git("rev-parse", "--absolute-git-dir").stdout.strip())
         if original_gitdir != self.gitdir:
             raise CaptureError("wrong_owner", "El directorio de trabajo pertenece a otro dueño Git.")
-        self.state = self.gitdir / "omaros-learning"
+        self.state = self.root / CAPTURE_STATE
         self.gitfile = None
         with self.anchor() as fd:
             self.gitfile = self.gitfile_identity(fd)
@@ -211,24 +217,27 @@ class Store:
         raise CaptureError("wrong_project", "La entrada Git del vault no es canónica.")
 
     @contextmanager
-    def anchor(self, *, state: bool = False) -> Iterator[int]:
+    def anchor(self, *, git: bool = False) -> Iterator[int]:
         """Match both opened directory objects before traversing or creating anything."""
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        root_fd = os.open(self.root, flags)
         try:
-            git_fd = os.open(self.gitdir, flags)
+            root_fd = os.open(self.root, flags)
             try:
-                for fd, key in ((root_fd, "owner"), (git_fd, "git_dir")):
-                    info = os.fstat(fd)
-                    if [info.st_dev, info.st_ino] != self.binding[key]:
-                        raise CaptureError("wrong_project", "La identidad del vault o de su Git cambió.")
-                if self.gitfile is not None and self.gitfile_identity(root_fd) != self.gitfile:
-                    raise CaptureError("wrong_project", "La entrada Git del vault cambió.")
-                yield git_fd if state else root_fd
+                git_fd = os.open(self.gitdir, flags)
+                try:
+                    for fd, key in ((root_fd, "owner"), (git_fd, "git_dir")):
+                        info = os.fstat(fd)
+                        if [info.st_dev, info.st_ino] != self.binding[key]:
+                            raise CaptureError("wrong_project", "La identidad del vault o de su Git cambió.")
+                    if self.gitfile is not None and self.gitfile_identity(root_fd) != self.gitfile:
+                        raise CaptureError("wrong_project", "La entrada Git del vault cambió.")
+                    yield git_fd if git else root_fd
+                finally:
+                    os.close(git_fd)
             finally:
-                os.close(git_fd)
-        finally:
-            os.close(root_fd)
+                os.close(root_fd)
+        except FileNotFoundError:
+            raise CaptureError("wrong_project", "El vault inscrito o su directorio Git ya no está disponible.") from None
 
     def git(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         try:
@@ -237,35 +246,58 @@ class Store:
             raise CaptureError("git_error", "No se pudo verificar el dueño y la protección Git.") from None
 
     @contextmanager
-    def parent(self, relative: str, *, create: bool = False, state: bool = False) -> Iterator[tuple[int, str]]:
+    def parent(self, relative: str, *, create: bool = False, git: bool = False,
+               private_from: int | None = None) -> Iterator[tuple[int, str]]:
+        """Open a parent relative to the verified vault or Git directory."""
         components = parts(relative)
-        with self.anchor(state=state) as anchor:
+        with self.anchor(git=git) as anchor:
             fd = os.dup(anchor)
         try:
-            for component in components[:-1]:
+            for index, component in enumerate(components[:-1]):
                 if create:
                     try:
                         os.mkdir(component, 0o700, dir_fd=fd)
                     except FileExistsError:
                         pass
+                    else:
+                        os.fsync(fd)
                 child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
                 os.close(fd)
                 fd = child
+                if private_from is not None and index >= private_from:
+                    self.check_owner_only(os.fstat(fd))
             yield fd, components[-1]
+        except FileNotFoundError:
+            raise
         except OSError as error:
             raise CaptureError("unsafe_path", f"No se puede abrir una ruta segura ({error.errno}).") from None
         finally:
             os.close(fd)
 
-    def read(self, relative: str, *, state: bool = False) -> bytes | None:
+    @contextmanager
+    def state_parent(self, relative: str, *, create: bool = False, legacy: bool = False) -> Iterator[tuple[int, str]]:
+        """Open current state under Private or read legacy state under Git."""
+        parts(relative)
+        if legacy:
+            with self.parent(f"{LEGACY_STATE}/{relative}", git=True, private_from=0) as entry:
+                yield entry
+            return
+        path = f"{CAPTURE_STATE}/{relative}"
+        self.check_owner(path)
+        self.check_git_exclusion(CAPTURE_STATE)
+        self.check_git_ignore(path)
+        with self.parent(path, create=create, private_from=len(parts(BASE))) as entry:
+            yield entry
+
+    def read(self, relative: str, *, state: bool = False, legacy: bool = False) -> bytes | None:
+        parent = self.state_parent(relative, legacy=legacy) if state else self.parent(relative)
         try:
-            with self.parent(relative, state=state) as (fd, name):
+            with parent as (fd, name):
+                source = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
                 try:
-                    source = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
-                except FileNotFoundError:
-                    return None
-                try:
-                    self.check_file(source)
+                    info = self.check_file(source)
+                    if state:
+                        self.check_owner_only(info)
                     limit = STATE_LIMIT if state else LIMIT
                     chunks = []
                     remaining = limit + 1
@@ -281,28 +313,20 @@ class Store:
                     return data
                 finally:
                     os.close(source)
-        except CaptureError as error:
-            if error.code == "unsafe_path":
-                # Missing parents are ordinary for the first capture; symlinks
-                # and other failures remain errors.
-                candidate = (self.gitdir if state else self.root) / relative
-                current = self.gitdir if state else self.root
-                for component in parts(relative):
-                    current = current / component
-                    if current.is_symlink():
-                        raise
-                    if not current.exists():
-                        return None
-            raise
+        except FileNotFoundError:
+            return None
 
-    def json_read(self, relative: str) -> Any:
-        data = self.read(relative, state=True)
+    def json_read(self, relative: str, *, legacy: bool = False) -> dict[str, Any] | None:
+        data = self.read(relative, state=True, legacy=legacy)
         if data is None:
             return None
         try:
-            return json.loads(data)
+            value = json.loads(data)
+            if isinstance(value, dict) and value:
+                return value
         except (UnicodeDecodeError, ValueError):
-            raise CaptureError("corrupt_state", "Estado privado inválido; conservarlo para recuperación.") from None
+            pass
+        raise CaptureError("corrupt_state", "Estado privado inválido; conservarlo para recuperación.")
 
     def protected(self, relative: str) -> None:
         self.check_private_target(relative)
@@ -313,11 +337,37 @@ class Store:
             raise CaptureError("unsafe_path", "La escritura se limita al área Private de ENGIE.")
         parts(relative)
         self.check_owner(relative)
-        tracked = self.git("ls-files", "--error-unmatch", "--", relative, check=False).returncode
+        self.check_git_exclusion(relative)
+
+    def head_commit(self) -> str | None:
+        """Read the commit at HEAD, allowing only a genuinely unborn branch."""
+        result = self.git("rev-parse", "--verify", "--quiet", "HEAD^{commit}", check=False)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        if result.returncode == 1 and not result.stderr:
+            branch = self.git("symbolic-ref", "--quiet", "HEAD", check=False)
+            ref = branch.stdout.strip()
+            if branch.returncode == 0 and ref.startswith("refs/heads/"):
+                refs = self.git("for-each-ref", "--format=%(refname)", "--", ref, check=False)
+                if refs.returncode == 0 and not refs.stdout and not refs.stderr:
+                    return None
+        raise CaptureError("git_error", "No se pudo verificar HEAD del vault; se conserva el destino.")
+
+    def check_git_exclusion(self, relative: str) -> None:
+        """Reject paths in the index or HEAD, including tracked descendants."""
+        head = self.head_commit()
+        arguments = ["ls-files", "--error-unmatch"]
+        if head is not None:
+            arguments.append(f"--with-tree={head}")
+        pathspec = f":(icase,literal){relative}"
+        tracked = self.git(*arguments, "--", pathspec, check=False).returncode
         if tracked == 0:
             raise CaptureError("tracked_private", "Un destino privado ya está versionado: no se escribirá.")
         if tracked != 1:
             raise CaptureError("git_error", "No se pudo verificar el índice del vault; se conserva el destino.")
+        self.check_git_ignore(relative)
+
+    def check_git_ignore(self, relative: str) -> None:
         if self.git("check-ignore", "--no-index", "-q", "--", relative, check=False).returncode != 0:
             raise CaptureError("unprotected_private", "Falta la exclusión Git del área Private.")
 
@@ -366,32 +416,72 @@ class Store:
             os.close(fd)
 
     @contextmanager
-    def lock(self) -> Iterator[None]:
-        with self.parent("omaros-learning/lock", create=True, state=True) as (fd, name):
-            target = os.open(name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=fd)
-            try:
-                self.check_file(target)
+    def legacy_lock(self) -> Iterator[None]:
+        """Share the original lock inode whenever the vault has legacy state."""
+        target = None
+        try:
+            with self.state_parent("lock", legacy=True) as (fd, name):
                 try:
-                    fcntl.flock(target, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    raise CaptureError("busy", "Otra captura está escribiendo; reintenta después.") from None
-                yield
-            finally:
+                    target = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+                except FileNotFoundError:
+                    raise CaptureError("missing_legacy_lock", "Falta el bloqueo del estado anterior. Verifícalo en el entorno original.") from None
+        except FileNotFoundError:
+            pass  # No legacy directory was created on this vault.
+        try:
+            if target is not None:
+                self.acquire_lock(target)
+            yield
+        finally:
+            if target is not None:
                 os.close(target)
+
+    def legacy_pending(self) -> bool:
+        """Notice a legacy journal without reading the file or following a link."""
+        try:
+            with self.state_parent("pending.json", legacy=True) as (fd, name):
+                os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        return True
+
+    def reject_legacy_pending(self) -> None:
+        if self.legacy_pending():
+            raise CaptureError("legacy_pending", LEGACY_PENDING)
+
+    @contextmanager
+    def lock(self) -> Iterator[None]:
+        """Coordinate capture writers before opening the writable runtime."""
+        self.reject_legacy_pending()
+        with self.legacy_lock():
+            self.reject_legacy_pending()
+            with self.state_parent("lock", create=True) as (fd, name):
+                target = os.open(name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+                try:
+                    self.acquire_lock(target)
+                    yield
+                finally:
+                    os.close(target)
+
+    def acquire_lock(self, target: int) -> None:
+        self.check_owner_only(self.check_file(target))
+        try:
+            fcntl.flock(target, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise CaptureError("busy", "Otra captura está escribiendo; reintenta después.") from None
 
     def state_write(self, relative: str, value: Any) -> None:
         data = serialized(value)
         if len(data) > STATE_LIMIT:
             raise CaptureError("too_large", "La transacción excede el presupuesto de recuperación local.")
-        with self.parent(relative, create=True, state=True) as (fd, name):
+        with self.state_parent(relative, create=True) as (fd, name):
             temp = f".{name}.{secrets.token_hex(8)}"
             target = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600, dir_fd=fd)
             try:
-                self.write_all(target, data)
-                os.fsync(target)
-            finally:
-                os.close(target)
-            try:
+                try:
+                    self.write_all(target, data)
+                    os.fsync(target)
+                finally:
+                    os.close(target)
                 os.replace(temp, name, src_dir_fd=fd, dst_dir_fd=fd)
                 os.fsync(fd)
             finally:
@@ -408,6 +498,11 @@ class Store:
         return info
 
     @staticmethod
+    def check_owner_only(info: os.stat_result) -> None:
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise CaptureError("unsafe_path", "El estado privado requiere acceso exclusivo del propietario.")
+
+    @staticmethod
     def write_all(fd: int, data: bytes) -> None:
         remaining = memoryview(data)
         while remaining:
@@ -416,8 +511,13 @@ class Store:
                 raise OSError("Escritura incompleta")
             remaining = remaining[written:]
 
-    def receipt(self, event_id: str) -> Any:
-        return self.json_read(f"omaros-learning/receipts/{identifier(event_id)}.json")
+    def receipt(self, event_id: str) -> dict[str, Any] | None:
+        relative = f"receipts/{identifier(event_id)}.json"
+        current = self.json_read(relative)
+        legacy = self.json_read(relative, legacy=True)
+        if current is not None and legacy is not None and current != legacy:
+            raise CaptureError("corrupt_state", "Los recibos actual y anterior del evento no coinciden.")
+        return current if current is not None else legacy
 
     def private_paths(self) -> list[Path]:
         directory = self.root / BASE
@@ -468,7 +568,8 @@ class Store:
     def prepare(self, payload: Any) -> dict[str, Any]:
         self.verify_registered()
         capture = validate(payload)
-        if self.json_read("omaros-learning/pending.json"):
+        self.reject_legacy_pending()
+        if self.json_read("pending.json"):
             raise CaptureError("pending", "Hay una escritura pendiente. Ejecuta status y recover antes de preparar o confirmar una captura.")
         event_hash = digest(serialized(capture))
         old = self.receipt(capture["event_id"])
@@ -554,7 +655,7 @@ class Store:
         if digest(serialized(bare)) != plan["plan_id"]:
             raise CaptureError("invalid_plan", "El plan ha cambiado.")
         with self.lock():
-            if self.json_read("omaros-learning/pending.json"):
+            if self.json_read("pending.json"):
                 raise CaptureError("pending", "Hay una escritura pendiente. Ejecuta status y recover.")
             fresh = self.prepare(plan["capture"])
             if fresh["status"] == "already_applied":
@@ -566,7 +667,7 @@ class Store:
                 raise CaptureError("edit_conflict", "Los archivos cambiaron durante la preparación; vuelve a preparar sin descartar las ediciones.")
             receipt = {"event_id": plan["capture"]["event_id"], "event_hash": plan["event_hash"], "blocks": {path: digest(block(after.decode(), plan["capture"]["event_id"]).encode()) for path, (_, after) in changes.items()}, "topics": [t["slug"] for t in plan["capture"]["topics"]], "captured_at": plan["capture"]["captured_at"]}
             pending = {"schema_version": 1, "plan_id": plan["plan_id"], "receipt": receipt, "changes": [{"path": path, "before": digest(before) if before is not None else None, "after": after.decode(), "candidate": f".{Path(path).name}.{plan['plan_id'][:20]}.swap"} for path, (before, after) in changes.items()]}
-            self.state_write("omaros-learning/pending.json", pending)
+            self.state_write("pending.json", pending)
             return self._complete(pending)
 
     @staticmethod
@@ -619,7 +720,7 @@ class Store:
         change["after"] = after
         # A retry on another UTC day must date the actual write, while already
         # installed files retain their real earlier creation/update dates.
-        self.state_write("omaros-learning/pending.json", pending)
+        self.state_write("pending.json", pending)
 
     def _complete(self, pending: dict[str, Any]) -> dict[str, Any]:
         for change in pending["changes"]:
@@ -656,8 +757,8 @@ class Store:
                 os.fsync(fd)
         receipt = pending["receipt"]
         self.verify_receipt(receipt)
-        self.state_write(f"omaros-learning/receipts/{receipt['event_id']}.json", receipt)
-        with self.parent("omaros-learning/pending.json", state=True) as (fd, name):
+        self.state_write(f"receipts/{receipt['event_id']}.json", receipt)
+        with self.state_parent("pending.json") as (fd, name):
             os.unlink(name, dir_fd=fd)
             os.fsync(fd)
         return {"status": "applied", "event_id": receipt["event_id"], "event_hash": receipt["event_hash"], "paths": list(receipt["blocks"])}
@@ -739,7 +840,7 @@ class Store:
     def recover(self, *, abandon: bool = False) -> dict[str, Any]:
         self.verify_registered()
         with self.lock():
-            pending = self.json_read("omaros-learning/pending.json")
+            pending = self.json_read("pending.json")
             if not pending:
                 return {"status": "no_pending"}
             if abandon:
@@ -755,8 +856,8 @@ class Store:
                     displaced = self.read(self.candidate_path(change, change["candidate"]))
                     if displaced is not None and digest(displaced) != change["before"] and displaced != change["after"].encode():
                         raise CaptureError("external_race", "No se puede abandonar una edición desplazada sin conciliarla. Conserva pending y el .swap privado.")
-                self.state_write(f"omaros-learning/recovery/{pending['plan_id']}.json", pending)
-                with self.parent("omaros-learning/pending.json", state=True) as (fd, name):
+                self.state_write(f"recovery/{pending['plan_id']}.json", pending)
+                with self.state_parent("pending.json") as (fd, name):
                     os.unlink(name, dir_fd=fd)
                     os.fsync(fd)
                 return {"status": "abandoned_partial", "persisted": False, "paths": [c["path"] for c in pending["changes"]], "recovery": str(self.state / "recovery" / (pending["plan_id"] + ".json"))}
@@ -764,7 +865,10 @@ class Store:
 
     def status(self) -> dict[str, Any]:
         self.verify_registered()
-        pending = self.json_read("omaros-learning/pending.json")
+        if self.legacy_pending():
+            return {"status": "pending", "event_id": None, "paths": [], "state": str(self.gitdir / LEGACY_STATE),
+                    "pending_source": "legacy", "message": LEGACY_PENDING}
+        pending = self.json_read("pending.json")
         return {"status": "pending" if pending else "ready", "event_id": pending["receipt"]["event_id"] if pending else None, "paths": [c["path"] for c in pending["changes"]] if pending else [], "state": str(self.state)}
 
     def query(self, query: str = "", *, date: str | None = None, topic: str | None = None, related: str | None = None) -> dict[str, Any]:
@@ -790,8 +894,13 @@ class Store:
             if query and query.casefold() not in (str(data.get("title", "")) + "\n" + content + "\n" + path.stem).casefold():
                 continue
             results.append({"path": relative, "title": data["title"], "learned_on": str(data["learned_on"]) if data.get("learned_on") else None, "captured_at": str(data.get("captured_at")), "updated": str(data.get("updated"))})
-        pending = self.json_read("omaros-learning/pending.json")
-        return {"status": "pending" if pending else "ok", "scope": BASE, "partial": bool(pending), "pending_event": pending["receipt"]["event_id"] if pending else None, "scanned": len(candidates), "results": results}
+        legacy_pending = self.legacy_pending()
+        pending = None if legacy_pending else self.json_read("pending.json")
+        partial = legacy_pending or bool(pending)
+        result = {"status": "pending" if partial else "ok", "scope": BASE, "partial": partial, "pending_event": pending["receipt"]["event_id"] if pending else None, "scanned": len(candidates), "results": results}
+        if legacy_pending:
+            result.update(pending_source="legacy", message=LEGACY_PENDING)
+        return result
 
 
 def exchange(fd: int, candidate: str, target: str) -> None:

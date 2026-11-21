@@ -21,7 +21,7 @@ Constellation/
 
 ## Methods and project workflows
 
-The library has 18 maintained skills. Only the five general methods are installed
+The library has 19 maintained skills. Only the five general methods are installed
 globally; each project receives its own workflows. Repository constraints belong
 in `profiles/`, and the eight agents supply working roles rather than additional
 skills for planning, logging, routing or review.
@@ -30,7 +30,7 @@ Existing native enable/disable preferences still apply to installed entries.
 | Scope | Skills |
 | --- | --- |
 | General | `coding`, `mathematics`, `quant-research`, `writter`, `teach-from-first-principles` |
-| OmarOS | `fast-finder`, `engie-learning`, `brainteasers-quant`, `brainteasers-quant-notes`, `doc-forge`, `educational-video-script-architect`, `git-history-reviewer` |
+| OmarOS | `fast-finder`, `engie-learning`, `ng-diario`, `brainteasers-quant`, `brainteasers-quant-notes`, `doc-forge`, `educational-video-script-architect`, `git-history-reviewer` |
 | KarimSpecificCase | `gs-interface-editor` |
 | tradinginterface | `component-builder` |
 | Sweeplab | `pde-intake`, `pde-results-review` |
@@ -168,8 +168,7 @@ python3 constellation.py begin example < contract.json
 python3 constellation.py check example whitespace -- git diff --check
 python3 constellation.py status example
 python3 constellation.py review example < review.json
-python3 constellation.py commit example 'Describe the change'
-python3 constellation.py push example
+python3 constellation.py publish example 'Describe the change'
 ```
 
 `contract.json` contains `root`, `requirement`, `coordinator`, `session_id`,
@@ -177,8 +176,22 @@ python3 constellation.py push example
 `["whitespace"]`). Select checks appropriate to the change; whitespace alone
 establishes no behavioral correctness. Use `mode: "local"` for a local deliverable
 and close it with `finish` after checks and independent review. The default
-publication mode freezes the Git destination; publication also requires the
-user's authorization for that scope and destination.
+publication mode freezes the Git destination. Obtain authorization for the
+scope and destination before opening a task for publication.
+
+For automatic publication, include `mode: "publish"` and a
+`publication_message` in the authorized task contract. Once all required checks
+are current, recording independent approval with `review` creates the commit,
+pushes to the declared destination, and verifies its remote SHA. Reviewers can
+record a rejection or approve while checks are still pending. The automatic
+publication runs on an approval of the current candidate when the gate is ready.
+
+Use `publish TASK MESSAGE` for one-step publication after review when a contract
+has no publication message. Use `publish TASK` to resume with the stored message
+or retry an already created commit. `commit` and `push` remain available as
+individual commands. A remote failure leaves the review and any local commit
+available for retry. Complete a pending publication before another task moves
+its local branch or the exact same remote ref.
 
 When hooks supply a UUID and the catalog supplies a canonical name,
 `actor_sessions` associates them within the task. This is routing, not
@@ -232,12 +245,15 @@ owning repository so a later task cannot accidentally propose it again.
 
 ## Recover or roll back
 
-After an interruption, run `python3 constellation.py recover example` and inspect
-the result. If the remote already contains the intended commit, no duplicate is
-created. A changed destination or divergence blocks publication. Checks and
+After an interrupted publication, retry `python3 constellation.py publish example`.
+Use `recover example` to inspect and reconcile a staged publication separately.
+When the remote already contains the intended commit, the workflow verifies that
+same SHA. A changed destination or divergence blocks publication. Checks and
 reviews remain frozen during publication. If the remote confirms the commit but
-local scoped edits remain, the task stays open: repeat permitted checks, review
-and commit in that task. Recovery preserves the prior publication and local edits.
+local scoped edits remain, run fresh checks and obtain review to publish them
+in the same task. If you restore those paths to the verified version, retry
+`publish` to close the task with its original receipt. Recovery preserves the
+prior publication and local edits.
 
 Use `python3 constellation.py install --rollback RECEIPT` to reverse installation.
 Receipts stay outside Git; rollback rejects later edits. Historical retirement

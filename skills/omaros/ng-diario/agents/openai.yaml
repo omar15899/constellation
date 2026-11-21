@@ -1,0 +1,4 @@
+interface:
+  display_name: "Diario de OmarOS"
+  short_description: "Reflexiones, aprendizajes y progreso diario en OmarOS"
+  default_prompt: "Usa $ng-diario para guardar lo que te voy a contar de hoy y enlazar los aprendizajes con mis notas."

@@ -37,7 +37,9 @@ La solicitud de captura autoriza títulos, carpetas y enlaces rutinarios.
    la ruta a tu copia de Constellation y ejecuta `prepare` y `apply` con
    `python3 "$CONSTELLATION_CHECKOUT/constellation.py" skill-run omaros engie-learning scripts/learning.py`
    según el [contrato](references/capture_contract.md).
-   Declara los destinos exactos preparados en un encargo local antes de aplicar.
+   Declara los destinos exactos preparados con `constellation.py --engie-learning
+   begin` en un encargo de modo local antes de aplicar. Usa esa opción también
+   para comprobar, revisar y cerrar el encargo.
    La captura exige el vault registrado en ese dispositivo. Comprueba el resultado y
    lee los archivos persistidos. Ante error, conserva la identidad y usa `status`
    o `recover`; una versión ajena exige releer y conciliar, nunca sobrescribir.

@@ -184,7 +184,10 @@ class InstallTests(unittest.TestCase):
         subprocess.run(['git', 'init', '-q', str(project)], check=True)
         subprocess.run(['git', '-C', str(project), 'config', 'core.hooksPath', '.githooks'], check=True)
         (self.source / 'profiles').mkdir()
-        (self.source / 'profiles/projects.json').write_text(json.dumps({'projects': [{'id': 'project', 'root': str(project), 'management': 'native'}]}))
+        (self.source / 'profiles/projects.json').write_text(json.dumps({'projects': [{
+            'id': 'project', 'root': str(project), 'management': 'native',
+            'git_hooks_before': '.githooks',
+        }]}))
         receipt = install.apply_plan(self.plan())
         self.assertEqual(install._git_hooks(project), [str(self.source / 'git-hooks')])
         subprocess.run(['git', '-C', str(project), 'config', 'user.name', 'Preserve User'], check=True)

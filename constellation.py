@@ -52,7 +52,10 @@ def main() -> int:
         return subprocess.run([sys.executable, *python_options, '-B',
             str(SOURCE / 'resources/automations/official_docs.py'), *sys.argv[2:]]).returncode
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--state-dir')
+    routes = parser.add_mutually_exclusive_group()
+    routes.add_argument('--state-dir')
+    routes.add_argument('--engie-learning', action='store_true',
+                        help='Use the registered vault’s private local learning ledger')
     commands = parser.add_subparsers(dest='command', required=True)
     guard = commands.add_parser('guard-status')
     guard.add_argument('--root', required=True, type=Path)
@@ -63,6 +66,9 @@ def main() -> int:
         p.add_argument('task')
         if name == 'commit':
             p.add_argument('message')
+    publish = commands.add_parser('publish', help='Publish or resume a reviewed task')
+    publish.add_argument('task')
+    publish.add_argument('message', nargs='?')
     check = commands.add_parser('check')
     check.add_argument('task'); check.add_argument('check_id')
     check.add_argument('argv', nargs=argparse.REMAINDER)
@@ -81,6 +87,9 @@ def main() -> int:
     docs = commands.add_parser('docs', help='Verify, search or refresh local official documentation')
     docs.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.engie_learning and args.command not in {
+            'begin', 'status', 'checkpoint', 'assign', 'check', 'review', 'finish', 'cancel'}:
+        parser.error('--engie-learning only supports the local task lifecycle')
     if args.state_dir:
         from constellation.platform_support import IS_WINDOWS, validate_windows_lookup
 
@@ -144,15 +153,29 @@ def main() -> int:
             parser.error('Select an existing Python skill resource')
         return subprocess.run([_skill_interpreter(args.group), *python_options,
                                str(script), *args.arguments]).returncode
-    from constellation.state import Store
+    from constellation.state import EngieLearningStore, StateError, Store, ready
     from constellation import git
-    store = Store(args.state_dir)
+    store = (EngieLearningStore() if args.engie_learning else
+             Store(args.state_dir, read_only=args.command == 'git-hook'))
     if args.command == 'begin':
         result = store.begin(args.task, **json.load(sys.stdin))
     elif args.command == 'checkpoint':
         result = store.checkpoint(args.task, **json.load(sys.stdin))
     elif args.command == 'review':
         result = store.review(args.task, **json.load(sys.stdin))
+        if not args.engie_learning and result['verdict'] == 'approve':
+            task = store.get(args.task)
+            if task.get('publication_message') is not None and task['status'] == 'open':
+                try:
+                    ready(task)
+                except (StateError, git.GitError):
+                    pass
+                else:
+                    try:
+                        sha = git.publish(store, args.task)
+                    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                        raise git.GitError(f'Review recorded. Retry with publish {args.task}. {error}') from error
+                    result['publication'] = {'commit': sha, 'status': 'verified'}
     elif args.command == 'status':
         result = store.status(args.task)
     elif args.command == 'finish':
@@ -168,6 +191,8 @@ def main() -> int:
         result = git.commit(store, args.task, args.message)
     elif args.command == 'push':
         result = git.push(store, args.task)
+    elif args.command == 'publish':
+        result = git.publish(store, args.task, args.message)
     elif args.command == 'recover':
         result = git.recover(store, args.task)
     elif args.command == 'git-hook':
