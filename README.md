@@ -159,9 +159,22 @@ tool, and a worker's completion is a handoff rather than final approval.
 
 ## Work
 
-Read the owner's profile. Before editing, open a contract with **exact file
-paths** and real native author IDs. One contract per Git owner permits work in
-several repositories without sharing indexes.
+On macOS and Linux, create a new local Markdown note in OmarOS
+with UTF-8 content on stdin:
+
+```sh
+python3 constellation.py save-note 06_Knowledge_Base/Mathematics/Finance/new_note.md < new_note.md
+```
+
+Use it for an ordinary note in an existing folder under `06_Knowledge_Base/`.
+The command checks the initialized shared ledger in read-only mode and creates
+the new file atomically. It reports a conflict if an unfinished task owns the
+path or a file already exists there. Complete the note's metadata before saving.
+Private ENGIE learning uses its dedicated capture workflow.
+
+For other edits and publication, read the owner's profile and open a contract
+with **exact file paths** and real native author IDs. One contract per Git
+owner permits work in several repositories without sharing indexes.
 
 ```sh
 python3 constellation.py begin example < contract.json

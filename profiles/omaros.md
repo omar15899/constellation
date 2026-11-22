@@ -34,6 +34,11 @@ investigación abierta. Lecturas de papers van en
 `15_Reading_and_Learning/Papers/`; reflexiones en `01_Daily_Life/Reflections/`.
 
 Decide estructura, metadatos y enlaces antes de redactar, y verifica sus destinos.
+Para guardar una nota Markdown local nueva en `06_Knowledge_Base/` en macOS o
+Linux, usa `constellation.py save-note RUTA < nota.md`. La ruta es relativa al
+vault registrado y la carpeta ya debe existir. Este comando revisa las reservas
+activas con acceso de lectura al registro compartido. Aplica el contrato habitual
+para editar notas existentes o publicar, y el flujo privado para ENGIE/Private.
 No generes una nota, tarea o informe de conocimiento por una explicación pedida
 en conversación. Una modificación no trivial deja una traza breve declarada en
 `11_Documents_and_Reports/Execution_Traces/YYYY-MM-DD/`. Contiene objetivo,

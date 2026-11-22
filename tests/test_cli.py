@@ -61,6 +61,59 @@ class CommandTests(unittest.TestCase):
             "assignments": {"note.txt": "author-native-id"},
             "coordinator": "coordinator-native-id", "session_id": "fresh-session", **options})
 
+    @unittest.skipUnless(os.name == "posix", "Local note creation uses the POSIX ledger lock")
+    def test_save_note_creates_only_unowned_notes_with_read_only_registry(self):
+        self.env["CONSTELLATION_PROJECTS_FILE"] = str(self.base / "projects.json")
+        Path(self.env["CONSTELLATION_PROJECTS_FILE"]).write_text(
+            json.dumps({"projects": {"omaros": str(self.root.resolve())}}), encoding="utf-8")
+        area = "06_Knowledge_Base/Mathematics"
+        private = f"{area}/Finance/ENGIE/Private/Topics"
+        for directory in (area, private, "03_Work"):
+            (self.root / directory).mkdir(parents=True)
+        create = f"{area}/new.md"
+        reserved = f"{area}/reserved.md"
+        self.begin(mode="local", assignments={reserved: "author-native-id"})
+
+        record = self.state / "tasks/change.json"
+        protected = (self.state, self.state / "tasks", self.state / ".lock", record)
+        for directory in protected[:2]:
+            directory.chmod(0o500)
+            self.addCleanup(directory.chmod, 0o700)
+        protected[2].chmod(0o400)
+        record.chmod(0o400)
+        before = [(p.stat().st_mtime_ns, stat.S_IMODE(p.stat().st_mode)) for p in protected]
+        before_record = record.read_bytes()
+        content = "# Valoración\n".encode("utf-8")
+
+        def save(name, body=content):
+            return subprocess.run([sys.executable, str(SOURCE / "constellation.py"),
+                                   "save-note", name], cwd=self.root, env=self.env,
+                                  input=body, capture_output=True, timeout=30)
+
+        result = save(create)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(json.loads(result.stdout)["status"], "saved")
+        self.assertEqual((self.root / create).read_bytes(), content)
+
+        self.assertEqual(save(create, b"# Different\n").returncode, 2)
+        self.assertEqual((self.root / create).read_bytes(), content)
+        result = save(reserved)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b"unfinished task", result.stderr)
+        self.assertFalse((self.root / reserved).exists())
+
+        for rejected in (f"{area}/AGENTS.md", f"{area}/nested/missing.md",
+                         "03_Work/note.md", f"{private}/note.md"):
+            with self.subTest(rejected=rejected):
+                self.assertEqual(save(rejected).returncode, 2)
+                self.assertFalse((self.root / rejected).exists())
+        self.assertEqual(save(f"{area}/invalid.md", b"\xff").returncode, 2)
+        self.assertFalse((self.root / f"{area}/invalid.md").exists())
+        self.assertEqual(before, [(p.stat().st_mtime_ns, stat.S_IMODE(p.stat().st_mode))
+                                  for p in protected])
+        self.assertEqual(record.read_bytes(), before_record)
+        self.assertEqual(sorted(p.name for p in (self.root / area).iterdir()), ["Finance", "new.md"])
+
     def check_and_review(self):
         record = self.command("check", "change", "default", "--", sys.executable,
                               "-c", "from pathlib import Path; assert Path('note.txt').read_text() == 'changed\\n'")

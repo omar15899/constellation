@@ -18,7 +18,7 @@ import re
 import stat
 import subprocess
 import tempfile
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 import uuid
 
 from .platform_support import (IS_WINDOWS, default_state_dir, git_executable, is_reparse,
@@ -473,6 +473,19 @@ def _flock(descriptor: int, *, shared: bool) -> Iterator[None]:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
 
 
+def require_unowned_paths(root: Path, paths: Iterable[str],
+                          tasks: Iterable[Mapping[str, Any]]) -> None:
+    """Raise when an unfinished task for the same root overlaps a requested path."""
+    incoming = {name.casefold() for name in paths}
+    for task in tasks:
+        if task["status"] == "closed" or task["root"] != str(root):
+            continue
+        occupied = {name.casefold() for name in task["paths"]}
+        if any(a == b or a.startswith(b + "/") or b.startswith(a + "/")
+               for a in incoming for b in occupied):
+            raise StateError("Another unfinished task owns part of this scope: " + task["id"])
+
+
 class Store:
     """A private, atomic JSON ledger with one lock covering ownership changes.
 
@@ -507,11 +520,13 @@ class Store:
             yield
 
     @contextmanager
-    def _observe(self) -> Iterator[None]:
+    def _observe(self, *, required: bool = False) -> Iterator[None]:
         """Share an existing POSIX lock without creating or modifying it."""
         try:
             descriptor = os.open(self.root / ".lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except FileNotFoundError:
+            if required:
+                raise StateError("Local note creation requires an initialized Constellation ledger") from None
             yield
             return
         try:
@@ -668,14 +683,7 @@ class Store:
                 raise StateError("Task already exists; resume it instead")
             if any(other["id"].casefold() == task_id.casefold() for other in peers):
                 raise StateError("Task ID already exists in the other task ledger; resume it there")
-            incoming = {name.casefold() for name in owners}
-            for other in self.list_tasks() + peers:
-                if other["status"] == "closed" or other["root"] != str(root):
-                    continue
-                occupied = {name.casefold() for name in other["paths"]}
-                if any(a == b or a.startswith(b + "/") or b.startswith(a + "/")
-                       for a in incoming for b in occupied):
-                    raise StateError("Another unfinished task owns part of this scope: " + other["id"])
+            require_unowned_paths(root, owners, self.list_tasks() + peers)
             self.save_locked(task)
         return task
 
@@ -983,9 +991,11 @@ class EngieLearningStore(Store):
                 yield
 
     @contextmanager
-    def _observe(self) -> Iterator[None]:
+    def _observe(self, *, required: bool = False) -> Iterator[None]:
         with self._lock_file() as descriptor:
             if descriptor is None:
+                if required:
+                    raise StateError("The ENGIE task ledger is absent")
                 yield
             else:
                 with _flock(descriptor, shared=True):

@@ -120,8 +120,11 @@ its README and the applicable `profiles/` entry before changing a registered
 project. Run its `constellation.py` with Python 3.11 or later. Use
 `python3 constellation.py` from the checkout on macOS or Linux and
 `py -3 .\constellation.py` from PowerShell on Windows.
-Consultations require no task record. Changes require a `begin` contract with
-exact paths, real native author IDs, an observable requirement and checks.
+Consultations require no task record. On macOS and Linux, use `save-note` for a
+new ordinary local Markdown note in OmarOS's knowledge base. The command checks
+ownership against the existing shared ledger using read access. Other changes
+require a `begin` contract with exact paths, real native author IDs, an observable
+requirement and checks.
 Use the active client's native subagents for independent work; assign exclusive
 paths and record the IDs returned by its native tool. A child's environment can
 inherit its parent's thread ID; do not use that variable as proof of identity.

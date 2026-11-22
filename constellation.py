@@ -61,6 +61,8 @@ def main() -> int:
     guard.add_argument('--root', required=True, type=Path)
     begin = commands.add_parser('begin', help='Read the change contract as JSON from stdin')
     begin.add_argument('task')
+    save_note_cmd = commands.add_parser('save-note', help='Create a local OmarOS knowledge note from UTF-8 stdin')
+    save_note_cmd.add_argument('path', help='Exact path relative to the registered OmarOS root')
     for name in ('status', 'checkpoint', 'review', 'commit', 'push', 'recover', 'finish', 'cancel', 'assign'):
         p = commands.add_parser(name)
         p.add_argument('task')
@@ -155,6 +157,14 @@ def main() -> int:
                                str(script), *args.arguments]).returncode
     from constellation.state import EngieLearningStore, StateError, Store, ready
     from constellation import git
+    if args.command == 'save-note':
+        from constellation.local_notes import save_note
+
+        if sys.stdin.isatty():
+            parser.error('save-note requires UTF-8 content on stdin')
+        result = save_note(Store(args.state_dir, read_only=True), args.path, sys.stdin.buffer.read())
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     store = (EngieLearningStore() if args.engie_learning else
              Store(args.state_dir, read_only=args.command == 'git-hook'))
     if args.command == 'begin':
