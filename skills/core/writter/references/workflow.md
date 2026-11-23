@@ -66,10 +66,8 @@ esfuerzo y permisos; no presupongas herramientas que la sesión no expone.
 
 Cada encargo delegado especifica alcance, archivos, resultado y evidencia
 esperada, además de las skills pertinentes y su ubicación accesible. El agente
-comprueba su catálogo y carga solo las instrucciones necesarias; una capacidad
-del coordinador puede no estar disponible para él. Registra la identidad nativa
-real de quienes contribuyen antes de la revisión. Un nombre de rol o un ID de
-tarea no identifica al autor real.
+comprueba su catálogo y carga solo las instrucciones necesarias. Registra la
+identidad nativa del autor según el protocolo común antes de que edite.
 
 ## Fuentes y afirmaciones
 
@@ -103,39 +101,65 @@ No declares una revisión exhaustiva después de comprobar solo una muestra.
 
 ## Explicar desde los fundamentos
 
-La pregunta rectora decide hasta dónde hay que retroceder. Antes de operar,
-establece qué entidades intervienen, qué relaciones se definen entre ellas y
-qué datos bastan para que la operación tenga sentido. Explica el motivo de
-cada construcción en el punto donde el lector la necesita. Una definición fija
-el objeto. La existencia de un objeto que satisface una condición, su unicidad
-y la independencia respecto de una elección requieren argumentos distintos.
+### Qué operación hace falta justificar
 
-Mantén un ejemplo a través de dos cambios que puedan confundirse. En un espacio
-real de dimensión finita, cambiar la base puede modificar las componentes con
-las que describimos un vector y un funcional lineal. El escalar que se obtiene al evaluar el mismo
-funcional sobre el mismo vector se conserva. Elegir un producto interno añade
-otra operación. Permite representar el funcional por el vector cuyo producto
-interno con cada argumento reproduce su valor. Si duplicamos el producto
-interno, el vector representante se divide por dos. El funcional sigue
-asignando los mismos valores. Esta variación indica al lector exactamente qué
-dependía de la geometría. La [ontología](../../../../resources/methods/ontology.md)
-y sus [ejemplos](../../../../resources/methods/ontology-examples.md) desarrollan
-la construcción y las hipótesis de casos más generales.
+Empieza por una operación que el lector quiera realizar. Si los datos
+disponibles resultan insuficientes, muestra el obstáculo en un caso concreto.
+Ordena las construcciones por dependencia. Cada una entra cuando abre una
+operación, resuelve una ambigüedad o justifica una afirmación posterior.
+Si la exposición tiene varios recorridos, un mapa puede mostrar qué obtiene
+el lector en cada tramo y qué necesita haber establecido para seguir.
+Usa las muestras aportadas para calibrar el método y la voz. Observa qué
+problema abre cada texto, cuándo introduce una distinción y cómo la prueba.
 
-En otros dominios, usa las entidades y las preguntas propias del tema. Una
-imagen en escala de grises asigna un nivel a cada posición. Su histograma
-cuenta cuántas posiciones tienen cada nivel. Intercambiar dos píxeles de
-niveles distintos conserva esos recuentos y cambia la imagen. Los recuentos
-bastan para calcular el nivel medio, pero recuperar la imagen requiere
-información espacial. El ejemplo localiza la información que pierde la
-representación y muestra por qué la pérdida importa para una pregunta concreta.
+Cuando el texto usa una identificación, especifica el mapa, su alcance y las
+elecciones que lo hacen posible. Una definición fija qué objeto se introduce.
+La existencia, la unicidad, la independencia del representante y la
+compatibilidad de operaciones requieren sus propios argumentos cuando sostienen
+la conclusión. La [ontología compartida](../../../../resources/methods/ontology.md)
+desarrolla estas distinciones.
 
-Al escribir una fórmula, anticipa qué relación pretende expresar y después
-interpreta qué autoriza a concluir. Cuando un resultado requiera hipótesis
-nuevas, identifica el paso exacto que las utiliza. Una intuición ayuda si el
-lector puede volver por ella al argumento. Conserva el orden de entrada pedido
-y dedica espacio a una sutileza cuando resolverla cambie la comprensión o el
-uso de la conclusión.
+### Un ejemplo que permite cambiar una sola cosa
+
+En un desarrollo largo, vuelve al mismo ejemplo cuando una nueva estructura
+permita hacer algo con él. Fija lo que se mantiene y cambia el dato, la elección
+o la hipótesis que importe. Calcula ambos casos hasta que se vea la diferencia.
+Introduce el error plausible donde empezaría a desviar el razonamiento.
+Explica por qué la inferencia parece válida y en qué paso falla. Un caso
+frontera o dos objetos con el mismo resumen pueden hacer visible ese paso.
+
+Sea \(f:\mathbb R^2\to\mathbb R\) el funcional \(f(x,y)=x+2y\).
+En la base usual, \(u=(2,3)\) tiene componentes \((2,3)\) y el funcional
+tiene componentes \((1,2)\) en la base dual. En la base \((2e_1,e_2)\),
+pasan a \((1,3)\) y \((2,2)\), respectivamente. Ambas descripciones dan
+\(f(u)=8\). El producto interno euclídeo permite además representar \(f\)
+por el vector \((1,2)\), escrito en la base usual. Si mantenemos fijo \(f\)
+y duplicamos ese producto interno, el representante pasa a \((1/2,1)\).
+Emparejarlo con cada argumento mediante el producto nuevo da los mismos valores
+de \(f\). El primer cambio modifica la descripción de la evaluación. El segundo
+modifica la identificación que permite representarla geométricamente.
+
+Un histograma registra cuántos píxeles tienen cada nivel de gris. Intercambia
+dos píxeles de niveles distintos, uno situado en una esquina. El mismo
+histograma sirve para calcular la media de las dos imágenes. La diferencia
+entre sus valores en la esquina muestra qué información espacial falta para
+reconstruir la imagen.
+
+### Qué debe poder reconstruir el lector
+
+Declara los prerrequisitos que el lector puede traer y desarrolla en el texto
+los conceptos que promete enseñar. Si una sección está pensada para leerse
+sola, recupera allí los datos y convenciones imprescindibles. Introduce la
+relación que expresa cada fórmula, justifica los pasos decisivos y explica qué
+permite concluir. Señala el paso que usa una hipótesis adicional. Si la prueba
+de un teorema queda fuera del alcance, enuncia la versión que aplicas y
+comprueba sus hipótesis en el caso. Una referencia puede acreditar ese resultado
+o ampliar la lectura. El texto contiene el argumento que promete enseñar.
+
+Si el encargo busca que el lector aprenda a operar, incluye una reconstrucción
+o una variación resoluble con lo expuesto. Da solución o criterio de corrección
+según lo pedido. Distingue las derivaciones necesarias para avanzar de las
+extensiones que pueden estudiarse después.
 
 ## Contenido técnico y entregables mixtos
 
@@ -181,10 +205,11 @@ riesgo y con la cobertura vigente del protocolo común. Entrega al revisor los
 requisitos, archivos actuales, evidencia pertinente y huella vigente del contrato
 cuando haya cambios registrados. Debe evaluar el resultado real con independencia de su autor,
 incluidas claridad, estructura, voz, exactitud y límites de las conclusiones.
-Para una explicación, comprueba si el lector puede decir qué es cada objeto,
-obtener el caso particular desde el marco general y reconstruir el paso
-decisivo sin completar mentalmente una premisa ausente. Corregir esas lagunas
-aporta evidencia de comprensión; contar símbolos o encabezados no la aporta.
+En una explicación sustancial, pide al revisor que reconstruya un paso
+decisivo a partir del texto y los prerrequisitos declarados, indicándote
+qué objetos entran y qué obtiene. Pídele que varíe una elección o retire una
+hipótesis relevante y localice la primera inferencia afectada. Registra el
+pasaje si necesita una definición ausente o una convención implícita.
 Registra hallazgos concretos y resuélvelos con evidencia; los cambios posteriores
 requieren renovar las comprobaciones y la revisión afectadas. La falta de
 revisores disponibles es una limitación, no una aprobación implícita.

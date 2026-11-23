@@ -996,7 +996,7 @@
       "source": "/Users/omarkhalil/.codex/.codex/skills/writter/SKILL.md",
       "destination": "skills/core/writter/SKILL.md",
       "source_sha256": "d0758f7a5d65c6d826d6d8356e70a936596ed7386eeed67d8e59954d05bd6d25",
-      "sha256": "ff88117f987c8ab26425537b2993aaeb30ff1749e71266c2582fb863f636e2aa",
+      "sha256": "ca3c6ff57baf0e46e93cbcecf2a493413590c0ebcebabf1d8fc8a89e44ed7635",
       "category": "skill",
       "adapted": true
     },
@@ -1004,15 +1004,15 @@
       "source": "/Users/omarkhalil/.codex/.codex/skills/writter/agents/openai.yaml",
       "destination": "skills/core/writter/agents/openai.yaml",
       "source_sha256": "c18bf0605bb4b531cd1aa910bcc1fca6fd8e6dff1eb19179ef94e896ab1f4889",
-      "sha256": "c18bf0605bb4b531cd1aa910bcc1fca6fd8e6dff1eb19179ef94e896ab1f4889",
+      "sha256": "41c5103a4157cd790099950e079625ffe7ab4263306e13c89081378c85d1c8ae",
       "category": "skill",
-      "adapted": false
+      "adapted": true
     },
     {
       "source": "/Users/omarkhalil/.codex/.codex/skills/writter/references/workflow.md",
       "destination": "skills/core/writter/references/workflow.md",
       "source_sha256": "9af56ca8de421fc884a04c764da39f7f3aa6e700eefa497c7f6f755f0771fe0b",
-      "sha256": "f47e573de909e60791e7544577a399cf0e8b964ef3f51256fb9e10e637dfb561",
+      "sha256": "1a16bb51c73ce90976f74a6b6ca902207dd9196118757a1e147eba3a24b70454",
       "category": "skill",
       "adapted": true
     },
